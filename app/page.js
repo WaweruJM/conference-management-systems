@@ -1127,10 +1127,10 @@ function EditorialOffice({ setRoute }) {
           <h1 className="text-3xl font-bold tracking-tight">Editorial office</h1>
           <p className="text-muted-foreground">All submissions across the platform</p>
         </div>
-        <Select value={filter} onValueChange={setFilter}>
+        <Select value={filter || 'ALL'} onValueChange={(v) => setFilter(v === 'ALL' ? '' : v)}>
           <SelectTrigger className="w-56"><SelectValue placeholder="Filter by state" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value=" ">All states</SelectItem>
+            <SelectItem value="ALL">All states</SelectItem>
             {['SUBMITTED','TECHNICAL_CHECK','EDITORIAL_ASSIGNMENT','COMMITTEE_REVIEW','EXTERNAL_PEER_REVIEW','REVIEWS_COMPLETED','EDITORIAL_DECISION','ACCEPTED','REJECTED']
               .map(s => <SelectItem key={s} value={s}>{stateLabel(s)}</SelectItem>)}
           </SelectContent>
