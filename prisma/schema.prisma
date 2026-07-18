@@ -1,0 +1,494 @@
+// SCMS - Scientific Conference Management System
+// Enterprise-grade Prisma schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USER & AUTH ============
+enum Role {
+  SYSTEM_ADMIN
+  MANAGING_EDITOR
+  SECTION_EDITOR
+  COMMITTEE_MEMBER
+  EXTERNAL_REVIEWER
+  AUTHOR
+  ATTENDEE
+  GUEST
+  INDUSTRY_PARTNER
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  title           String?
+  affiliation     String?
+  country         String?
+  institutionId   String?
+  institution     Institution? @relation(fields: [institutionId], references: [id])
+  bio             String?
+  photoPath       String?
+  specialties     String[] @default([])
+  keywords        String[] @default([])
+  orcid           String?
+  isActive        Boolean  @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  roles           UserRole[]
+  authoredAbstracts AbstractAuthor[]
+  submittedAbstracts Abstract[] @relation("SubmittedBy")
+  reviewAssignments ReviewAssignment[]
+  editorAssignments EditorAssignment[]
+  reviewReports   ReviewReport[]
+  decisions       EditorialDecision[]
+  messagesSent    Message[] @relation("MessageSender")
+  notifications   Notification[]
+  workflowActions WorkflowStateHistory[]
+  auditLogs       AuditLog[]
+  registrations   Registration[]
+  uploadedDocs    Document[]
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  conferenceId String?
+  conference Conference? @relation(fields: [conferenceId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, role, conferenceId])
+}
+
+model Institution {
+  id      String @id @default(uuid())
+  name    String
+  country String?
+  city    String?
+  website String?
+  users   User[]
+
+  @@index([name])
+}
+
+// ============ CONFERENCE ============
+enum ConferenceStatus {
+  DRAFT
+  ANNOUNCED
+  OPEN_FOR_SUBMISSION
+  UNDER_REVIEW
+  DECISIONS_ISSUED
+  PROGRAMME_PUBLISHED
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+model Conference {
+  id               String   @id @default(uuid())
+  code             String   @unique  // e.g. CONF2027
+  name             String
+  description      String?
+  venue            String?
+  city             String?
+  country          String?
+  startDate        DateTime?
+  endDate          DateTime?
+  submissionOpen   DateTime?
+  submissionClose  DateTime?
+  registrationOpen DateTime?
+  registrationClose DateTime?
+  doubleBlind      Boolean  @default(true)
+  status           ConferenceStatus @default(DRAFT)
+  websiteBanner    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  themes           Theme[]
+  abstracts        Abstract[]
+  sessions         ProgrammeSession[]
+  registrations    Registration[]
+  userRoles        UserRole[]
+  submissionCounter Int     @default(0)
+}
+
+model Theme {
+  id           String @id @default(uuid())
+  conferenceId String
+  conference   Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  keywords     String[] @default([])
+  abstracts    Abstract[]
+  sessions     ProgrammeSession[]
+
+  @@unique([conferenceId, name])
+}
+
+// ============ ABSTRACT SUBMISSION ============
+enum AbstractState {
+  DRAFT
+  SUBMITTED
+  TECHNICAL_CHECK
+  RETURNED_FOR_FORMATTING
+  RESUBMITTED
+  EDITORIAL_ASSIGNMENT
+  COMMITTEE_REVIEW
+  EXTERNAL_PEER_REVIEW
+  REVIEWS_COMPLETED
+  EDITORIAL_DECISION
+  MAJOR_REVISION
+  MINOR_REVISION
+  REVISION_SUBMITTED
+  RE_REVIEW
+  FINAL_DECISION
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  POSTER
+  ORAL
+  PRESENTATION_UPLOAD
+  PRESENTATION_REVIEW
+  PROGRAMME_SCHEDULING
+  FINAL_ACCEPTANCE
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PresentationType {
+  ORAL
+  POSTER
+  KEYNOTE
+  UNDECIDED
+}
+
+model Abstract {
+  id              String   @id @default(uuid())
+  submissionCode  String   @unique  // e.g. CONF2027-000001
+  conferenceId    String
+  conference      Conference @relation(fields: [conferenceId], references: [id])
+  themeId         String?
+  theme           Theme?     @relation(fields: [themeId], references: [id])
+  submittedById   String
+  submittedBy     User     @relation("SubmittedBy", fields: [submittedById], references: [id])
+
+  title           String
+  currentState    AbstractState @default(DRAFT)
+  presentationType PresentationType @default(UNDECIDED)
+  keywords        String[] @default([])
+  isDoubleBlind   Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  authors         AbstractAuthor[]
+  versions        AbstractVersion[]
+  editorAssignments EditorAssignment[]
+  reviewAssignments ReviewAssignment[]
+  decisions       EditorialDecision[]
+  stateHistory    WorkflowStateHistory[]
+  messages        Message[]
+  documents       Document[]
+  programmeItem   ProgrammeItem?
+
+  @@index([conferenceId])
+  @@index([currentState])
+}
+
+model AbstractAuthor {
+  id          String   @id @default(uuid())
+  abstractId  String
+  abstract    Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  fullName    String
+  email       String
+  affiliation String?
+  isCorresponding Boolean @default(false)
+  orderIndex  Int      @default(0)
+
+  @@index([abstractId])
+}
+
+model AbstractVersion {
+  id           String   @id @default(uuid())
+  abstractId   String
+  abstract     Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  title        String
+  body         String   @db.Text
+  keywords     String[] @default([])
+  coverLetter  String?  @db.Text
+  createdAt    DateTime @default(now())
+  createdById  String?
+
+  @@unique([abstractId, versionNumber])
+}
+
+model WorkflowStateHistory {
+  id           String   @id @default(uuid())
+  abstractId   String
+  abstract     Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  previousState AbstractState?
+  newState     AbstractState
+  actorId      String?
+  actor        User?    @relation(fields: [actorId], references: [id])
+  comment      String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([abstractId])
+}
+
+// ============ EDITORIAL & REVIEW ============
+model EditorAssignment {
+  id           String   @id @default(uuid())
+  abstractId   String
+  abstract     Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  editorId     String
+  editor       User     @relation(fields: [editorId], references: [id])
+  role         Role     // MANAGING_EDITOR or SECTION_EDITOR
+  assignedAt   DateTime @default(now())
+  active       Boolean  @default(true)
+
+  @@index([abstractId])
+}
+
+enum ReviewInvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum ReviewRecommendation {
+  ACCEPT
+  MINOR_REVISION
+  MAJOR_REVISION
+  REJECT
+  TRANSFER
+}
+
+model ReviewAssignment {
+  id             String   @id @default(uuid())
+  abstractId     String
+  abstract       Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  reviewerId     String
+  reviewer       User     @relation(fields: [reviewerId], references: [id])
+  assignedById   String?
+  reviewType     Role     // COMMITTEE_MEMBER or EXTERNAL_REVIEWER
+  invitationStatus ReviewInvitationStatus @default(PENDING)
+  dueDate        DateTime?
+  assignedAt     DateTime @default(now())
+  respondedAt    DateTime?
+  completedAt    DateTime?
+  report         ReviewReport?
+
+  @@index([abstractId])
+  @@index([reviewerId])
+}
+
+model ReviewReport {
+  id                 String   @id @default(uuid())
+  assignmentId       String   @unique
+  assignment         ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  reviewerId         String
+  reviewer           User     @relation(fields: [reviewerId], references: [id])
+  originalityScore   Int?     // 1-10
+  significanceScore  Int?
+  methodologyScore   Int?
+  clarityScore       Int?
+  overallScore       Int?
+  commentsToAuthor   String   @db.Text
+  commentsToEditor   String?  @db.Text
+  recommendation     ReviewRecommendation
+  submittedAt        DateTime @default(now())
+}
+
+enum DecisionType {
+  ACCEPT
+  MINOR_REVISION
+  MAJOR_REVISION
+  REJECT
+  TRANSFER
+  WITHDRAW
+}
+
+model EditorialDecision {
+  id           String   @id @default(uuid())
+  abstractId   String
+  abstract     Abstract @relation(fields: [abstractId], references: [id], onDelete: Cascade)
+  decidedById  String
+  decidedBy    User     @relation(fields: [decidedById], references: [id])
+  decision     DecisionType
+  decisionLetter String @db.Text
+  presentationType PresentationType?
+  createdAt    DateTime @default(now())
+  isFinal      Boolean  @default(false)
+
+  @@index([abstractId])
+}
+
+// ============ MESSAGING & NOTIFICATIONS ============
+enum MessageChannel {
+  EDITOR_EDITOR
+  EDITOR_REVIEWER
+  EDITOR_AUTHOR
+  REVIEWER_EDITOR
+  SYSTEM
+}
+
+model Message {
+  id           String   @id @default(uuid())
+  abstractId   String?
+  abstract     Abstract? @relation(fields: [abstractId], references: [id])
+  channel      MessageChannel
+  senderId     String
+  sender       User     @relation("MessageSender", fields: [senderId], references: [id])
+  recipientIds String[] @default([])
+  subject      String
+  body         String   @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([abstractId])
+}
+
+enum NotificationType {
+  SUBMISSION_RECEIVED
+  ASSIGNMENT
+  REVIEW_INVITATION
+  REVIEW_REMINDER
+  DECISION
+  REVISION_REQUEST
+  MESSAGE
+  STATE_CHANGE
+  GENERIC
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       NotificationType
+  title      String
+  body       String
+  link       String?
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+// ============ DOCUMENTS ============
+enum DocumentCategory {
+  ABSTRACT
+  COVER_LETTER
+  ETHICS_APPROVAL
+  SUPPLEMENTARY
+  REVIEWER_ANNOTATION
+  REVISION
+  ACCEPTANCE_LETTER
+  ORAL_PRESENTATION
+  POSTER
+  BIOGRAPHY
+  PHOTOGRAPH
+  OTHER
+}
+
+model Document {
+  id           String   @id @default(uuid())
+  abstractId   String?
+  abstract     Abstract? @relation(fields: [abstractId], references: [id])
+  category     DocumentCategory
+  fileName     String
+  storagePath  String
+  mimeType     String?
+  sizeBytes    Int      @default(0)
+  version      Int      @default(1)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  isDeleted    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([abstractId])
+}
+
+// ============ PROGRAMME & PRESENTATION ============
+model ProgrammeSession {
+  id           String   @id @default(uuid())
+  conferenceId String
+  conference   Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  themeId      String?
+  theme        Theme?    @relation(fields: [themeId], references: [id])
+  title        String
+  room         String?
+  startTime    DateTime
+  endTime      DateTime
+  chair        String?
+  items        ProgrammeItem[]
+  createdAt    DateTime @default(now())
+}
+
+model ProgrammeItem {
+  id           String   @id @default(uuid())
+  sessionId    String
+  session      ProgrammeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  abstractId   String   @unique
+  abstract     Abstract @relation(fields: [abstractId], references: [id])
+  orderIndex   Int      @default(0)
+  durationMin  Int      @default(15)
+}
+
+// ============ REGISTRATION ============
+enum RegistrationType {
+  STANDARD
+  STUDENT
+  SPEAKER
+  INDUSTRY
+  GUEST
+}
+
+model Registration {
+  id           String   @id @default(uuid())
+  conferenceId String
+  conference   Conference @relation(fields: [conferenceId], references: [id])
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  type         RegistrationType @default(STANDARD)
+  isPaid       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@unique([conferenceId, userId])
+}
+
+// ============ AUDIT ============
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorId     String?
+  actor       User?    @relation(fields: [actorId], references: [id])
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model SystemConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
