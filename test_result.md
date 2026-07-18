@@ -259,7 +259,7 @@ backend:
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
-    working: "NA"
+    working: false
     file: "/app/app/page.js"
     stuck_count: 0
     priority: "high"
@@ -268,6 +268,50 @@ frontend:
       - working: "NA"
         agent: "main"
         comment: "Landing page, auth, role-based sidebar, dashboard with charts, submissions list, submit form, abstract detail with timeline/versions/documents/reviews/messages/history tabs, editorial panel, reviewer workspace, programme, analytics, user management, audit log."
+      - working: false
+        agent: "testing"
+        comment: |
+          FRONTEND UI TESTING COMPLETE - CRITICAL BUGS FOUND
+          
+          ✅ WORKING FEATURES:
+          1. Landing page: Hero text, 12 module cards, CONF2027 conference card all visible
+          2. Authentication: Login form pre-fills managing@scms.io, can change to other accounts, login/logout works
+          3. Dashboard: Shows welcome header, recent submissions section, role-based sidebar navigation
+          4. Role-based sidebar: Author sees Dashboard/My Abstracts/New Submission/Conferences/Programme. Managing editor sees additional Editorial Office/Analytics. Admin sees User Management/Audit Log
+          5. Sidebar active state: Correctly highlights active route with bg-indigo-600
+          6. Analytics page: Shows 4 stat cards (Users, Abstracts, Reviews, Registrations) and 4 charts (Abstracts by state, Users by role, Abstracts by theme, Editorial decisions)
+          7. User Management (admin): Shows users table with all seed accounts
+          8. Audit Log (admin): Shows audit entries with timestamps, actors, actions
+          9. Reviewer workspace: Shows completed review assignments with submission codes, status badges
+          10. Notifications bell: Opens notification panel, shows notifications list
+          11. Abstract detail tabs: All 6 tabs (Overview, Versions, Documents, Reviews, Messages, History) are clickable and render
+          12. Timeline: Submission timeline shows stages with correct styling (green for passed, indigo for current)
+          
+          ❌ CRITICAL BUGS:
+          1. **Editorial Office empty**: Managing editor sees "No abstracts match filter" even with "All states" selected. Backend API GET /abstracts returns data (verified in backend tests), but frontend EditorialOffice component is not displaying them. This blocks the entire editorial workflow testing.
+          
+          2. **Conferences page empty**: The Conferences component shows empty page with just heading. Landing page (unauthenticated) correctly shows CONF2027, but authenticated Conferences page doesn't fetch/display any conferences. Backend GET /conferences returns data (verified in backend tests).
+          
+          3. **Submission form Select components**: Unable to interact with conference/theme Select dropdowns programmatically. The form loads and shows pre-selected conference, but clicking to change selection causes issues. This may be a Playwright selector issue or a real UI bug with the shadcn Select component.
+          
+          ⚠️ UNABLE TO TEST (due to bugs above):
+          - New submission creation flow (blocked by Select component issue)
+          - Editorial actions panel (assign editor, assign reviewer, record decision) - blocked by Editorial Office being empty
+          - Complete abstract detail workflow with editorial actions
+          - Reviewer accepting invitation and submitting review for new submission
+          
+          📸 SCREENSHOTS CAPTURED:
+          - Landing page, login form, dashboards (author, managing, admin)
+          - Analytics with all charts, User Management, Audit Log
+          - Reviewer workspace, Notifications panel
+          - Editorial Office (empty), Conferences page (empty), Programme page
+          - Sidebar active states
+          
+          🔍 CONSOLE ERRORS:
+          - One 401 error from /api/auth/me (likely called before authentication, not critical)
+          - No JavaScript errors in console during testing
+          
+          RECOMMENDATION: Fix EditorialOffice and Conferences components to properly fetch and display data from backend APIs.
 
 metadata:
   created_by: "main_agent"
@@ -325,3 +369,9 @@ agent_communication:
       
       All backend APIs working correctly. State machine transitions validated. RBAC enforced properly.
       Double-blind review working. Notifications sent correctly. File upload/download functional.
+  - agent: "testing"
+    message: |
+      🔍 FRONTEND UI TESTING COMPLETE - 2 CRITICAL BUGS BLOCKING EDITORIAL WORKFLOW
+      
+      Tested comprehensive UI flows with Playwright automation. Backend APIs confirmed working (49/49 tests passed),
+      but frontend has data display issues in 2 key components.
