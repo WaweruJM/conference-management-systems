@@ -42,37 +42,7 @@ async function main() {
     }
   }
 
-  // Conference
-  const conf = await prisma.conference.upsert({
-    where: { code: 'CONF2027' },
-    update: {},
-    create: {
-      code: 'CONF2027',
-      name: 'International Conference on AI & Society 2027',
-      description: 'A premier venue bringing together researchers, practitioners, and policymakers in AI.',
-      venue: 'Vienna Congress Center',
-      city: 'Vienna',
-      country: 'Austria',
-      startDate: new Date('2027-05-15'),
-      endDate: new Date('2027-05-18'),
-      submissionOpen: new Date('2026-06-01'),
-      submissionClose: new Date('2026-11-30'),
-      registrationOpen: new Date('2026-09-01'),
-      registrationClose: new Date('2027-04-30'),
-      doubleBlind: true,
-      status: ConferenceStatus.OPEN_FOR_SUBMISSION,
-    },
-  })
-
-  const themes = ['Machine Learning', 'AI Ethics & Society', 'Computer Vision', 'Natural Language Processing', 'Robotics']
-  for (const t of themes) {
-    await prisma.theme.upsert({
-      where: { conferenceId_name: { conferenceId: conf.id, name: t } },
-      update: {},
-      create: { conferenceId: conf.id, name: t, keywords: [t.toLowerCase()] },
-    })
-  }
-
+  // Note: Conferences are NOT auto-seeded. System admin registers conferences via UI.
   console.log('Seed complete.')
   console.log('Login credentials: password = password123')
   console.log('Emails: admin@scms.io, managing@scms.io, section@scms.io, committee@scms.io, reviewer1@scms.io, reviewer2@scms.io, author@scms.io, attendee@scms.io')

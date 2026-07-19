@@ -23,10 +23,19 @@ import {
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
 } from 'lucide-react'
 
+const TOKEN_KEY = 'scms_token'
+const getToken = () => (typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null)
+const setToken = (t) => { if (typeof window !== 'undefined') { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY) } }
+
 const api = async (path, opts = {}) => {
+  const token = getToken()
   const res = await fetch(`/api${path}`, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts.headers || {}),
+    },
     credentials: 'include',
   })
   const data = await res.json().catch(() => ({}))
@@ -35,7 +44,13 @@ const api = async (path, opts = {}) => {
 }
 
 const apiUpload = async (path, formData) => {
-  const res = await fetch(`/api${path}`, { method: 'POST', body: formData, credentials: 'include' })
+  const token = getToken()
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || 'Upload failed')
   return data
@@ -51,7 +66,9 @@ function App() {
   const [route, setRoute] = useState({ name: 'dashboard' })
 
   useEffect(() => {
-    api('/auth/me').then(d => { setUser(d.user); setView('app') }).catch(() => {}).finally(() => setLoading(false))
+    const t = getToken()
+    if (!t) { setLoading(false); return }
+    api('/auth/me').then(d => { setUser(d.user); setView('app') }).catch(() => setToken(null)).finally(() => setLoading(false))
   }, [])
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>
@@ -60,7 +77,7 @@ function App() {
   if (view === 'login') return <AuthPage mode="login" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('register')} onBack={() => setView('landing')} />
   if (view === 'register') return <AuthPage mode="register" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('login')} onBack={() => setView('landing')} />
 
-  return <AppShell user={user} setUser={setUser} route={route} setRoute={setRoute} onLogout={() => { api('/auth/logout', { method: 'POST' }); setUser(null); setView('landing') }} />
+  return <AppShell user={user} setUser={setUser} route={route} setRoute={setRoute} onLogout={() => { api('/auth/logout', { method: 'POST' }).catch(() => {}); setToken(null); setUser(null); setView('landing') }} />
 }
 
 // ============ LANDING ============
@@ -183,10 +200,12 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
     try {
       if (mode === 'login') {
         const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+        setToken(d.token)
         toast.success(`Welcome back, ${d.user.firstName}!`)
         onDone(d.user)
       } else {
         const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, role }) })
+        setToken(d.token)
         toast.success('Account created')
         onDone(d.user)
       }
@@ -268,6 +287,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin },
     { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer },
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: true },
+    { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin },
@@ -369,6 +389,7 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
   if (route.name === 'reviews') return <ReviewerWorkspace setRoute={setRoute} />
   if (route.name === 'conferences') return <Conferences />
+  if (route.name === 'conference-admin') return <ConferenceAdmin />
   if (route.name === 'programme') return <Programme />
   if (route.name === 'analytics') return <Analytics />
   if (route.name === 'users') return <UserManagement />
@@ -1464,6 +1485,195 @@ function CreateUserDialog({ onClose, onDone }) {
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={submit}>Create</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ============ CONFERENCE ADMIN ============
+function ConferenceAdmin() {
+  const [list, setList] = useState([])
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [themeConfId, setThemeConfId] = useState(null)
+  const refresh = () => api('/conferences').then(d => setList(d.conferences || []))
+  useEffect(() => { refresh() }, [])
+
+  const remove = async (c) => {
+    if (!confirm(`Delete conference "${c.name}"? This removes all abstracts, reviews and data for it.`)) return
+    try { await api(`/conferences/${c.id}`, { method: 'DELETE' }); toast.success('Conference deleted'); refresh() } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Conference administration</h1>
+          <p className="text-muted-foreground">Register, edit and manage conferences and their themes</p>
+        </div>
+        <Button onClick={() => { setEditing(null); setOpen(true) }} className="bg-indigo-600 hover:bg-indigo-700">
+          <Plus className="h-4 w-4 mr-1" /> Register new conference
+        </Button>
+      </div>
+
+      {list.length === 0 ? <EmptyState label="No conferences yet. Register the first one." onAction={() => { setEditing(null); setOpen(true) }} actionLabel="Register conference" /> : (
+        <div className="grid gap-3">
+          {list.map(c => (
+            <Card key={c.id}>
+              <CardContent className="p-5">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge>{c.code}</Badge>
+                      <Badge variant="outline">{stateLabel(c.status)}</Badge>
+                      {c.doubleBlind && <Badge variant="outline">Double-blind</Badge>}
+                    </div>
+                    <div className="font-semibold text-lg">{c.name}</div>
+                    <div className="text-sm text-muted-foreground mt-1">{c.description}</div>
+                    <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                      <span>📍 {c.venue}, {c.city}, {c.country}</span>
+                      <span>📅 {c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</span>
+                      <span>📝 {c._count?.abstracts || 0} submissions</span>
+                      <span>👥 {c._count?.registrations || 0} registrations</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {c.themes?.map(t => <Badge key={t.id} variant="secondary" className="text-[10px]">{t.name}</Badge>)}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Button size="sm" variant="outline" onClick={() => { setEditing(c); setOpen(true) }}>Edit</Button>
+                    <Button size="sm" variant="outline" onClick={() => setThemeConfId(c.id)}>+ Theme</Button>
+                    <Button size="sm" variant="destructive" onClick={() => remove(c)}>Delete</Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {open && <ConferenceDialog editing={editing} onClose={() => setOpen(false)} onDone={() => { setOpen(false); refresh() }} />}
+      {themeConfId && <ThemeDialog conferenceId={themeConfId} onClose={() => setThemeConfId(null)} onDone={() => { setThemeConfId(null); refresh() }} />}
+    </div>
+  )
+}
+
+function ConferenceDialog({ editing, onClose, onDone }) {
+  const [form, setForm] = useState({
+    code: editing?.code || `CONF${new Date().getFullYear() + 1}`,
+    name: editing?.name || '',
+    description: editing?.description || '',
+    venue: editing?.venue || '',
+    city: editing?.city || '',
+    country: editing?.country || '',
+    startDate: editing?.startDate?.slice(0, 10) || '',
+    endDate: editing?.endDate?.slice(0, 10) || '',
+    submissionOpen: editing?.submissionOpen?.slice(0, 10) || '',
+    submissionClose: editing?.submissionClose?.slice(0, 10) || '',
+    registrationOpen: editing?.registrationOpen?.slice(0, 10) || '',
+    registrationClose: editing?.registrationClose?.slice(0, 10) || '',
+    doubleBlind: editing?.doubleBlind ?? true,
+    status: editing?.status || 'OPEN_FOR_SUBMISSION',
+  })
+
+  const submit = async () => {
+    if (!form.code || !form.name) return toast.error('Code and name required')
+    try {
+      const payload = { ...form }
+      // Convert date strings to ISO
+      for (const k of ['startDate','endDate','submissionOpen','submissionClose','registrationOpen','registrationClose']) {
+        payload[k] = payload[k] ? new Date(payload[k]).toISOString() : null
+      }
+      if (editing) {
+        await api(`/conferences/${editing.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+        toast.success('Conference updated')
+      } else {
+        await api('/conferences', { method: 'POST', body: JSON.stringify(payload) })
+        toast.success('Conference registered')
+      }
+      onDone()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const STATUSES = ['DRAFT','ANNOUNCED','OPEN_FOR_SUBMISSION','UNDER_REVIEW','DECISIONS_ISSUED','PROGRAMME_PUBLISHED','IN_PROGRESS','COMPLETED','ARCHIVED']
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>{editing ? 'Edit conference' : 'Register new conference'}</DialogTitle>
+          <DialogDescription>Fill in the conference details. Themes can be added after saving.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Code *</Label><Input value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="CONF2027" /></div>
+            <div><Label>Status</Label>
+              <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{stateLabel(s)}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div><Label>Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="International Conference on ..." /></div>
+          <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
+            <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
+            <div><Label>Country</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Start date</Label><Input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></div>
+            <div><Label>End date</Label><Input type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Submissions open</Label><Input type="date" value={form.submissionOpen} onChange={e => setForm({ ...form, submissionOpen: e.target.value })} /></div>
+            <div><Label>Submissions close</Label><Input type="date" value={form.submissionClose} onChange={e => setForm({ ...form, submissionClose: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Registration open</Label><Input type="date" value={form.registrationOpen} onChange={e => setForm({ ...form, registrationOpen: e.target.value })} /></div>
+            <div><Label>Registration close</Label><Input type="date" value={form.registrationClose} onChange={e => setForm({ ...form, registrationClose: e.target.value })} /></div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input id="db" type="checkbox" checked={form.doubleBlind} onChange={e => setForm({ ...form, doubleBlind: e.target.checked })} />
+            <Label htmlFor="db">Double-blind peer review (hide author identity from reviewers)</Label>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} className="bg-indigo-600 hover:bg-indigo-700">{editing ? 'Save changes' : 'Register conference'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ThemeDialog({ conferenceId, onClose, onDone }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [keywords, setKeywords] = useState('')
+  const submit = async () => {
+    if (!name) return toast.error('Theme name required')
+    try {
+      await api(`/conferences/${conferenceId}/themes`, {
+        method: 'POST',
+        body: JSON.stringify({ name, description, keywords: keywords.split(',').map(k => k.trim()).filter(Boolean) }),
+      })
+      toast.success('Theme added'); onDone()
+    } catch (e) { toast.error(e.message) }
+  }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Add scientific theme</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <div><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Computer Vision" /></div>
+          <div><Label>Description</Label><Textarea rows={2} value={description} onChange={e => setDescription(e.target.value)} /></div>
+          <div><Label>Keywords (comma separated)</Label><Input value={keywords} onChange={e => setKeywords(e.target.value)} /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit}>Add theme</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

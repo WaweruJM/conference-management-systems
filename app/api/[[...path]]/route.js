@@ -116,6 +116,31 @@ async function handleConferences(route, method, request) {
     const conf = await prisma.conference.update({ where: { id: m[1] }, data: body })
     return ok({ conference: conf })
   }
+  if (m && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN')) return err('Forbidden', 403)
+    // Cascade: delete themes, abstracts, sessions, registrations first via schema onDelete Cascade where present
+    await prisma.$transaction([
+      prisma.programmeItem.deleteMany({ where: { session: { conferenceId: m[1] } } }),
+      prisma.programmeSession.deleteMany({ where: { conferenceId: m[1] } }),
+      prisma.registration.deleteMany({ where: { conferenceId: m[1] } }),
+      prisma.workflowStateHistory.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.reviewReport.deleteMany({ where: { assignment: { abstract: { conferenceId: m[1] } } } }),
+      prisma.reviewAssignment.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.editorAssignment.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.editorialDecision.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.message.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.document.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.abstractVersion.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.abstractAuthor.deleteMany({ where: { abstract: { conferenceId: m[1] } } }),
+      prisma.abstract.deleteMany({ where: { conferenceId: m[1] } }),
+      prisma.theme.deleteMany({ where: { conferenceId: m[1] } }),
+      prisma.userRole.deleteMany({ where: { conferenceId: m[1] } }),
+      prisma.conference.delete({ where: { id: m[1] } }),
+    ])
+    await logAudit({ actorId: user.id, action: 'DELETE_CONFERENCE', entityType: 'Conference', entityId: m[1] })
+    return ok({ ok: true })
+  }
 
   const themeMatch = route.match(/^\/conferences\/([^\/]+)\/themes$/)
   if (themeMatch && method === 'POST') {
