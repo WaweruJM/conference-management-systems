@@ -56,6 +56,27 @@ const apiUpload = async (path, formData) => {
   return data
 }
 
+// ============ MESSAGING TEMPLATES ============
+const GRATITUDE_OPENINGS = [
+  { label: '— None —', value: '' },
+  { label: 'Warm thanks (formal)', value: 'Dear {authorTitle} {authorName},\n\nOn behalf of the editorial team, thank you for your valuable submission to {conferenceName}. We truly appreciate your scholarly contribution and the time you have invested in advancing this important area of research.\n\n' },
+  { label: 'Congratulations on submission', value: 'Dear {authorTitle} {authorName},\n\nCongratulations on submitting your abstract to {conferenceName}. Your interest in our conference is greatly appreciated, and we are pleased to consider your work for peer review.\n\n' },
+  { label: 'Thanks for revision', value: 'Dear {authorTitle} {authorName},\n\nThank you for your prompt and thoughtful revision of manuscript {submissionCode}. Your responsiveness to reviewer feedback is greatly valued.\n\n' },
+  { label: 'Thanks for peer review', value: 'Dear {authorTitle} {authorName},\n\nOn behalf of the editorial board of {conferenceName}, we sincerely thank you for accepting to serve as a peer reviewer. Your expertise strengthens the scientific quality of our conference.\n\n' },
+  { label: 'Acknowledgement of receipt', value: 'Dear {authorTitle} {authorName},\n\nThis is to formally acknowledge receipt of your submission {submissionCode}. It has been logged in our system and is now under editorial review.\n\n' },
+  { label: 'Straightforward greeting', value: 'Dear {authorTitle} {authorName},\n\n' },
+]
+
+const GRATITUDE_CLOSINGS = [
+  { label: '— None —', value: '' },
+  { label: 'Warm regards (formal)', value: '\n\nWe deeply appreciate your continued engagement with {conferenceName} and look forward to your response.\n\nWith warm regards,\n{editorName}\n{editorTitle}\n{conferenceName} Editorial Office' },
+  { label: 'Best wishes', value: '\n\nThank you once again for your dedication to the advancement of science. We wish you the very best.\n\nBest wishes,\n{editorName}\n{conferenceName} Editorial Office' },
+  { label: 'Encouraging', value: '\n\nWe encourage you to reach out to the editorial office through this platform should you require any clarification. Your contribution is highly valued.\n\nKind regards,\n{editorName}\nEditorial Office' },
+  { label: 'Formal close', value: '\n\nYours sincerely,\n{editorName}\n{conferenceName} Editorial Office' },
+  { label: 'Reviewer thanks (short)', value: '\n\nThank you again for your service to the scientific community.\n\nRegards,\n{editorName}' },
+  { label: 'Simple sign-off', value: '\n\nRegards,\n{editorName}' },
+]
+
 const CHART_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#84cc16']
 
 // Sample hero background images (used when conference has none)
@@ -1562,25 +1583,66 @@ function ReviewsTab({ abs, isEditor, isAdmin }) {
 function MessagesTab({ abstractId, user }) {
   const [messages, setMessages] = useState([])
   const [users, setUsers] = useState([])
+  const [documents, setDocuments] = useState([])
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [recipient, setRecipient] = useState('')
   const [channel, setChannel] = useState('EDITOR_AUTHOR')
-  const refresh = () => api(`/abstracts/${abstractId}/messages`).then(d => setMessages(d.messages || []))
+  const [openingKey, setOpeningKey] = useState('')
+  const [closingKey, setClosingKey] = useState('')
+  const [selectedDocs, setSelectedDocs] = useState([])
+  const [sending, setSending] = useState(false)
+
+  const refresh = () => {
+    api(`/abstracts/${abstractId}/messages`).then(d => setMessages(d.messages || []))
+    api(`/abstracts/${abstractId}`).then(d => setDocuments(d.abstract?.documents || []))
+  }
   useEffect(() => { refresh(); api('/users').then(d => setUsers(d.users || [])) }, [])
+
+  const recipientUser = users.find(u => u.id === recipient)
+  const conferenceName = messages[0]?.abstract?.conference?.name || 'the Conference'
+
+  const buildFullBody = () => {
+    const opening = GRATITUDE_OPENINGS.find(o => o.label === openingKey)?.value || ''
+    const closing = GRATITUDE_CLOSINGS.find(c => c.label === closingKey)?.value || ''
+    const ctx = {
+      authorTitle: recipientUser?.title || '',
+      authorName: recipientUser ? `${recipientUser.firstName} ${recipientUser.lastName}` : 'Colleague',
+      conferenceName,
+      submissionCode: '',
+      editorName: `${user.firstName} ${user.lastName}`,
+      editorTitle: user.title || '',
+    }
+    const fill = (t) => t.replace(/\{(\w+)\}/g, (_, k) => ctx[k] || '')
+    return fill(opening) + body + fill(closing)
+  }
 
   const send = async () => {
     if (!subject || !body) return toast.error('Subject and body required')
-    await api(`/abstracts/${abstractId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ subject, body, channel, recipientIds: recipient ? [recipient] : [] }),
-    })
-    setSubject(''); setBody(''); refresh(); toast.success('Message sent')
+    if (!recipient) return toast.error('Choose a recipient')
+    setSending(true)
+    try {
+      await api(`/abstracts/${abstractId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          subject, body: buildFullBody(), channel,
+          recipientIds: [recipient],
+          attachmentIds: selectedDocs,
+        }),
+      })
+      setSubject(''); setBody(''); setSelectedDocs([]); setOpeningKey(''); setClosingKey('')
+      refresh(); toast.success('Message sent — email delivered to recipient')
+    } catch (e) { toast.error(e.message) } finally { setSending(false) }
   }
+
+  const toggleDoc = (id) => setSelectedDocs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
   return (
     <Card>
-      <CardHeader><CardTitle>Internal messaging</CardTitle><CardDescription>All communication is scoped to this abstract and audited</CardDescription></CardHeader>
+      <CardHeader>
+        <CardTitle>Internal messaging (with email delivery)</CardTitle>
+        <CardDescription>All communication is scoped to this abstract, audited, and mirrored to the recipient's email inbox.</CardDescription>
+      </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2 max-h-96 overflow-auto">
           {messages.length === 0 ? <div className="text-sm text-muted-foreground text-center py-4">No messages yet</div>
@@ -1592,20 +1654,29 @@ function MessagesTab({ abstractId, user }) {
               </div>
               <div className="text-sm font-medium">{m.subject}</div>
               <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">{m.body}</p>
-              <Badge variant="outline" className="text-[10px] mt-2">{m.channel.replace('_', ' ↔ ')}</Badge>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <Badge variant="outline" className="text-[10px]">{m.channel.replace('_', ' ↔ ')}</Badge>
+                {m.attachmentIds?.length > 0 && documents.filter(d => m.attachmentIds.includes(d.id)).map(d => (
+                  <a key={d.id} href={`/api/documents/${d.id}/download`} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200">
+                    <Download className="h-3 w-3" /> {d.fileName}
+                  </a>
+                ))}
+              </div>
             </div>
           ))}
         </div>
         <Separator />
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <div className="text-sm font-semibold flex items-center gap-2"><Send className="h-4 w-4 text-indigo-600" /> Compose new message</div>
           <div className="grid grid-cols-2 gap-2">
             <Select value={channel} onValueChange={setChannel}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="EDITOR_AUTHOR">Editor ↔ Author</SelectItem>
-                <SelectItem value="EDITOR_REVIEWER">Editor ↔ Reviewer</SelectItem>
+                <SelectItem value="EDITOR_AUTHOR">Editor → Author</SelectItem>
+                <SelectItem value="EDITOR_REVIEWER">Editor → Reviewer</SelectItem>
                 <SelectItem value="EDITOR_EDITOR">Editor ↔ Editor</SelectItem>
-                <SelectItem value="REVIEWER_EDITOR">Reviewer ↔ Editor</SelectItem>
+                <SelectItem value="REVIEWER_EDITOR">Reviewer → Editor</SelectItem>
               </SelectContent>
             </Select>
             <Select value={recipient} onValueChange={setRecipient}>
@@ -1613,9 +1684,60 @@ function MessagesTab({ abstractId, user }) {
               <SelectContent>{users.filter(u => u.id !== user.id).map(u => <SelectItem key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</SelectItem>)}</SelectContent>
             </Select>
           </div>
+
+          {/* Gratitude template selectors */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Gratitude opening (auto-prefixed)</Label>
+              <Select value={openingKey} onValueChange={setOpeningKey}>
+                <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
+                <SelectContent>{GRATITUDE_OPENINGS.map(o => <SelectItem key={o.label} value={o.label}>{o.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Gratitude closing (auto-appended)</Label>
+              <Select value={closingKey} onValueChange={setClosingKey}>
+                <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
+                <SelectContent>{GRATITUDE_CLOSINGS.map(c => <SelectItem key={c.label} value={c.label}>{c.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <Input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} />
-          <Textarea placeholder="Message body" value={body} onChange={e => setBody(e.target.value)} rows={4} />
-          <Button onClick={send}><Send className="h-4 w-4 mr-1" /> Send message</Button>
+          <Textarea placeholder="Your message (opening and closing will be added automatically if selected above)" value={body} onChange={e => setBody(e.target.value)} rows={6} />
+
+          {/* Attachment picker */}
+          {documents.length > 0 && (
+            <div>
+              <Label className="text-xs">Attach documents (e.g. reviewer-annotated abstract, decision letter)</Label>
+              <div className="mt-1 border rounded-md p-2 max-h-32 overflow-auto bg-slate-50">
+                {documents.map(d => (
+                  <label key={d.id} className="flex items-center gap-2 py-1 px-1 rounded hover:bg-white cursor-pointer text-sm">
+                    <input type="checkbox" checked={selectedDocs.includes(d.id)} onChange={() => toggleDoc(d.id)} />
+                    <FileText className="h-3.5 w-3.5 text-slate-500" />
+                    <span className="flex-1">{d.fileName}</span>
+                    <Badge variant="outline" className="text-[10px]">{d.category.replace('_', ' ')}</Badge>
+                  </label>
+                ))}
+              </div>
+              {selectedDocs.length > 0 && <div className="text-[11px] text-emerald-700 mt-1">{selectedDocs.length} file(s) will be attached to the email.</div>}
+            </div>
+          )}
+
+          {/* Preview of full message */}
+          {(openingKey || closingKey) && body && (
+            <div className="border-l-4 border-indigo-300 pl-3 bg-indigo-50/40 p-2 rounded">
+              <div className="text-[11px] font-semibold text-indigo-800 mb-1">Preview (as recipient will see):</div>
+              <pre className="text-xs whitespace-pre-wrap font-sans">{buildFullBody()}</pre>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button onClick={send} disabled={sending} className="bg-indigo-600 hover:bg-indigo-700">
+              {sending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-1" />}
+              Send message + email
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

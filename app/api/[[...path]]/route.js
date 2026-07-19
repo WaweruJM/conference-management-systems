@@ -503,6 +503,7 @@ async function handleAbstracts(route, method, request) {
   }
   if (msgListMatch && method === 'POST') {
     const body = await request.json()
+    const attachmentIds = body.attachmentIds || []
     const msg = await prisma.message.create({
       data: {
         abstractId: msgListMatch[1],
@@ -511,11 +512,66 @@ async function handleAbstracts(route, method, request) {
         recipientIds: body.recipientIds || [],
         subject: body.subject || '(no subject)',
         body: body.body || '',
+        attachmentIds,
       },
       include: { sender: { select: { firstName: true, lastName: true } } },
     })
+
+    // Load recipient users + abstract for email context
+    const recipients = await prisma.user.findMany({
+      where: { id: { in: body.recipientIds || [] } },
+      select: { id: true, email: true, firstName: true, lastName: true, title: true },
+    })
+    const abs = await prisma.abstract.findUnique({
+      where: { id: msgListMatch[1] },
+      include: { conference: true },
+    })
+
+    // Load attachments if any
+    let attachments = []
+    if (attachmentIds.length > 0) {
+      const { loadAttachment } = await import('@/lib/email')
+      const docs = await prisma.document.findMany({ where: { id: { in: attachmentIds }, isDeleted: false } })
+      for (const d of docs) {
+        const a = await loadAttachment(d)
+        if (a) attachments.push(a)
+      }
+    }
+
+    // Send email to each recipient (with abstract-code context)
+    const { sendEmail } = await import('@/lib/email')
+    for (const r of recipients) {
+      const emailText = `${body.body}\n\n---\nReference: ${abs?.submissionCode || ''} — ${abs?.title || ''}\nConference: ${abs?.conference?.name || ''}\nSent via SCMS Platform on ${new Date().toLocaleString()}`
+      const emailHtml = `<div style="font-family: Arial, sans-serif; max-width: 640px; color: #1e293b;">
+        <div style="background: linear-gradient(135deg, #6366f1, #ec4899); color: white; padding: 16px 20px;">
+          <div style="font-size: 12px; opacity: 0.9;">${abs?.conference?.name || 'SCMS'}</div>
+          <div style="font-size: 18px; font-weight: bold;">${body.subject || 'Editorial Communication'}</div>
+        </div>
+        <div style="padding: 20px; background: #ffffff; border: 1px solid #e2e8f0;">
+          <div style="white-space: pre-wrap; line-height: 1.6;">${(body.body || '').replace(/</g,'&lt;')}</div>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+          <div style="font-size: 12px; color: #64748b;">
+            <b>Reference:</b> ${abs?.submissionCode || ''} — ${(abs?.title || '').replace(/</g,'&lt;')}<br />
+            <b>Sender:</b> ${user.firstName} ${user.lastName} (${user.email})<br />
+            <b>Sent:</b> ${new Date().toLocaleString()}<br />
+            ${attachments.length > 0 ? `<b>Attachments:</b> ${attachments.map(a => a.filename).join(', ')}` : ''}
+          </div>
+        </div>
+        <div style="text-align: center; padding: 12px; font-size: 11px; color: #94a3b8; background: #f8fafc; border: 1px solid #e2e8f0; border-top: 0;">
+          This message was sent via SCMS. To reply, please log in to the platform.
+        </div>
+      </div>`
+      await sendEmail({
+        to: r.email,
+        subject: `[${abs?.submissionCode || 'SCMS'}] ${body.subject || 'New editorial message'}`,
+        text: emailText,
+        html: emailHtml,
+        attachments,
+      })
+    }
+
     for (const rid of body.recipientIds || []) {
-      await createNotification(rid, 'MESSAGE', body.subject || 'New message', 'You have a new message.', `/abstracts/${msgListMatch[1]}`)
+      await createNotification(rid, 'MESSAGE', body.subject || 'New message', 'You have a new message.' + (attachments.length ? ` (${attachments.length} attachment${attachments.length > 1 ? 's' : ''})` : ''), `/abstracts/${msgListMatch[1]}`)
     }
     return ok({ message: msg })
   }

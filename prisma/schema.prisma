@@ -376,6 +376,7 @@ model Message {
   recipientIds String[] @default([])
   subject      String
   body         String   @db.Text
+  attachmentIds String[] @default([])
   createdAt    DateTime @default(now())
 
   @@index([abstractId])
