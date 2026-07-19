@@ -1,0 +1,103 @@
+ABSTRACT SUBMISSION GUIDELINES
+
+===================================================
+ABSTRACT TITLE
+===================================================
+
+1. The title, aligned with the conference theme and sub-themes should:
+   a. Be a concise statement of the main topic.
+   b. Contain a maximum of 20 words (Capitalize each word).
+   c. Be in Times New Roman, font size 12.
+
+===================================================
+CONFERENCE SUB-THEMES
+===================================================
+
+2. Indicate the sub-theme that aligns with your paper.
+
+===================================================
+AUTHOR(S) INFORMATION
+===================================================
+
+3. Provide the following details:
+   a. Names of author(s) with one of the authors clearly designated as the
+      corresponding author by use of an Asterisk *.
+      The principal author should appear first.
+   b. Contact details of the corresponding author (Email addresses and phone
+      numbers).
+   c. Authors' affiliated institutions (Affiliations should include department,
+      hospital/university/institution).
+
+===================================================
+ABSTRACT BODY
+===================================================
+
+4. Submit your abstract through the SCMS platform.
+
+   a. Be aligned with the conference theme and sub-themes.
+   b. Be a summary of key aspects of the manuscript.
+   c. Be in Times New Roman, font size 12, single spaced and NOT EXCEEDING
+      300 WORDS.
+   d. NOT include any citation.
+
+   e. For ORIGINAL PAPERS, the abstract should include a few sentences
+      from each of the following sections:
+
+      (1) Background: Crucial background, be as precise as possible to enable
+          the readers to understand your research from the onset.
+      (2) Objective: Aligned with the research problem statement/gap your
+          research is filling, must be SMART.
+      (3) Methods: Study design, study population, sampling, data collection
+          methods, data analysis etc.
+      (4) Results: Summary of major findings, with p values as appropriate;
+          aligned with your objectives.
+      (5) Conclusion: Brief overall interpretation from the results, key take
+          home or the answer to the gap the research set out to fill.
+      (6) Recommendation: Broader implications, future research.
+
+   f. For CASE REPORTS or CASE SERIES, the sub-headings are:
+
+      (1) Background: Provide a concise rationale for why the case
+          (or series) is worth reporting. Explain what is already known
+          (or not known) about the condition and what makes your case notable
+          (rare presentation, new complication, novel management, etc.)
+      (2) Objective: Clearly state the aim of your case report or series;
+          what you intend to show or highlight through this report.
+      (3) Case Presentation: Describe the case(s) in a logical/chronological
+          order, but be concise. If a case series, summarise each case
+          individually (for <4) and emphasise similarities/differences.
+          If >4 cases, summarize their similarities, then bring out their
+          uniqueness, compare and contrast to clearly communicate the
+          author's overarching theme/rationale of presenting the cases.
+      (4) Case Discussion: Interpret the case(s), compare with existing
+          literature, and highlight what is new, unexpected, or noteworthy.
+      (5) Conclusion: Summarise the main clinical message or takeaway from
+          your case(s).
+      (6) Recommendation: Provide practical suggestions based on your
+          findings. These might relate to future research, clinical practice,
+          or policy.
+
+   g. Disclosure Statement: Funding sources of the research or any parties
+      that may portend conflict of interest with the authors conducting/
+      writing the study, should be declared with their roles indicated.
+      If none exists, this still needs to be indicated as "no disclosures
+      to make" or "no conflict of interest to declare" at the end of the
+      abstract.
+
+   h. Key Words: 5 words that stand out throughout the paper to be listed
+      in a sentence separated by comma.
+
+   NOTE: The word limit of 300 is only for the BODY of the abstract.
+   It does not include the topic, authors, qualifications, affiliations,
+   institutions, key words (if any) and disclosures.
+
+===================================================
+FILE FORMAT REQUIREMENTS (for uploaded documents)
+===================================================
+
+- Format: Microsoft Word (.doc, .docx) only.
+- Maximum file size: 2 MB.
+- Document must NOT contain author names (double-blind review).
+- Font: Times New Roman, size 12, single spaced.
+
+===================================================

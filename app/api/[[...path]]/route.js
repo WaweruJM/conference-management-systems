@@ -83,6 +83,29 @@ function sanitizeUser(u) {
 }
 
 async function handleConferences(route, method, request) {
+  // Public config for header/footer/hero (no auth required)
+  if (route === '/public/config' && method === 'GET') {
+    // Featured conference or the latest non-draft one
+    let conf = await prisma.conference.findFirst({
+      where: { isFeatured: true },
+      include: { themes: true },
+    })
+    if (!conf) {
+      conf = await prisma.conference.findFirst({
+        where: { status: { not: 'DRAFT' } },
+        orderBy: { updatedAt: 'desc' },
+        include: { themes: true },
+      })
+    }
+    if (!conf) {
+      conf = await prisma.conference.findFirst({
+        orderBy: { createdAt: 'desc' },
+        include: { themes: true },
+      })
+    }
+    return ok({ conference: conf })
+  }
+
   // GET /conferences
   if (route === '/conferences' && method === 'GET') {
     const list = await prisma.conference.findMany({
@@ -165,6 +188,61 @@ async function handleConferences(route, method, request) {
     })
     return ok({ registration: reg })
   }
+
+  // Hero image upload (admin only, multipart)
+  const heroMatch = route.match(/^\/conferences\/([^\/]+)\/hero-images$/)
+  if (heroMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    const formData = await request.formData()
+    const file = formData.get('file')
+    if (!file) return err('No file')
+    if (file.size > 5 * 1024 * 1024) return err('Image too large (max 5 MB)')
+    const buf = Buffer.from(await file.arrayBuffer())
+    const safeName = `hero_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const dir = path.join(UPLOAD_DIR, 'hero', heroMatch[1])
+    await fs.mkdir(dir, { recursive: true })
+    const filePath = path.join(dir, safeName)
+    await fs.writeFile(filePath, buf)
+    const publicPath = `/api/uploads/hero/${heroMatch[1]}/${safeName}`
+    const conf = await prisma.conference.update({
+      where: { id: heroMatch[1] },
+      data: { heroImages: { push: publicPath } },
+    })
+    return ok({ conference: conf, imagePath: publicPath })
+  }
+  if (heroMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const conf = await prisma.conference.findUnique({ where: { id: heroMatch[1] } })
+    const filtered = (conf.heroImages || []).filter(p => p !== body.imagePath)
+    const updated = await prisma.conference.update({ where: { id: heroMatch[1] }, data: { heroImages: filtered } })
+    return ok({ conference: updated })
+  }
+  return null
+}
+
+// Serve uploaded images publicly
+async function handleUploadServe(route, method, request) {
+  if (method !== 'GET') return null
+  const m = route.match(/^\/uploads\/(.+)$/)
+  if (!m) return null
+  const relative = m[1]
+  const abs = path.join(UPLOAD_DIR, relative)
+  // Prevent traversal
+  if (!abs.startsWith(UPLOAD_DIR)) return err('Bad path', 400)
+  try {
+    const buf = await fs.readFile(abs)
+    const ext = path.extname(abs).toLowerCase()
+    const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' }
+    return new NextResponse(buf, { status: 200, headers: { 'Content-Type': mimeMap[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' } })
+  } catch {
+    return err('Not found', 404)
+  }
+}
+
+async function _unused() {
   return null
 }
 
@@ -212,9 +290,34 @@ async function handleAbstracts(route, method, request) {
   // CREATE
   if (route === '/abstracts' && method === 'POST') {
     const body = await request.json()
-    const { conferenceId, themeId, title, body: absBody, keywords, coverLetter, authors } = body
+    const { conferenceId, themeId, title, body: absBody, keywords, coverLetter, authors, reportType, disclosureStatement } = body
     if (!conferenceId || !title) return err('conferenceId and title required')
+    // Validate title word count (max 20)
+    const titleWords = (title || '').trim().split(/\s+/).filter(Boolean).length
+    if (titleWords > 20) return err(`Title exceeds 20 words (got ${titleWords})`)
+    // Validate body word count (max 300)
+    if (absBody) {
+      const bodyWords = (absBody || '').trim().split(/\s+/).filter(Boolean).length
+      if (bodyWords > 300) return err(`Abstract body exceeds 300 words (got ${bodyWords})`)
+    }
     const code = await generateSubmissionCode(conferenceId)
+    const authorsData = (authors && authors.length ? authors : [{
+      fullName: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      affiliation: user.affiliation,
+      isCorresponding: true,
+      orderIndex: 0,
+      userId: user.id,
+    }]).map((a, i) => ({
+      userId: a.userId || (i === 0 ? user.id : null),
+      fullName: a.fullName,
+      email: a.email,
+      phone: a.phone || null,
+      department: a.department || null,
+      affiliation: a.affiliation || null,
+      isCorresponding: !!a.isCorresponding,
+      orderIndex: a.orderIndex ?? i,
+    }))
     const abstract = await prisma.abstract.create({
       data: {
         submissionCode: code,
@@ -222,11 +325,11 @@ async function handleAbstracts(route, method, request) {
         themeId: themeId || null,
         submittedById: user.id,
         title,
+        reportType: reportType || 'ORIGINAL_RESEARCH',
+        disclosureStatement: disclosureStatement || null,
         keywords: keywords || [],
         currentState: 'DRAFT',
-        authors: {
-          create: (authors && authors.length ? authors : [{ fullName: `${user.firstName} ${user.lastName}`, email: user.email, affiliation: user.affiliation, isCorresponding: true, orderIndex: 0, userId: user.id }]),
-        },
+        authors: { create: authorsData },
         versions: { create: { versionNumber: 1, title, body: absBody || '', keywords: keywords || [], coverLetter: coverLetter || null, createdById: user.id } },
         stateHistory: { create: { newState: 'DRAFT', actorId: user.id, comment: 'Draft created' } },
       },
@@ -717,6 +820,7 @@ async function router(request, { params }) {
     let r = null
     if (route === '/' || route === '/root') return ok({ ok: true, service: 'SCMS API', version: '1.0.0' })
     if (route === '/state-transitions' && method === 'GET') return ok({ transitions: STATE_TRANSITIONS })
+    r = await handleUploadServe(route, method, request); if (r) return r
     r = await handleAuth(route, method, request); if (r) return r
     r = await handleConferences(route, method, request); if (r) return r
     r = await handleAbstracts(route, method, request); if (r) return r

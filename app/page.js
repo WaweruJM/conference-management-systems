@@ -58,6 +58,128 @@ const apiUpload = async (path, formData) => {
 
 const CHART_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#84cc16']
 
+// Sample hero background images (used when conference has none)
+const DEFAULT_HERO_IMAGES = [
+  'https://images.unsplash.com/photo-1505373877841-8d25f7d46678?auto=format&fit=crop&w=1920&q=70',
+  'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1920&q=70',
+  'https://images.pexels.com/photos/276175/pexels-photo-276175.jpeg?auto=compress&cs=tinysrgb&w=1920',
+  'https://images.pexels.com/photos/9275222/pexels-photo-9275222.jpeg?auto=compress&cs=tinysrgb&w=1920',
+  'https://images.pexels.com/photos/34774347/pexels-photo-34774347.jpeg?auto=compress&cs=tinysrgb&w=1920',
+]
+
+const WORD_LIMIT = 300
+const TITLE_WORD_LIMIT = 20
+const MAX_DOC_SIZE_BYTES = 2 * 1024 * 1024 // 2 MB
+const ALLOWED_DOC_EXTS = ['.doc', '.docx']
+
+const countWords = (s) => (s || '').trim().split(/\s+/).filter(Boolean).length
+
+// Rotating hero carousel
+function HeroCarousel({ images, height = 'h-[420px]' }) {
+  const imgs = (images && images.length) ? images.map(p => p.startsWith('/api/') ? p : p) : DEFAULT_HERO_IMAGES
+  const [idx, setIdx] = useState(0)
+  useEffect(() => { const i = setInterval(() => setIdx(v => (v + 1) % imgs.length), 5000); return () => clearInterval(i) }, [imgs.length])
+  return (
+    <div className={`relative w-full ${height} overflow-hidden`}>
+      {imgs.map((src, i) => (
+        <div key={i} className={`absolute inset-0 transition-opacity duration-1000 ${i === idx ? 'opacity-100' : 'opacity-0'}`}>
+          <img src={src} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Fixed public site chrome (header + nav + footer)
+function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPublicView }) {
+  const title = conf?.name || 'Scientific Conference'
+  const code = conf?.code || ''
+  const themeText = conf?.theme || conf?.subtitle || conf?.description || 'Advancing Science Through Rigorous Peer Review'
+
+  const navItems = [
+    { key: 'home', label: 'Home' },
+    { key: 'guidelines', label: 'Abstract Submission Guidelines' },
+    { key: 'venue', label: 'Venue & Dates' },
+    { key: 'themes', label: 'Themes' },
+    { key: 'contact', label: 'Contact' },
+  ]
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      {/* Fixed header */}
+      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b shadow-sm">
+        <div className="container mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <button onClick={() => setPublicView && setPublicView('home')} className="flex items-center gap-3 text-left">
+            <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white font-bold text-lg">S</div>
+            <div>
+              <div className="font-bold tracking-tight text-lg leading-tight">{title}</div>
+              {code && <div className="text-[11px] text-muted-foreground -mt-0.5">{code} · Scientific Conference Management System</div>}
+            </div>
+          </button>
+          <div className="flex gap-2 items-center">
+            {onSignIn && <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>}
+            {onRegister && <Button size="sm" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">Get started</Button>}
+          </div>
+        </div>
+        {/* Nav bar */}
+        <nav className="border-t bg-slate-50">
+          <div className="container mx-auto px-6 flex flex-wrap gap-1">
+            {navItems.map(n => (
+              <button key={n.key}
+                onClick={() => setPublicView && setPublicView(n.key)}
+                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'}`}>
+                {n.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      </header>
+
+      <main className="flex-1">{children}</main>
+
+      {/* Fixed footer */}
+      <footer className="border-t bg-slate-900 text-slate-100 mt-12">
+        <div className="container mx-auto px-6 py-8 grid md:grid-cols-3 gap-6">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="h-8 w-8 rounded bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold">S</div>
+              <div className="font-bold">{code || 'SCMS'}</div>
+            </div>
+            <div className="text-sm text-slate-300 italic">"{themeText}"</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Quick Links</div>
+            <div className="space-y-1 text-sm">
+              <button onClick={() => setPublicView && setPublicView('guidelines')} className="block text-slate-300 hover:text-white">Submission Guidelines</button>
+              <button onClick={() => setPublicView && setPublicView('venue')} className="block text-slate-300 hover:text-white">Venue & Dates</button>
+              <a href="/api/uploads/../../public/abstract-guidelines.txt" onClick={(e) => { e.preventDefault(); downloadGuidelines() }} className="block text-slate-300 hover:text-white">Download Guidelines</a>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Contact</div>
+            <div className="text-sm text-slate-300 space-y-1">
+              {conf?.contactEmail && <div>📧 {conf.contactEmail}</div>}
+              {conf?.contactPhone && <div>📞 {conf.contactPhone}</div>}
+              {conf?.venue && <div>📍 {conf.venue}, {conf.city}</div>}
+            </div>
+          </div>
+        </div>
+        <div className="border-t border-slate-800 py-3 text-center text-xs text-slate-500">
+          © {new Date().getFullYear()} {title} · Powered by SCMS
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+function downloadGuidelines() {
+  const link = document.createElement('a')
+  link.href = '/abstract-guidelines.txt'
+  link.download = 'Abstract_Submission_Guidelines.txt'
+  link.click()
+}
+
 // ============ MAIN APP ============
 function App() {
   const [user, setUser] = useState(null)
@@ -83,50 +205,74 @@ function App() {
 // ============ LANDING ============
 function Landing({ onLogin, onRegister }) {
   const [conferences, setConferences] = useState([])
-  useEffect(() => { api('/conferences').then(d => setConferences(d.conferences || [])).catch(() => {}) }, [])
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      <header className="border-b bg-white/70 backdrop-blur sticky top-0 z-40">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white font-bold">S</div>
-            <div>
-              <div className="font-bold tracking-tight text-lg">SCMS</div>
-              <div className="text-[10px] text-muted-foreground -mt-1">Scientific Conference Management</div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onLogin}>Sign in</Button>
-            <Button onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">Get started</Button>
-          </div>
-        </div>
-      </header>
+  const [featured, setFeatured] = useState(null)
+  const [view, setView] = useState('home')
+  useEffect(() => {
+    api('/conferences').then(d => setConferences(d.conferences || [])).catch(() => {})
+    api('/public/config').then(d => setFeatured(d.conference)).catch(() => {})
+  }, [])
 
-      <section className="container mx-auto px-6 py-20 lg:py-28">
-        <div className="max-w-3xl">
-          <Badge variant="outline" className="mb-4 border-indigo-200 bg-indigo-50 text-indigo-700">Enterprise conference platform</Badge>
-          <h1 className="text-5xl lg:text-6xl font-bold tracking-tight leading-tight">
-            The complete lifecycle for <span className="bg-gradient-to-r from-indigo-600 to-fuchsia-600 bg-clip-text text-transparent">scientific conferences</span>
-          </h1>
-          <p className="mt-6 text-xl text-muted-foreground leading-relaxed">
-            Submission, editorial review, peer review, revisions, decisions, programme scheduling,
-            presentation management and long-term archive — all in one enterprise-grade platform.
-          </p>
-          <div className="mt-8 flex gap-3">
-            <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
-              Create an account <ChevronRight className="ml-1 h-4 w-4" />
-            </Button>
-            <Button size="lg" variant="outline" onClick={onLogin}>Sign in to platform</Button>
-          </div>
-          <div className="mt-6 text-sm text-muted-foreground">
-            Try demo accounts (password: <code className="bg-slate-100 px-1.5 py-0.5 rounded">password123</code>):
-            <span className="ml-1">admin@scms.io · managing@scms.io · section@scms.io · reviewer1@scms.io · author@scms.io</span>
+  return (
+    <PublicChrome conf={featured} onSignIn={onLogin} onRegister={onRegister} currentView={view} setPublicView={setView}>
+      {view === 'home' && <PublicHome featured={featured} conferences={conferences} onRegister={onRegister} onLogin={onLogin} />}
+      {view === 'guidelines' && <PublicGuidelines />}
+      {view === 'venue' && <PublicVenue conf={featured} />}
+      {view === 'themes' && <PublicThemes conf={featured} />}
+      {view === 'contact' && <PublicContact conf={featured} />}
+    </PublicChrome>
+  )
+}
+
+function PublicHome({ featured, conferences, onRegister, onLogin }) {
+  const heroImages = featured?.heroImages && featured.heroImages.length > 0 ? featured.heroImages : DEFAULT_HERO_IMAGES
+  return (
+    <div>
+      {/* Hero section with rotating background */}
+      <section className="relative">
+        <HeroCarousel images={heroImages} height="h-[560px]" />
+        <div className="absolute inset-0 flex items-center">
+          <div className="container mx-auto px-6">
+            <div className="max-w-3xl text-white">
+              {featured?.code && <Badge className="mb-4 bg-indigo-600 hover:bg-indigo-600 text-white border-0">{featured.code}</Badge>}
+              <h1 className="text-4xl lg:text-6xl font-bold tracking-tight leading-tight drop-shadow-lg">
+                {featured?.name || 'Scientific Conference Management System'}
+              </h1>
+              {featured?.subtitle && <p className="mt-3 text-xl lg:text-2xl opacity-95">{featured.subtitle}</p>}
+              <p className="mt-4 text-lg opacity-90 max-w-2xl drop-shadow">
+                {featured?.description || 'The complete lifecycle for scientific conferences — submission, peer review, revisions, programme scheduling and long-term archive.'}
+              </p>
+              <div className="mt-8 flex gap-3">
+                <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
+                  Register / Submit abstract <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+                <Button size="lg" variant="outline" onClick={onLogin} className="bg-white/10 border-white text-white hover:bg-white/20">Sign in</Button>
+              </div>
+              {featured?.startDate && (
+                <div className="mt-6 flex flex-wrap gap-4 text-sm opacity-95">
+                  <span>📅 {new Date(featured.startDate).toLocaleDateString()} – {featured.endDate && new Date(featured.endDate).toLocaleDateString()}</span>
+                  <span>📍 {featured.venue}, {featured.city}, {featured.country}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="container mx-auto px-6 pb-20">
-        <h2 className="text-2xl font-bold mb-6">Twelve integrated modules</h2>
+      {/* Info strip */}
+      {featured && (
+        <section className="bg-white border-b">
+          <div className="container mx-auto px-6 py-6 grid md:grid-cols-4 gap-4 text-center">
+            <div><div className="text-2xl font-bold text-indigo-600">{featured.themes?.length || 0}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Sub-themes</div></div>
+            <div><div className="text-2xl font-bold text-indigo-600">{featured.submissionClose ? new Date(featured.submissionClose).toLocaleDateString() : '—'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Submission Deadline</div></div>
+            <div><div className="text-2xl font-bold text-indigo-600">{featured.doubleBlind ? 'Yes' : 'Optional'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Double-blind Review</div></div>
+            <div><div className="text-2xl font-bold text-indigo-600">{stateLabel(featured.status)}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Status</div></div>
+          </div>
+        </section>
+      )}
+
+      {/* Modules */}
+      <section className="container mx-auto px-6 py-16">
+        <h2 className="text-2xl font-bold mb-6">Comprehensive conference platform</h2>
         <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
           {[
             { icon: Globe, label: 'Public website' },
@@ -151,8 +297,8 @@ function Landing({ onLogin, onRegister }) {
       </section>
 
       {conferences.length > 0 && (
-        <section className="container mx-auto px-6 pb-20">
-          <h2 className="text-2xl font-bold mb-6">Upcoming conferences</h2>
+        <section className="container mx-auto px-6 pb-16">
+          <h2 className="text-2xl font-bold mb-6">All conferences</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
             {conferences.map(c => (
               <Card key={c.id} className="hover:shadow-lg transition">
@@ -162,7 +308,7 @@ function Landing({ onLogin, onRegister }) {
                     <Badge variant="outline">{stateLabel(c.status)}</Badge>
                   </div>
                   <CardTitle className="text-lg mt-2">{c.name}</CardTitle>
-                  <CardDescription>{c.venue}, {c.city}, {c.country}</CardDescription>
+                  <CardDescription>{c.venue}{c.city && `, ${c.city}`}{c.country && `, ${c.country}`}</CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm text-muted-foreground space-y-1">
                   <div>{c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</div>
@@ -174,11 +320,88 @@ function Landing({ onLogin, onRegister }) {
         </section>
       )}
 
-      <footer className="border-t bg-slate-50 py-8">
-        <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-          SCMS · Enterprise Scientific Conference Management · Next.js + PostgreSQL + Prisma
+      <div className="text-center text-sm text-muted-foreground py-6 border-t">
+        Demo accounts (password: <code className="bg-slate-100 px-1.5 py-0.5 rounded">password123</code>):{' '}
+        admin@scms.io · managing@scms.io · section@scms.io · reviewer1@scms.io · author@scms.io
+      </div>
+    </div>
+  )
+}
+
+function PublicGuidelines() {
+  const [txt, setTxt] = useState('')
+  useEffect(() => { fetch('/abstract-guidelines.txt').then(r => r.text()).then(setTxt).catch(() => setTxt('Failed to load')) }, [])
+  return (
+    <div className="container mx-auto px-6 py-10 max-w-4xl">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold">Abstract Submission Guidelines</h1>
+          <p className="text-muted-foreground mt-1">Please read carefully before submitting your abstract.</p>
         </div>
-      </footer>
+        <Button onClick={downloadGuidelines} className="bg-indigo-600 hover:bg-indigo-700"><Download className="h-4 w-4 mr-1" /> Download</Button>
+      </div>
+      <Card>
+        <CardContent className="p-6">
+          <pre className="whitespace-pre-wrap text-sm leading-relaxed font-mono">{txt}</pre>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function PublicVenue({ conf }) {
+  return (
+    <div className="container mx-auto px-6 py-10 max-w-4xl">
+      <h1 className="text-3xl font-bold mb-6">Venue & Dates</h1>
+      {conf ? (
+        <Card>
+          <CardHeader><CardTitle>{conf.name}</CardTitle><CardDescription>{conf.subtitle}</CardDescription></CardHeader>
+          <CardContent className="space-y-3 text-base">
+            <div className="grid md:grid-cols-2 gap-4">
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Venue</div><div className="font-medium">{conf.venue || '—'}</div></div>
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">City / Country</div><div className="font-medium">{conf.city}{conf.country && `, ${conf.country}`}</div></div>
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Conference dates</div><div className="font-medium">{conf.startDate && new Date(conf.startDate).toLocaleDateString()} – {conf.endDate && new Date(conf.endDate).toLocaleDateString()}</div></div>
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Submission window</div><div className="font-medium">{conf.submissionOpen && new Date(conf.submissionOpen).toLocaleDateString()} – {conf.submissionClose && new Date(conf.submissionClose).toLocaleDateString()}</div></div>
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Registration window</div><div className="font-medium">{conf.registrationOpen && new Date(conf.registrationOpen).toLocaleDateString()} – {conf.registrationClose && new Date(conf.registrationClose).toLocaleDateString()}</div></div>
+              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Status</div><div className="font-medium">{stateLabel(conf.status)}</div></div>
+            </div>
+            {conf.description && <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1 mt-4">About</div><p className="text-sm leading-relaxed">{conf.description}</p></div>}
+          </CardContent>
+        </Card>
+      ) : <div className="text-muted-foreground">No conference registered yet.</div>}
+    </div>
+  )
+}
+
+function PublicThemes({ conf }) {
+  return (
+    <div className="container mx-auto px-6 py-10 max-w-4xl">
+      <h1 className="text-3xl font-bold mb-6">Conference sub-themes</h1>
+      {conf?.themes?.length ? (
+        <div className="grid md:grid-cols-2 gap-4">
+          {conf.themes.map(t => (
+            <Card key={t.id}>
+              <CardHeader><CardTitle className="text-lg">{t.name}</CardTitle></CardHeader>
+              {t.description && <CardContent className="text-sm text-muted-foreground">{t.description}</CardContent>}
+            </Card>
+          ))}
+        </div>
+      ) : <div className="text-muted-foreground">No sub-themes defined yet.</div>}
+    </div>
+  )
+}
+
+function PublicContact({ conf }) {
+  return (
+    <div className="container mx-auto px-6 py-10 max-w-2xl">
+      <h1 className="text-3xl font-bold mb-6">Contact</h1>
+      <Card>
+        <CardContent className="p-6 space-y-2">
+          <div>📧 {conf?.contactEmail || 'contact@conference.org'}</div>
+          <div>📞 {conf?.contactPhone || 'Not provided'}</div>
+          <div>📍 {conf?.venue}{conf?.city && `, ${conf.city}`}{conf?.country && `, ${conf.country}`}</div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -269,16 +492,23 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
 // ============ APP SHELL ============
 function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const [notifs, setNotifs] = useState([])
+  const [featured, setFeatured] = useState(null)
   const roles = user.roles.map(r => r.role)
   const isAdmin = roles.includes('SYSTEM_ADMIN')
   const isEditor = roles.some(r => ['MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER'].includes(r))
   const isReviewer = roles.some(r => ['EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER'].includes(r))
-  const isAuthor = roles.includes('AUTHOR') || roles.includes('ATTENDEE') || true // any user can author
 
   const refreshNotifs = () => api('/notifications').then(d => setNotifs(d.notifications || [])).catch(() => {})
-  useEffect(() => { refreshNotifs(); const i = setInterval(refreshNotifs, 30000); return () => clearInterval(i) }, [])
+  useEffect(() => {
+    refreshNotifs()
+    api('/public/config').then(d => setFeatured(d.conference)).catch(() => {})
+    const i = setInterval(refreshNotifs, 30000)
+    return () => clearInterval(i)
+  }, [])
 
   const unread = notifs.filter(n => !n.isRead).length
+  const confTitle = featured?.name || 'Scientific Conference Platform'
+  const confTheme = featured?.theme || featured?.subtitle || featured?.description || 'Advancing Science Through Rigorous Peer Review'
 
   const nav = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
@@ -335,13 +565,20 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
 
       {/* Main */}
       <main className="flex-1 flex flex-col">
-        <header className="h-14 border-b bg-white flex items-center justify-between px-6">
-          <div className="text-sm text-muted-foreground">{route.name === 'abstract' ? 'Abstract detail' : nav.find(n => n.key === route.name)?.label || 'SCMS'}</div>
+        <header className="h-16 border-b bg-white flex items-center justify-between px-6 shadow-sm">
+          <div>
+            <div className="text-base font-bold tracking-tight">{confTitle}</div>
+            <div className="text-xs text-muted-foreground">{route.name === 'abstract' ? 'Abstract detail' : nav.find(n => n.key === route.name)?.label || 'SCMS'}</div>
+          </div>
           <NotificationsBell notifs={notifs} onOpen={(n) => { if (n.link?.startsWith('/abstracts/')) setRoute({ name: 'abstract', id: n.link.split('/')[2] }); api(`/notifications/${n.id}/read`, { method: 'POST' }).then(refreshNotifs) }} onReadAll={() => api('/notifications/read-all', { method: 'POST' }).then(refreshNotifs)} unread={unread} />
         </header>
         <div className="flex-1 overflow-auto">
-          <ViewRouter route={route} setRoute={setRoute} user={user} setUser={setUser} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} />
+          <ViewRouter route={route} setRoute={setRoute} user={user} setUser={setUser} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} featured={featured} />
         </div>
+        {/* App footer with conference theme */}
+        <footer className="border-t bg-slate-900 text-slate-200 px-6 py-3 text-center text-sm italic">
+          "{confTheme}" · {featured?.code || 'SCMS'}
+        </footer>
       </main>
     </div>
   )
@@ -546,16 +783,22 @@ function EmptyState({ label, onAction, actionLabel }) {
   )
 }
 
-// ============ SUBMIT ABSTRACT ============
+// ============ SUBMIT ABSTRACT (enhanced per guidelines) ============
 function SubmitAbstract({ setRoute, user }) {
   const [conferences, setConferences] = useState([])
   const [conferenceId, setConferenceId] = useState('')
   const [themeId, setThemeId] = useState('')
+  const [reportType, setReportType] = useState('ORIGINAL_RESEARCH')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [keywords, setKeywords] = useState('')
+  const [disclosureStatement, setDisclosureStatement] = useState('')
   const [coverLetter, setCoverLetter] = useState('')
+  const [authors, setAuthors] = useState([
+    { fullName: `${user.firstName} ${user.lastName}`, email: user.email, phone: '', department: '', affiliation: user.affiliation || '', isCorresponding: true, orderIndex: 0 },
+  ])
   const [loading, setLoading] = useState(false)
+  const [docFile, setDocFile] = useState(null)
 
   useEffect(() => { api('/conferences').then(d => {
     setConferences(d.conferences || [])
@@ -563,19 +806,67 @@ function SubmitAbstract({ setRoute, user }) {
   }) }, [])
 
   const themes = conferences.find(c => c.id === conferenceId)?.themes || []
+  const titleWordCount = countWords(title)
+  const bodyWordCount = countWords(body)
+  const keywordList = keywords.split(',').map(k => k.trim()).filter(Boolean)
+
+  const titleValid = titleWordCount <= TITLE_WORD_LIMIT
+  const bodyValid = bodyWordCount <= WORD_LIMIT
+
+  const addAuthor = () => setAuthors([...authors, { fullName: '', email: '', phone: '', department: '', affiliation: '', isCorresponding: false, orderIndex: authors.length }])
+  const updateAuthor = (i, patch) => setAuthors(authors.map((a, idx) => idx === i ? { ...a, ...patch } : a))
+  const removeAuthor = (i) => setAuthors(authors.filter((_, idx) => idx !== i))
+  const setCorresponding = (i) => setAuthors(authors.map((a, idx) => ({ ...a, isCorresponding: idx === i })))
+
+  const validateDocFile = (file) => {
+    if (!file) return null
+    const ext = ('.' + (file.name.split('.').pop() || '').toLowerCase())
+    if (!ALLOWED_DOC_EXTS.includes(ext)) return `Only ${ALLOWED_DOC_EXTS.join(', ')} files are accepted (got ${ext})`
+    if (file.size > MAX_DOC_SIZE_BYTES) return `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB exceeds 2 MB limit`
+    return null
+  }
+
+  const onDocChange = (e) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const err = validateDocFile(f)
+    if (err) { toast.error(err); e.target.value = ''; setDocFile(null); return }
+    setDocFile(f)
+    toast.success(`Selected: ${f.name} (${(f.size / 1024).toFixed(1)} KB)`)
+  }
 
   const submit = async (asDraft) => {
-    if (!conferenceId || !title || !body) { toast.error('Fill required fields'); return }
+    // Validations
+    if (!conferenceId) return toast.error('Choose a conference')
+    if (!title) return toast.error('Enter a title')
+    if (titleWordCount > TITLE_WORD_LIMIT) return toast.error(`Title exceeds ${TITLE_WORD_LIMIT} words`)
+    if (!body && !docFile) return toast.error('Enter abstract body or upload a Word document')
+    if (body && bodyWordCount > WORD_LIMIT) return toast.error(`Abstract body exceeds ${WORD_LIMIT} words (currently ${bodyWordCount})`)
+    if (!authors.some(a => a.isCorresponding)) return toast.error('Mark at least one author as corresponding')
+    if (authors.some(a => !a.fullName || !a.email)) return toast.error('Each author must have name and email')
+    if (keywordList.length > 5) return toast.error('Maximum 5 keywords allowed')
+    if (docFile) {
+      const err = validateDocFile(docFile)
+      if (err) return toast.error(err)
+    }
+
     setLoading(true)
     try {
       const d = await api('/abstracts', {
         method: 'POST',
         body: JSON.stringify({
-          conferenceId, themeId: themeId || null, title, body,
-          keywords: keywords.split(',').map(k => k.trim()).filter(Boolean),
-          coverLetter,
+          conferenceId, themeId: themeId || null, title,
+          reportType, body, keywords: keywordList, coverLetter,
+          disclosureStatement, authors,
         }),
       })
+      // Upload the doc file if provided
+      if (docFile) {
+        const fd = new FormData()
+        fd.append('file', docFile)
+        fd.append('category', 'ABSTRACT')
+        await apiUpload(`/abstracts/${d.abstract.id}/documents`, fd)
+      }
       if (!asDraft) {
         await api(`/abstracts/${d.abstract.id}/submit`, { method: 'POST' })
         toast.success(`Submitted as ${d.abstract.submissionCode}`)
@@ -586,15 +877,56 @@ function SubmitAbstract({ setRoute, user }) {
     } catch (e) { toast.error(e.message) } finally { setLoading(false) }
   }
 
+  const SECTION_HINTS_ORIG = [
+    ['Background', 'Crucial background to enable readers to understand your research from the onset.'],
+    ['Objective', 'Aligned with the research problem/gap; must be SMART.'],
+    ['Methods', 'Study design, population, sampling, data collection, analysis.'],
+    ['Results', 'Summary of major findings with p-values where appropriate.'],
+    ['Conclusion', 'Brief interpretation; key take-home message.'],
+    ['Recommendation', 'Broader implications, future research.'],
+  ]
+  const SECTION_HINTS_CASE = [
+    ['Background', 'Concise rationale — what is known/unknown, what makes it notable.'],
+    ['Objective', 'Aim of the case report/series.'],
+    ['Case Presentation', 'Logical/chronological description. Summarise each case.'],
+    ['Case Discussion', 'Interpretation, comparison with literature, novelty.'],
+    ['Conclusion', 'Main clinical message/takeaway.'],
+    ['Recommendation', 'Practical suggestions — research, clinical practice, policy.'],
+  ]
+  const sectionHints = reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES' ? SECTION_HINTS_CASE : SECTION_HINTS_ORIG
+
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">New abstract submission</h1>
-        <p className="text-muted-foreground">Submit an abstract for peer review</p>
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-6 flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">New abstract submission</h1>
+          <p className="text-muted-foreground">Submit an abstract for peer review</p>
+        </div>
+        <Button variant="outline" onClick={downloadGuidelines}><Download className="h-4 w-4 mr-1" /> Guidelines</Button>
       </div>
+
+      {/* Recommendations alert */}
+      <Card className="mb-4 border-amber-200 bg-amber-50">
+        <CardContent className="p-4">
+          <div className="flex gap-2 items-start">
+            <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <div className="font-semibold text-amber-900 mb-1">Please read before submitting</div>
+              <ul className="list-disc list-inside space-y-0.5 text-amber-800">
+                <li>Title: max <b>{TITLE_WORD_LIMIT} words</b> (capitalize each word), Times New Roman size 12.</li>
+                <li>Abstract body: max <b>{WORD_LIMIT} words</b>, no citations.</li>
+                <li>Uploaded Word document: <b>.doc / .docx only</b>, max <b>2 MB</b>. Must NOT include author names (double-blind).</li>
+                <li>Provide 5 keywords, disclosure statement (or "no conflict of interest to declare"), and one corresponding author (*).</li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
-        <CardContent className="p-6 space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
+        <CardContent className="p-6 space-y-5">
+          {/* Conference + sub-theme + report type */}
+          <div className="grid md:grid-cols-3 gap-3">
             <div>
               <Label>Conference *</Label>
               <Select value={conferenceId} onValueChange={setConferenceId}>
@@ -603,32 +935,124 @@ function SubmitAbstract({ setRoute, user }) {
               </Select>
             </div>
             <div>
-              <Label>Scientific theme</Label>
+              <Label>Sub-theme *</Label>
               <Select value={themeId} onValueChange={setThemeId}>
-                <SelectTrigger><SelectValue placeholder="Choose theme" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Choose sub-theme" /></SelectTrigger>
                 <SelectContent>{themes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
+            <div>
+              <Label>Report type</Label>
+              <Select value={reportType} onValueChange={setReportType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ORIGINAL_RESEARCH">Original research</SelectItem>
+                  <SelectItem value="CASE_REPORT">Case report</SelectItem>
+                  <SelectItem value="CASE_SERIES">Case series</SelectItem>
+                  <SelectItem value="REVIEW">Review</SelectItem>
+                  <SelectItem value="OTHER">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+
+          {/* Title */}
           <div>
-            <Label>Title *</Label>
-            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Enter abstract title" />
+            <div className="flex justify-between items-center">
+              <Label>Title * (max {TITLE_WORD_LIMIT} words, Capitalize Each Word)</Label>
+              <span className={`text-xs ${titleValid ? 'text-muted-foreground' : 'text-red-600 font-semibold'}`}>{titleWordCount}/{TITLE_WORD_LIMIT} words</span>
+            </div>
+            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Concise Statement Of The Main Topic" className={!titleValid ? 'border-red-400' : ''} />
           </div>
+
+          {/* Authors */}
           <div>
-            <Label>Abstract body *</Label>
-            <Textarea value={body} onChange={e => setBody(e.target.value)} rows={10} placeholder="Enter your abstract text (background, methods, results, conclusions)" />
+            <div className="flex justify-between items-center mb-2">
+              <Label>Author(s) * — mark one corresponding author with *</Label>
+              <Button size="sm" variant="outline" onClick={addAuthor}><Plus className="h-4 w-4 mr-1" /> Add author</Button>
+            </div>
+            <div className="space-y-2">
+              {authors.map((a, i) => (
+                <div key={i} className="border rounded-md p-3 bg-slate-50/50">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-2 py-0.5 bg-slate-200 rounded">#{i + 1}{i === 0 ? ' (principal)' : ''}</span>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="radio" name="corr" checked={a.isCorresponding} onChange={() => setCorresponding(i)} />
+                        Corresponding *
+                      </label>
+                    </div>
+                    {authors.length > 1 && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => removeAuthor(i)}>Remove</Button>}
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-2">
+                    <Input placeholder="Full name (e.g. Dr. Jane Doe)" value={a.fullName} onChange={e => updateAuthor(i, { fullName: e.target.value })} />
+                    <Input placeholder="Email *" type="email" value={a.email} onChange={e => updateAuthor(i, { email: e.target.value })} />
+                    <Input placeholder={a.isCorresponding ? 'Phone (required for corresponding)' : 'Phone (optional)'} value={a.phone} onChange={e => updateAuthor(i, { phone: e.target.value })} />
+                    <Input placeholder="Department (e.g. Cardiology)" value={a.department} onChange={e => updateAuthor(i, { department: e.target.value })} />
+                    <Input className="md:col-span-2" placeholder="Affiliated institution (Hospital / University)" value={a.affiliation} onChange={e => updateAuthor(i, { affiliation: e.target.value })} />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {/* Abstract body input + doc upload */}
           <div>
-            <Label>Keywords (comma separated)</Label>
-            <Input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="e.g. neural networks, transformer, NLP" />
+            <div className="flex justify-between items-center mb-2">
+              <Label>Abstract body — max {WORD_LIMIT} words, no citations</Label>
+              <span className={`text-xs ${bodyValid ? 'text-muted-foreground' : 'text-red-600 font-semibold'}`}>{bodyWordCount}/{WORD_LIMIT} words</span>
+            </div>
+            <div className="grid md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <Textarea rows={12} value={body} onChange={e => setBody(e.target.value)}
+                  className={!bodyValid ? 'border-red-400' : ''}
+                  placeholder={`Structure your abstract with:\n\n${sectionHints.map(([h, hint]) => `${h}: ${hint}`).join('\n\n')}`} />
+              </div>
+              <div className="border rounded-md p-3 bg-indigo-50/50 border-indigo-200">
+                <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><FileUp className="h-4 w-4 text-indigo-600" /> Or upload Word document</div>
+                <div className="text-xs text-muted-foreground mb-2">
+                  <b>.doc / .docx</b> only<br />
+                  Max size: <b>2 MB</b><br />
+                  Must NOT contain author names (double-blind).
+                </div>
+                <input type="file" accept=".doc,.docx" onChange={onDocChange} className="text-xs w-full" />
+                {docFile && (
+                  <div className="mt-2 p-2 bg-white rounded border text-xs">
+                    <div className="font-medium">{docFile.name}</div>
+                    <div className="text-muted-foreground">{(docFile.size / 1024).toFixed(1)} KB</div>
+                    <button className="text-red-600 mt-1" onClick={() => setDocFile(null)}>Remove</button>
+                  </div>
+                )}
+              </div>
+            </div>
+            {/* Section hints */}
+            <div className="mt-2 flex flex-wrap gap-1">
+              {sectionHints.map(([h]) => <Badge key={h} variant="outline" className="text-[10px]">{h}</Badge>)}
+            </div>
           </div>
+
+          {/* Keywords */}
+          <div>
+            <Label>Key words (5, comma separated)</Label>
+            <Input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="e.g. diabetes, prevalence, primary care, adherence, kenya" />
+            <div className="text-xs text-muted-foreground mt-1">{keywordList.length}/5 keywords</div>
+          </div>
+
+          {/* Disclosure */}
+          <div>
+            <Label>Disclosure statement (funding sources / conflicts of interest)</Label>
+            <Textarea rows={3} value={disclosureStatement} onChange={e => setDisclosureStatement(e.target.value)}
+              placeholder='If none, state: "No conflict of interest to declare."' />
+          </div>
+
           <div>
             <Label>Cover letter (optional)</Label>
-            <Textarea value={coverLetter} onChange={e => setCoverLetter(e.target.value)} rows={4} placeholder="Optional message to the editors" />
+            <Textarea rows={3} value={coverLetter} onChange={e => setCoverLetter(e.target.value)} placeholder="Optional message to the editors" />
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => submit(true)} disabled={loading}>Save as draft</Button>
-            <Button onClick={() => submit(false)} disabled={loading} className="bg-indigo-600 hover:bg-indigo-700">
+            <Button onClick={() => submit(false)} disabled={loading || !titleValid || !bodyValid} className="bg-indigo-600 hover:bg-indigo-700">
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Submit for review
             </Button>
@@ -1496,6 +1920,7 @@ function ConferenceAdmin() {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [themeConfId, setThemeConfId] = useState(null)
+  const [heroConfId, setHeroConfId] = useState(null)
   const refresh = () => api('/conferences').then(d => setList(d.conferences || []))
   useEffect(() => { refresh() }, [])
 
@@ -1543,6 +1968,20 @@ function ConferenceAdmin() {
                   <div className="flex flex-col gap-1">
                     <Button size="sm" variant="outline" onClick={() => { setEditing(c); setOpen(true) }}>Edit</Button>
                     <Button size="sm" variant="outline" onClick={() => setThemeConfId(c.id)}>+ Theme</Button>
+                    <Button size="sm" variant="outline" onClick={() => setHeroConfId(c.id)}>Hero images</Button>
+                    <Button size="sm" variant={c.isFeatured ? 'default' : 'outline'} className={c.isFeatured ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+                      onClick={async () => {
+                        try {
+                          // Unfeature others, feature this one
+                          const others = list.filter(x => x.id !== c.id && x.isFeatured)
+                          for (const o of others) await api(`/conferences/${o.id}`, { method: 'PUT', body: JSON.stringify({ isFeatured: false }) })
+                          await api(`/conferences/${c.id}`, { method: 'PUT', body: JSON.stringify({ isFeatured: !c.isFeatured }) })
+                          toast.success(c.isFeatured ? 'Unfeatured' : 'Set as featured (public site)')
+                          refresh()
+                        } catch (e) { toast.error(e.message) }
+                      }}>
+                      {c.isFeatured ? '★ Featured' : 'Set featured'}
+                    </Button>
                     <Button size="sm" variant="destructive" onClick={() => remove(c)}>Delete</Button>
                   </div>
                 </div>
@@ -1554,7 +1993,78 @@ function ConferenceAdmin() {
 
       {open && <ConferenceDialog editing={editing} onClose={() => setOpen(false)} onDone={() => { setOpen(false); refresh() }} />}
       {themeConfId && <ThemeDialog conferenceId={themeConfId} onClose={() => setThemeConfId(null)} onDone={() => { setThemeConfId(null); refresh() }} />}
+      {heroConfId && <HeroImagesDialog conference={list.find(x => x.id === heroConfId)} onClose={() => setHeroConfId(null)} onDone={() => { setHeroConfId(null); refresh() }} />}
     </div>
+  )
+}
+
+function HeroImagesDialog({ conference, onClose, onDone }) {
+  const [images, setImages] = useState(conference?.heroImages || [])
+  const [uploading, setUploading] = useState(false)
+
+  const upload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) return toast.error('Only image files allowed')
+    if (file.size > 5 * 1024 * 1024) return toast.error('Image exceeds 5 MB limit')
+    setUploading(true)
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const d = await apiUpload(`/conferences/${conference.id}/hero-images`, fd)
+      setImages(d.conference.heroImages)
+      toast.success('Image added')
+    } catch (e) { toast.error(e.message) } finally { setUploading(false); e.target.value = '' }
+  }
+
+  const removeImg = async (imagePath) => {
+    try {
+      const res = await fetch(`/api/conferences/${conference.id}/hero-images`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+        body: JSON.stringify({ imagePath }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error)
+      setImages(d.conference.heroImages)
+      toast.success('Image removed')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Hero background images</DialogTitle>
+          <DialogDescription>Images shown on the public conference site header carousel. If none uploaded, defaults are used.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="border-2 border-dashed rounded-lg p-4 text-center bg-slate-50">
+            <FileUp className="h-8 w-8 mx-auto text-indigo-600 mb-2" />
+            <div className="text-sm mb-2">Upload conference image (JPG/PNG, max 5MB)</div>
+            <input type="file" accept="image/*" onChange={upload} disabled={uploading} className="text-sm" />
+          </div>
+          {images.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-4">No custom images. Default carousel is shown.</div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {images.map((src, i) => (
+                <div key={i} className="relative border rounded-md overflow-hidden group">
+                  <img src={src} alt="" className="w-full h-32 object-cover" />
+                  <button onClick={() => removeImg(src)} className="absolute top-1 right-1 bg-red-600 text-white rounded p-1 opacity-0 group-hover:opacity-100 transition">
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          <Button onClick={onDone}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1562,10 +2072,14 @@ function ConferenceDialog({ editing, onClose, onDone }) {
   const [form, setForm] = useState({
     code: editing?.code || `CONF${new Date().getFullYear() + 1}`,
     name: editing?.name || '',
+    subtitle: editing?.subtitle || '',
+    theme: editing?.theme || '',
     description: editing?.description || '',
     venue: editing?.venue || '',
     city: editing?.city || '',
     country: editing?.country || '',
+    contactEmail: editing?.contactEmail || '',
+    contactPhone: editing?.contactPhone || '',
     startDate: editing?.startDate?.slice(0, 10) || '',
     endDate: editing?.endDate?.slice(0, 10) || '',
     submissionOpen: editing?.submissionOpen?.slice(0, 10) || '',
@@ -1615,11 +2129,17 @@ function ConferenceDialog({ editing, onClose, onDone }) {
             </div>
           </div>
           <div><Label>Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="International Conference on ..." /></div>
+          <div><Label>Subtitle / tagline</Label><Input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })} placeholder="Shown under title on the public site" /></div>
+          <div><Label>Conference theme (shown in footer)</Label><Input value={form.theme} onChange={e => setForm({ ...form, theme: e.target.value })} placeholder="e.g. Advancing Health Through Innovation" /></div>
           <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           <div className="grid grid-cols-3 gap-2">
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
             <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
             <div><Label>Country</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Contact email</Label><Input type="email" value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
+            <div><Label>Contact phone</Label><Input value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Start date</Label><Input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} /></div>
