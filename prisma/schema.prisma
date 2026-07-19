@@ -16,6 +16,8 @@ enum Role {
   MANAGING_EDITOR
   SECTION_EDITOR
   COMMITTEE_MEMBER
+  CHIEF_EDITOR
+  COMMITTEE_EDITOR
   EXTERNAL_REVIEWER
   AUTHOR
   ATTENDEE
@@ -510,4 +512,74 @@ model SystemConfig {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+enum TemplateType {
+  POWERPOINT
+  POSTER
+  PAPER
+  OTHER
+}
+
+model ConferenceTemplate {
+  id           String   @id @default(uuid())
+  conferenceId String
+  type         TemplateType
+  fileName     String
+  storagePath  String
+  mimeType     String?
+  sizeBytes    Int      @default(0)
+  uploadedById String
+  createdAt    DateTime @default(now())
+  @@index([conferenceId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([token])
+}
+
+model TechnicalScore {
+  id             String   @id @default(uuid())
+  abstractId     String
+  scorerId       String
+  originality    Int
+  methodology    Int
+  relevance      Int
+  language       Int
+  themeAlignment Int
+  comments       String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@unique([abstractId, scorerId])
+  @@index([abstractId])
+}
+
+model EditorAnnouncement {
+  id        String   @id @default(uuid())
+  authorId  String
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+
+model ReviewerInvitation {
+  id               String   @id @default(uuid())
+  email            String
+  fullName         String?
+  specialty        String?
+  message          String?  @db.Text
+  invitedById      String
+  token            String   @unique
+  respondedAt      DateTime?
+  registeredUserId String?
+  createdAt        DateTime @default(now())
+  @@index([email])
+  @@index([token])
 }

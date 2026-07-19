@@ -205,10 +205,27 @@ function downloadGuidelines() {
 function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState('landing') // landing | login | register | app
+  const [view, setView] = useState('landing') // landing | login | register | forgot | reset | app
   const [route, setRoute] = useState({ name: 'dashboard' })
+  const [resetToken, setResetToken] = useState('')
+  const [reviewerInvite, setReviewerInvite] = useState(null)
 
   useEffect(() => {
+    // Detect URL params (?resetToken=... or ?reviewerInvite=...)
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const rt = params.get('resetToken')
+      const ri = params.get('reviewerInvite')
+      if (rt) { setResetToken(rt); setView('reset'); setLoading(false); return }
+      if (ri) {
+        api(`/reviewer-invitations/verify/${ri}`).then(d => {
+          setReviewerInvite({ token: ri, ...d.invitation })
+          setView('register')
+          setLoading(false)
+        }).catch(() => { setLoading(false) })
+        return
+      }
+    }
     const t = getToken()
     if (!t) { setLoading(false); return }
     api('/auth/me').then(d => { setUser(d.user); setView('app') }).catch(() => setToken(null)).finally(() => setLoading(false))
@@ -216,9 +233,11 @@ function App() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>
 
+  if (view === 'reset') return <ResetPasswordPage token={resetToken} onDone={() => { setView('login'); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} />
+  if (view === 'forgot') return <ForgotPassword onBack={() => setView('login')} />
   if (view === 'landing' && !user) return <Landing onLogin={() => setView('login')} onRegister={() => setView('register')} />
-  if (view === 'login') return <AuthPage mode="login" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('register')} onBack={() => setView('landing')} />
-  if (view === 'register') return <AuthPage mode="register" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('login')} onBack={() => setView('landing')} />
+  if (view === 'login') return <AuthPage mode="login" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('register')} onBack={() => setView('landing')} onForgot={() => setView('forgot')} />
+  if (view === 'register') return <AuthPage mode="register" reviewerInvite={reviewerInvite} onDone={(u) => { setUser(u); setView('app'); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} onSwitch={() => setView('login')} onBack={() => setView('landing')} />
 
   return <AppShell user={user} setUser={setUser} route={route} setRoute={setRoute} onLogout={() => { api('/auth/logout', { method: 'POST' }).catch(() => {}); setToken(null); setUser(null); setView('landing') }} />
 }
@@ -430,12 +449,13 @@ function PublicContact({ conf }) {
 function BarChartIcon(props) { return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> }
 
 // ============ AUTH ============
-function AuthPage({ mode, onDone, onSwitch, onBack }) {
-  const [email, setEmail] = useState(mode === 'login' ? 'managing@scms.io' : '')
+function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) {
+  const [email, setEmail] = useState(mode === 'login' ? 'managing@scms.io' : (reviewerInvite?.email || ''))
   const [password, setPassword] = useState(mode === 'login' ? 'password123' : '')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [role, setRole] = useState('AUTHOR')
+  const [firstName, setFirstName] = useState(reviewerInvite?.fullName?.split(' ')[0] || '')
+  const [lastName, setLastName] = useState(reviewerInvite?.fullName?.split(' ').slice(1).join(' ') || '')
+  const [specialty, setSpecialty] = useState(reviewerInvite?.specialty || '')
+  const [role, setRole] = useState(reviewerInvite ? 'EXTERNAL_REVIEWER' : 'AUTHOR')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -470,7 +490,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
         toast.success(`Welcome back, ${d.user.firstName}!`)
         onDone(d.user)
       } else {
-        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, role }) })
+        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, role, specialty, inviteToken: reviewerInvite?.token }) })
         setToken(d.token)
         toast.success('Account created')
         onDone(d.user)
@@ -528,6 +548,9 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {mode === 'login' ? 'Sign in' : 'Create account'}
             </Button>
+            {mode === 'login' && onForgot && (
+              <button type="button" onClick={onForgot} className="text-sm text-indigo-600 hover:underline text-center">Forgot password?</button>
+            )}
             <div className="flex justify-between text-sm">
               <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground">← Back</button>
               <button type="button" onClick={onSwitch} className="text-indigo-600 hover:underline">
@@ -567,8 +590,11 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true },
     { key: 'submit', label: 'New Submission', icon: Plus, show: true },
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin },
+    { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin },
+    { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin },
     { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer },
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: true },
+    { key: 'templates', label: 'Templates', icon: FileText, show: true },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin },
@@ -680,6 +706,9 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'conferences') return <Conferences />
   if (route.name === 'conference-admin') return <ConferenceAdmin />
   if (route.name === 'programme') return <Programme />
+  if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
+  if (route.name === 'announcements') return <AnnouncementsBoard user={user} />
+  if (route.name === 'invite-reviewers') return <InviteReviewers />
   if (route.name === 'analytics') return <Analytics />
   if (route.name === 'users') return <UserManagement />
   if (route.name === 'audit') return <AuditView />
@@ -1230,6 +1259,7 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
             </CardContent>
           </Card>
 
+          {(isEditor || isAdmin) && <TechnicalScoringPanel abstractId={id} user={user} />}
           {(isEditor || isAdmin) && <EditorialPanel abs={abs} onRefresh={refresh} />}
           {isOwner && ['MAJOR_REVISION', 'MINOR_REVISION', 'RETURNED_FOR_FORMATTING'].includes(abs.currentState) && (
             <RevisionUpload abs={abs} onDone={refresh} />
@@ -2407,6 +2437,378 @@ function AuditView() {
           </tbody>
         </table>
       </CardContent></Card>
+    </div>
+  )
+}
+
+// ============ TEMPLATES PAGE ============
+function TemplatesPage({ user, isAdmin, isEditor }) {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [templates, setTemplates] = useState([])
+  const [type, setType] = useState('POWERPOINT')
+  const [uploading, setUploading] = useState(false)
+  const canUpload = isAdmin || isEditor
+
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+  useEffect(() => { if (confId) api(`/conferences/${confId}/templates`).then(d => setTemplates(d.templates || [])) }, [confId])
+
+  const upload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const fd = new FormData(); fd.append('file', file); fd.append('type', type)
+      await apiUpload(`/conferences/${confId}/templates`, fd)
+      toast.success('Template uploaded')
+      const d = await api(`/conferences/${confId}/templates`); setTemplates(d.templates || [])
+    } catch (e) { toast.error(e.message) } finally { setUploading(false); e.target.value = '' }
+  }
+
+  const remove = async (id) => {
+    if (!confirm('Delete this template?')) return
+    await api(`/templates/${id}`, { method: 'DELETE' })
+    const d = await api(`/conferences/${confId}/templates`); setTemplates(d.templates || [])
+  }
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Presentation templates</h1>
+        <p className="text-muted-foreground">PowerPoint and poster templates for accepted authors.</p>
+      </div>
+
+      <div className="flex gap-3 mb-4">
+        <Select value={confId} onValueChange={setConfId}>
+          <SelectTrigger className="w-96"><SelectValue placeholder="Choose conference" /></SelectTrigger>
+          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+
+      {canUpload && confId && (
+        <Card className="mb-4 border-indigo-200 bg-indigo-50/40">
+          <CardContent className="p-4 flex items-center gap-3">
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="POWERPOINT">PowerPoint (.pptx)</SelectItem>
+                <SelectItem value="POSTER">Poster template</SelectItem>
+                <SelectItem value="PAPER">Paper template</SelectItem>
+                <SelectItem value="OTHER">Other</SelectItem>
+              </SelectContent>
+            </Select>
+            <input type="file" onChange={upload} disabled={uploading} className="text-sm" />
+            {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-2">
+        {templates.length === 0 ? <EmptyState label="No templates uploaded for this conference." />
+        : templates.map(t => (
+          <Card key={t.id}>
+            <CardContent className="p-4 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <FileText className="h-6 w-6 text-indigo-600" />
+                <div>
+                  <div className="font-medium">{t.fileName}</div>
+                  <div className="text-xs text-muted-foreground">{t.type} · {(t.sizeBytes / 1024).toFixed(1)} KB · Uploaded {new Date(t.createdAt).toLocaleDateString()}</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <a href={`/api/templates/${t.id}/download`} target="_blank" rel="noreferrer">
+                  <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700"><Download className="h-4 w-4 mr-1" /> Download</Button>
+                </a>
+                {canUpload && <Button size="sm" variant="destructive" onClick={() => remove(t.id)}>Delete</Button>}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground mt-4">Note: Templates can only be downloaded by authors whose abstracts have been accepted, or by editors/admins.</p>
+    </div>
+  )
+}
+
+// ============ ANNOUNCEMENTS BOARD ============
+function AnnouncementsBoard({ user }) {
+  const [list, setList] = useState([])
+  const [text, setText] = useState('')
+  const refresh = () => api('/announcements').then(d => setList(d.announcements || [])).catch(() => {})
+  useEffect(() => { refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i) }, [])
+  const post = async () => {
+    if (!text.trim()) return
+    try { await api('/announcements', { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); refresh() } catch (e) { toast.error(e.message) }
+  }
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Editors' Chat & Announcements</h1>
+        <p className="text-muted-foreground">Common board for editorial office announcements and discussions. Visible to all editors.</p>
+      </div>
+      <Card>
+        <CardContent className="p-0">
+          <div className="max-h-[540px] overflow-auto p-4 space-y-2 bg-slate-50">
+            {list.length === 0 ? <div className="text-center text-sm text-muted-foreground py-8">No messages yet. Start the conversation.</div>
+            : list.map(a => (
+              <div key={a.id} className={`p-3 rounded-md ${a.authorId === user.id ? 'bg-indigo-100 ml-16' : 'bg-white border mr-16'}`}>
+                <div className="flex justify-between items-center mb-1">
+                  <div className="text-xs font-semibold">{a.author?.firstName} {a.author?.lastName}
+                    <span className="ml-2 font-normal text-muted-foreground">{ROLE_LABELS[a.author?.roles?.[0]?.role] || ''}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">{new Date(a.createdAt).toLocaleString()}</div>
+                </div>
+                <p className="text-sm whitespace-pre-wrap">{a.body}</p>
+              </div>
+            ))}
+          </div>
+          <div className="p-3 border-t bg-white flex gap-2">
+            <Input placeholder="Type an announcement or message..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() } }} />
+            <Button onClick={post} className="bg-indigo-600 hover:bg-indigo-700"><Send className="h-4 w-4 mr-1" /> Post</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ============ INVITE REVIEWERS ============
+function InviteReviewers() {
+  const [invites, setInvites] = useState([])
+  const [reviewers, setReviewers] = useState([])
+  const [email, setEmail] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [specialty, setSpecialty] = useState('')
+  const [message, setMessage] = useState('')
+  const [sending, setSending] = useState(false)
+
+  const refresh = () => {
+    api('/reviewer-invitations').then(d => setInvites(d.invitations || [])).catch(() => {})
+    api('/users?role=EXTERNAL_REVIEWER').then(d => setReviewers(d.users || [])).catch(() => {})
+  }
+  useEffect(() => { refresh() }, [])
+
+  const send = async () => {
+    if (!email || !email.includes('@')) return toast.error('Valid email required')
+    setSending(true)
+    try {
+      await api('/reviewer-invitations', { method: 'POST', body: JSON.stringify({ email, fullName, specialty, message }) })
+      toast.success('Invitation email sent')
+      setEmail(''); setFullName(''); setSpecialty(''); setMessage('')
+      refresh()
+    } catch (e) { toast.error(e.message) } finally { setSending(false) }
+  }
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold">Invite peer reviewers</h1>
+        <p className="text-muted-foreground">Send polite email invitations. Recipients register via the link and appear in the reviewer database.</p>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle>New invitation</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <div className="grid md:grid-cols-3 gap-2">
+            <Input placeholder="Full name (optional)" value={fullName} onChange={e => setFullName(e.target.value)} />
+            <Input placeholder="Email *" value={email} onChange={e => setEmail(e.target.value)} />
+            <Input placeholder="Specialty (e.g. Cardiology)" value={specialty} onChange={e => setSpecialty(e.target.value)} />
+          </div>
+          <Textarea placeholder="Optional personal message (added to the email)" rows={3} value={message} onChange={e => setMessage(e.target.value)} />
+          <div className="flex justify-end">
+            <Button onClick={send} disabled={sending} className="bg-indigo-600 hover:bg-indigo-700">
+              {sending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send invitation
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader><CardTitle>Registered reviewers ({reviewers.length})</CardTitle><CardDescription>Available for assignment</CardDescription></CardHeader>
+          <CardContent className="max-h-96 overflow-auto">
+            {reviewers.length === 0 ? <div className="text-sm text-muted-foreground">No reviewers yet</div>
+            : reviewers.map(r => (
+              <div key={r.id} className="py-2 border-b last:border-0">
+                <div className="font-medium text-sm">{r.title || ''} {r.firstName} {r.lastName}</div>
+                <div className="text-xs text-muted-foreground">{r.email}</div>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {r.specialties?.map(s => <Badge key={s} variant="secondary" className="text-[10px]">{s}</Badge>)}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Pending / sent invitations ({invites.length})</CardTitle></CardHeader>
+          <CardContent className="max-h-96 overflow-auto">
+            {invites.length === 0 ? <div className="text-sm text-muted-foreground">None sent yet</div>
+            : invites.map(i => (
+              <div key={i.id} className="py-2 border-b last:border-0">
+                <div className="flex justify-between items-center">
+                  <div className="text-sm font-medium">{i.fullName || i.email}</div>
+                  <Badge variant={i.registeredUserId ? 'default' : 'outline'} className="text-[10px]">{i.registeredUserId ? 'Registered' : 'Pending'}</Badge>
+                </div>
+                <div className="text-xs text-muted-foreground">{i.email} · {i.specialty} · Invited {new Date(i.createdAt).toLocaleDateString()}</div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+// ============ TECHNICAL SCORING PANEL ============
+function TechnicalScoringPanel({ abstractId, user }) {
+  const [scores, setScores] = useState([])
+  const [avg, setAvg] = useState(null)
+  const [overall, setOverall] = useState(null)
+  const [form, setForm] = useState({ originality: 7, methodology: 7, relevance: 7, language: 7, themeAlignment: 7, comments: '' })
+  const refresh = () => api(`/abstracts/${abstractId}/scores`).then(d => { setScores(d.scores || []); setAvg(d.average); setOverall(d.overall) }).catch(() => {})
+  useEffect(() => { refresh() }, [abstractId])
+
+  const mine = scores.find(s => s.scorerId === user.id)
+  useEffect(() => { if (mine) setForm({ originality: mine.originality, methodology: mine.methodology, relevance: mine.relevance, language: mine.language, themeAlignment: mine.themeAlignment, comments: mine.comments || '' }) }, [mine?.id])
+
+  const save = async () => {
+    try {
+      await api(`/abstracts/${abstractId}/scores`, { method: 'POST', body: JSON.stringify(form) })
+      toast.success('Technical score saved')
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const fields = [
+    ['originality', 'Originality'],
+    ['methodology', 'Methodology'],
+    ['relevance', 'Relevance'],
+    ['language', 'Language'],
+    ['themeAlignment', 'Theme alignment'],
+  ]
+
+  return (
+    <Card className="border-indigo-200">
+      <CardHeader>
+        <div className="flex justify-between items-center">
+          <div>
+            <CardTitle className="flex items-center gap-2"><Award className="h-5 w-5 text-indigo-600" /> Technical review score</CardTitle>
+            <CardDescription>Committee scoring on 5 dimensions (1–10 each). Shown after the first technical review to help prioritize.</CardDescription>
+          </div>
+          {overall !== null && (
+            <div className="text-right">
+              <div className="text-3xl font-bold text-indigo-600">{overall.toFixed(1)}</div>
+              <div className="text-xs text-muted-foreground">Overall average ({scores.length} scorer{scores.length !== 1 ? 's' : ''})</div>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {avg && (
+          <div className="grid grid-cols-5 gap-2">
+            {fields.map(([k, label]) => (
+              <div key={k} className="p-2 rounded bg-slate-50 text-center">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+                <div className="text-lg font-bold">{avg[k].toFixed(1)}/10</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="border rounded-md p-3 bg-white">
+          <div className="text-sm font-semibold mb-2">{mine ? 'Update your technical score' : 'Submit technical score'}</div>
+          <div className="grid grid-cols-5 gap-2 mb-2">
+            {fields.map(([k, label]) => (
+              <div key={k}>
+                <Label className="text-[10px]">{label} (1-10)</Label>
+                <Input type="number" min={1} max={10} value={form[k]} onChange={e => setForm({ ...form, [k]: parseInt(e.target.value) || 1 })} />
+              </div>
+            ))}
+          </div>
+          <Textarea placeholder="Optional comments" rows={2} value={form.comments} onChange={e => setForm({ ...form, comments: e.target.value })} />
+          <Button className="mt-2 bg-indigo-600 hover:bg-indigo-700" size="sm" onClick={save}>Save score</Button>
+        </div>
+
+        {scores.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-xs font-semibold text-muted-foreground">All scores</div>
+            {scores.map(s => (
+              <div key={s.id} className="text-xs border rounded p-2 flex justify-between">
+                <span>{s.scorer?.firstName} {s.scorer?.lastName}</span>
+                <span className="font-mono">O:{s.originality} M:{s.methodology} R:{s.relevance} L:{s.language} T:{s.themeAlignment}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ============ FORGOT PASSWORD ============
+function ForgotPassword({ onBack }) {
+  const [email, setEmail] = useState('')
+  const [sent, setSent] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const submit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    try { await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }); setSent(true) }
+    catch (err) { toast.error(err.message) } finally { setLoading(false) }
+  }
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 p-4">
+      <Card className="w-full max-w-md shadow-xl">
+        <CardHeader>
+          <CardTitle>Reset your password</CardTitle>
+          <CardDescription>Enter your account email and we'll send a reset link.</CardDescription>
+        </CardHeader>
+        {sent ? (
+          <CardContent className="space-y-3">
+            <div className="p-3 rounded bg-emerald-50 border border-emerald-300 text-emerald-800 text-sm">
+              If <b>{email}</b> is registered, a password reset link has been sent. Check your inbox (and spam folder).
+            </div>
+            <Button onClick={onBack} className="w-full">Back to sign in</Button>
+          </CardContent>
+        ) : (
+          <form onSubmit={submit}>
+            <CardContent className="space-y-3">
+              <div><Label>Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
+            </CardContent>
+            <CardFooter className="flex-col gap-2 items-stretch">
+              <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700">{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Send reset link</Button>
+              <button type="button" onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground">← Back</button>
+            </CardFooter>
+          </form>
+        )}
+      </Card>
+    </div>
+  )
+}
+
+function ResetPasswordPage({ token, onDone }) {
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const submit = async (e) => {
+    e.preventDefault()
+    if (password.length < 6) return setError('Password must be at least 6 characters.')
+    setLoading(true)
+    try { await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword: password }) }); toast.success('Password reset. Please sign in.'); onDone() }
+    catch (err) { setError(err.message) } finally { setLoading(false) }
+  }
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 p-4">
+      <Card className="w-full max-w-md shadow-xl">
+        <CardHeader><CardTitle>Set a new password</CardTitle></CardHeader>
+        <form onSubmit={submit}>
+          <CardContent className="space-y-3">
+            {error && <div className="p-3 rounded bg-red-50 border border-red-300 text-red-800 text-sm">{error}</div>}
+            <div><Label>New password (min 6 chars)</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
+          </CardContent>
+          <CardFooter><Button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700">{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Reset password</Button></CardFooter>
+        </form>
+      </Card>
     </div>
   )
 }

@@ -33,19 +33,33 @@ export async function OPTIONS() {
 async function handleAuth(route, method, request) {
   if (route === '/auth/register' && method === 'POST') {
     const body = await request.json()
-    const { email, password, firstName, lastName, title, affiliation, country, role } = body
+    const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty } = body
     if (!email || !password || !firstName || !lastName) return err('Missing required fields')
     const exists = await prisma.user.findUnique({ where: { email } })
     if (exists) return err('Email already registered', 409)
+    // Resolve role: if invitation token is present, force EXTERNAL_REVIEWER role
+    let actualRole = role || 'AUTHOR'
+    let matchingInvite = null
+    if (inviteToken) {
+      matchingInvite = await prisma.reviewerInvitation.findUnique({ where: { token: inviteToken } })
+      if (matchingInvite) actualRole = 'EXTERNAL_REVIEWER'
+    }
     const user = await prisma.user.create({
       data: {
         email,
         passwordHash: await hashPassword(password),
         firstName, lastName, title, affiliation, country,
-        roles: { create: { role: role || 'AUTHOR' } },
+        specialties: specialty ? [specialty] : [],
+        roles: { create: { role: actualRole } },
       },
       include: { roles: true },
     })
+    if (matchingInvite) {
+      await prisma.reviewerInvitation.update({
+        where: { id: matchingInvite.id },
+        data: { respondedAt: new Date(), registeredUserId: user.id },
+      })
+    }
     const token = signToken({ userId: user.id })
     const c = await cookies(); c.set('scms_token', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60*60*24*30 })
     await logAudit({ actorId: user.id, action: 'REGISTER', entityType: 'User', entityId: user.id })
@@ -920,7 +934,249 @@ async function handleDocumentDownload(route, method, request) {
   return null
 }
 
-// ============ ROUTER ============
+// ============ CONFERENCE TEMPLATES (Powerpoint / Poster) ============
+async function handleTemplates(route, method, request) {
+  // Public: list templates for a conference (only accepted authors can download in practice)
+  const listMatch = route.match(/^\/conferences\/([^\/]+)\/templates$/)
+  if (listMatch && method === 'GET') {
+    const list = await prisma.conferenceTemplate.findMany({
+      where: { conferenceId: listMatch[1] },
+      orderBy: { createdAt: 'desc' },
+    })
+    return ok({ templates: list })
+  }
+  if (listMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const formData = await request.formData()
+    const file = formData.get('file')
+    const type = formData.get('type') || 'OTHER'
+    if (!file) return err('No file')
+    if (file.size > 25 * 1024 * 1024) return err('File exceeds 25 MB limit')
+    const buf = Buffer.from(await file.arrayBuffer())
+    const safeName = `tpl_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const dir = path.join(UPLOAD_DIR, 'templates', listMatch[1])
+    await fs.mkdir(dir, { recursive: true })
+    const filePath = path.join(dir, safeName)
+    await fs.writeFile(filePath, buf)
+    const t = await prisma.conferenceTemplate.create({
+      data: {
+        conferenceId: listMatch[1], type, fileName: file.name, storagePath: filePath,
+        mimeType: file.type || null, sizeBytes: buf.length, uploadedById: user.id,
+      },
+    })
+    return ok({ template: t })
+  }
+  const dlMatch = route.match(/^\/templates\/([^\/]+)\/download$/)
+  if (dlMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const t = await prisma.conferenceTemplate.findUnique({ where: { id: dlMatch[1] } })
+    if (!t) return err('Not found', 404)
+    // Authors of accepted abstracts, editors, admin can download
+    const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')
+    if (!isPrivileged) {
+      const acceptedAbs = await prisma.abstract.findFirst({
+        where: {
+          conferenceId: t.conferenceId,
+          submittedById: user.id,
+          currentState: { in: ['ACCEPTED', 'ORAL', 'POSTER', 'PRESENTATION_UPLOAD', 'PRESENTATION_REVIEW', 'PROGRAMME_SCHEDULING', 'FINAL_ACCEPTANCE', 'PUBLISHED'] },
+        },
+      })
+      if (!acceptedAbs) return err('Only authors of accepted abstracts can download templates.', 403)
+    }
+    const buf = await fs.readFile(t.storagePath)
+    return new NextResponse(buf, { status: 200, headers: { 'Content-Type': t.mimeType || 'application/octet-stream', 'Content-Disposition': `attachment; filename="${t.fileName}"` } })
+  }
+  const delMatch = route.match(/^\/templates\/([^\/]+)$/)
+  if (delMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    await prisma.conferenceTemplate.delete({ where: { id: delMatch[1] } })
+    return ok({ ok: true })
+  }
+  return null
+}
+
+// ============ PASSWORD RESET ============
+async function handlePasswordReset(route, method, request) {
+  if (route === '/auth/forgot-password' && method === 'POST') {
+    const { email } = await request.json()
+    if (!email) return err('Email required')
+    const user = await prisma.user.findUnique({ where: { email } })
+    if (user) {
+      const token = crypto.randomBytes(32).toString('hex')
+      await prisma.passwordResetToken.create({
+        data: { userId: user.id, token, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
+      })
+      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
+      const resetUrl = `${baseUrl}/?resetToken=${token}`
+      const { sendEmail } = await import('@/lib/email')
+      const { renderEmailHtml } = await import('@/lib/email-templates')
+      const subject = 'SCMS — Password reset request'
+      const body = `Dear ${user.firstName},\n\nA password reset was requested for your SCMS account. If this was you, please click the link below to set a new password. The link expires in 1 hour.\n\n${resetUrl}\n\nIf you did not request this, you may safely ignore this email.\n\nRegards,\nSCMS Editorial Office`
+      const html = renderEmailHtml({ subject, body, conferenceName: 'SCMS' })
+      await sendEmail({ to: user.email, subject, text: body, html })
+    }
+    // Always return success (don't reveal whether email exists)
+    return ok({ ok: true, message: 'If that email is registered, a reset link has been sent.' })
+  }
+
+  if (route === '/auth/reset-password' && method === 'POST') {
+    const { token, newPassword } = await request.json()
+    if (!token || !newPassword) return err('Token and new password required')
+    if (newPassword.length < 6) return err('Password must be at least 6 characters')
+    const t = await prisma.passwordResetToken.findUnique({ where: { token } })
+    if (!t || t.usedAt || t.expiresAt < new Date()) return err('Invalid or expired token', 400)
+    await prisma.user.update({
+      where: { id: t.userId },
+      data: { passwordHash: await hashPassword(newPassword) },
+    })
+    await prisma.passwordResetToken.update({ where: { id: t.id }, data: { usedAt: new Date() } })
+    return ok({ ok: true, message: 'Password reset. You can now sign in.' })
+  }
+
+  return null
+}
+
+// ============ TECHNICAL SCORING ============
+async function handleTechnicalScore(route, method, request) {
+  const user = await getCurrentUser(request)
+  if (!user) return err('Unauthenticated', 401)
+
+  const listMatch = route.match(/^\/abstracts\/([^\/]+)\/scores$/)
+  if (listMatch && method === 'GET') {
+    const scores = await prisma.technicalScore.findMany({
+      where: { abstractId: listMatch[1] },
+      include: { }
+    })
+    // Include scorer details
+    const scorerIds = [...new Set(scores.map(s => s.scorerId))]
+    const scorers = await prisma.user.findMany({ where: { id: { in: scorerIds } }, select: { id: true, firstName: true, lastName: true } })
+    const scorerMap = Object.fromEntries(scorers.map(s => [s.id, s]))
+    const withScorers = scores.map(s => ({ ...s, scorer: scorerMap[s.scorerId] }))
+    // Compute averages
+    const n = withScorers.length
+    const avg = n ? {
+      originality: withScorers.reduce((a, s) => a + s.originality, 0) / n,
+      methodology: withScorers.reduce((a, s) => a + s.methodology, 0) / n,
+      relevance: withScorers.reduce((a, s) => a + s.relevance, 0) / n,
+      language: withScorers.reduce((a, s) => a + s.language, 0) / n,
+      themeAlignment: withScorers.reduce((a, s) => a + s.themeAlignment, 0) / n,
+    } : null
+    const overall = avg ? (avg.originality + avg.methodology + avg.relevance + avg.language + avg.themeAlignment) / 5 : null
+    return ok({ scores: withScorers, average: avg, overall })
+  }
+  if (listMatch && method === 'POST') {
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Only editors can score.', 403)
+    const body = await request.json()
+    const fields = ['originality', 'methodology', 'relevance', 'language', 'themeAlignment']
+    for (const f of fields) {
+      const v = body[f]
+      if (typeof v !== 'number' || v < 1 || v > 10) return err(`Field "${f}" must be a number between 1 and 10.`)
+    }
+    const score = await prisma.technicalScore.upsert({
+      where: { abstractId_scorerId: { abstractId: listMatch[1], scorerId: user.id } },
+      update: {
+        originality: body.originality, methodology: body.methodology, relevance: body.relevance,
+        language: body.language, themeAlignment: body.themeAlignment, comments: body.comments || null,
+      },
+      create: {
+        abstractId: listMatch[1], scorerId: user.id,
+        originality: body.originality, methodology: body.methodology, relevance: body.relevance,
+        language: body.language, themeAlignment: body.themeAlignment, comments: body.comments || null,
+      },
+    })
+    return ok({ score })
+  }
+  return null
+}
+
+// ============ EDITORS' ANNOUNCEMENT BOARD ============
+async function handleAnnouncements(route, method, request) {
+  const user = await getCurrentUser(request)
+  if (!user) return err('Unauthenticated', 401)
+  if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Editors only', 403)
+
+  if (route === '/announcements' && method === 'GET') {
+    const list = await prisma.editorAnnouncement.findMany({
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    })
+    const authorIds = [...new Set(list.map(a => a.authorId))]
+    const authors = await prisma.user.findMany({ where: { id: { in: authorIds } }, select: { id: true, firstName: true, lastName: true, roles: { select: { role: true } } } })
+    const map = Object.fromEntries(authors.map(a => [a.id, a]))
+    return ok({ announcements: list.map(a => ({ ...a, author: map[a.authorId] })) })
+  }
+  if (route === '/announcements' && method === 'POST') {
+    const { body } = await request.json()
+    if (!body || !body.trim()) return err('Body required')
+    const a = await prisma.editorAnnouncement.create({ data: { authorId: user.id, body: body.trim() } })
+    return ok({ announcement: a })
+  }
+  return null
+}
+
+// ============ REVIEWER INVITATIONS ============
+async function handleReviewerInvitations(route, method, request) {
+  if (route === '/reviewer-invitations' && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    if (!body.email) return err('Email required')
+    const token = crypto.randomBytes(24).toString('hex')
+    const inv = await prisma.reviewerInvitation.create({
+      data: {
+        email: body.email, fullName: body.fullName || null, specialty: body.specialty || null,
+        message: body.message || null, invitedById: user.id, token,
+      },
+    })
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
+    const registerUrl = `${baseUrl}/?reviewerInvite=${token}`
+    const conf = await prisma.conference.findFirst({ where: { isFeatured: true } }) || await prisma.conference.findFirst({ orderBy: { createdAt: 'desc' } })
+    const confName = conf?.name || 'the Scientific Conference'
+    const { sendEmail } = await import('@/lib/email')
+    const { renderEmailHtml } = await import('@/lib/email-templates')
+    const subject = `Invitation to Review — ${confName}`
+    const inviteBody = `Dear ${body.fullName || 'Colleague'},
+
+On behalf of the editorial committee of ${confName}, we would like to warmly invite you to serve as a peer reviewer for our upcoming conference.
+
+Your expertise${body.specialty ? ` in ${body.specialty}` : ''} would be a tremendous asset to our review process. As a peer reviewer, you would evaluate abstracts within your area of specialty and provide constructive feedback to the authors and editorial committee.
+
+${body.message ? body.message + '\n\n' : ''}To accept this invitation, please visit our platform and register as a reviewer using the following link:
+
+${registerUrl}
+
+Your registration will only take a few minutes. Once complete, our editors will be able to assign abstracts to you based on your specialty and availability.
+
+We sincerely appreciate your consideration and hope you will accept this invitation to contribute to the scientific rigour of ${confName}.
+
+With warm regards,
+${user.firstName} ${user.lastName}
+${confName} Editorial Committee`
+    const html = renderEmailHtml({ subject, body: inviteBody, conferenceName: confName })
+    await sendEmail({ to: body.email, subject, text: inviteBody, html })
+    return ok({ invitation: inv, registerUrl })
+  }
+
+  if (route === '/reviewer-invitations' && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
+    const list = await prisma.reviewerInvitation.findMany({ orderBy: { createdAt: 'desc' }, take: 200 })
+    return ok({ invitations: list })
+  }
+
+  // Public: verify token
+  const verifyMatch = route.match(/^\/reviewer-invitations\/verify\/([^\/]+)$/)
+  if (verifyMatch && method === 'GET') {
+    const inv = await prisma.reviewerInvitation.findUnique({ where: { token: verifyMatch[1] } })
+    if (!inv) return err('Invalid invitation link', 404)
+    return ok({ invitation: { email: inv.email, fullName: inv.fullName, specialty: inv.specialty, respondedAt: inv.respondedAt } })
+  }
+
+  return null
+}
 async function router(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
@@ -931,8 +1187,13 @@ async function router(request, { params }) {
     if (route === '/state-transitions' && method === 'GET') return ok({ transitions: STATE_TRANSITIONS })
     r = await handleUploadServe(route, method, request); if (r) return r
     r = await handleAuth(route, method, request); if (r) return r
+    r = await handlePasswordReset(route, method, request); if (r) return r
     r = await handleConferences(route, method, request); if (r) return r
+    r = await handleTemplates(route, method, request); if (r) return r
     r = await handleAbstracts(route, method, request); if (r) return r
+    r = await handleTechnicalScore(route, method, request); if (r) return r
+    r = await handleAnnouncements(route, method, request); if (r) return r
+    r = await handleReviewerInvitations(route, method, request); if (r) return r
     r = await handleReviewer(route, method, request); if (r) return r
     r = await handleUsers(route, method, request); if (r) return r
     r = await handleNotifications(route, method, request); if (r) return r
