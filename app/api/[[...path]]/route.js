@@ -380,9 +380,20 @@ async function handleAbstracts(route, method, request) {
   // Submit
   const submitMatch = route.match(/^\/abstracts\/([^\/]+)\/submit$/)
   if (submitMatch && method === 'POST') {
-    const abs = await prisma.abstract.findUnique({ where: { id: submitMatch[1] } })
+    const abs = await prisma.abstract.findUnique({ where: { id: submitMatch[1] }, include: { conference: true } })
     if (!abs || abs.submittedById !== user.id) return err('Forbidden', 403)
     const updated = await transitionState(submitMatch[1], 'SUBMITTED', user.id, 'Submitted by author')
+    const { notifyUser } = await import('@/lib/workflow')
+    // Notify author with acknowledgement email
+    await notifyUser({
+      userId: user.id,
+      templateKey: 'SUBMISSION_RECEIVED',
+      ctx: { submissionCode: abs.submissionCode, title: abs.title, conferenceName: abs.conference.name },
+      notifTitle: `Submission received: ${abs.submissionCode}`,
+      notifBody: 'Your abstract has been received and is under editorial review.',
+      notifType: 'SUBMISSION_RECEIVED',
+      link: `/abstracts/${abs.id}`,
+    })
     // Notify managing editors
     const editors = await prisma.userRole.findMany({ where: { role: 'MANAGING_EDITOR' } })
     for (const e of editors) {
@@ -437,8 +448,17 @@ async function handleAbstracts(route, method, request) {
     const assignment = await prisma.editorAssignment.create({
       data: { abstractId: assignEdMatch[1], editorId: body.editorId, role: body.role || 'SECTION_EDITOR' },
     })
-    await createNotification(body.editorId, 'ASSIGNMENT', 'New editor assignment', 'You have been assigned as editor.', `/abstracts/${assignEdMatch[1]}`)
-    const abs = await prisma.abstract.findUnique({ where: { id: assignEdMatch[1] } })
+    const abs = await prisma.abstract.findUnique({ where: { id: assignEdMatch[1] }, include: { conference: true } })
+    const { notifyUser } = await import('@/lib/workflow')
+    await notifyUser({
+      userId: body.editorId,
+      templateKey: 'EDITOR_ASSIGNED',
+      ctx: { submissionCode: abs.submissionCode, title: abs.title, conferenceName: abs.conference.name },
+      notifTitle: 'New editor assignment',
+      notifBody: `You have been assigned to ${abs.submissionCode}`,
+      notifType: 'ASSIGNMENT',
+      link: `/abstracts/${assignEdMatch[1]}`,
+    })
     if (abs.currentState === 'SUBMITTED' || abs.currentState === 'TECHNICAL_CHECK') {
       await transitionState(assignEdMatch[1], 'EDITORIAL_ASSIGNMENT', user.id, 'Editor assigned')
     }
@@ -459,8 +479,21 @@ async function handleAbstracts(route, method, request) {
         dueDate: body.dueDate ? new Date(body.dueDate) : null,
       },
     })
-    await createNotification(body.reviewerId, 'REVIEW_INVITATION', 'Review invitation', 'You have been invited to review.', `/abstracts/${assignRvMatch[1]}`)
-    const abs = await prisma.abstract.findUnique({ where: { id: assignRvMatch[1] } })
+    const abs = await prisma.abstract.findUnique({ where: { id: assignRvMatch[1] }, include: { conference: true, theme: true } })
+    const { notifyUser } = await import('@/lib/workflow')
+    await notifyUser({
+      userId: body.reviewerId,
+      templateKey: 'REVIEW_INVITATION',
+      ctx: {
+        submissionCode: abs.submissionCode, title: abs.title,
+        conferenceName: abs.conference.name, themeName: abs.theme?.name,
+        dueDate: body.dueDate,
+      },
+      notifTitle: 'Review invitation',
+      notifBody: `You have been invited to review ${abs.submissionCode}`,
+      notifType: 'REVIEW_INVITATION',
+      link: `/abstracts/${assignRvMatch[1]}`,
+    })
     if (['EDITORIAL_ASSIGNMENT'].includes(abs.currentState)) {
       await transitionState(assignRvMatch[1], body.reviewType === 'COMMITTEE_MEMBER' ? 'COMMITTEE_REVIEW' : 'EXTERNAL_PEER_REVIEW', user.id, 'Reviewer assigned')
     }
@@ -486,8 +519,28 @@ async function handleAbstracts(route, method, request) {
     const stateMap = { ACCEPT: 'ACCEPTED', REJECT: 'REJECTED', MAJOR_REVISION: 'MAJOR_REVISION', MINOR_REVISION: 'MINOR_REVISION', WITHDRAW: 'WITHDRAWN' }
     const newState = stateMap[body.decision]
     if (newState) await transitionState(decMatch[1], newState, user.id, `Decision: ${body.decision}`)
-    const abs = await prisma.abstract.findUnique({ where: { id: decMatch[1] } })
-    await createNotification(abs.submittedById, 'DECISION', `Decision on ${abs.submissionCode}: ${body.decision}`, body.decisionLetter || '', `/abstracts/${abs.id}`)
+    const abs = await prisma.abstract.findUnique({ where: { id: decMatch[1] }, include: { conference: true } })
+    const { notifyUser } = await import('@/lib/workflow')
+    let templateKey = 'STATE_CHANGE'
+    if (body.decision === 'ACCEPT') templateKey = 'DECISION_ACCEPT'
+    else if (body.decision === 'REJECT') templateKey = 'DECISION_REJECT'
+    else if (body.decision === 'MAJOR_REVISION' || body.decision === 'MINOR_REVISION') templateKey = 'DECISION_REVISION'
+    await notifyUser({
+      userId: abs.submittedById,
+      templateKey,
+      ctx: {
+        submissionCode: abs.submissionCode, title: abs.title,
+        conferenceName: abs.conference.name,
+        decision: body.decision, decisionLetter: body.decisionLetter,
+        presentationType: body.presentationType,
+        revisionType: body.decision === 'MAJOR_REVISION' ? 'major revision' : 'minor revision',
+        newState: newState || abs.currentState,
+      },
+      notifTitle: `Decision on ${abs.submissionCode}: ${body.decision}`,
+      notifBody: body.decisionLetter || '',
+      notifType: 'DECISION',
+      link: `/abstracts/${abs.id}`,
+    })
     return ok({ decision })
   }
 
