@@ -835,12 +835,20 @@ async function router(request, { params }) {
   } catch (e) {
     console.error('API Error', e)
     // Return concise error messages (avoid leaking stack traces)
-    let msg = e.message || 'Internal server error'
-    if (e.code === 'P2002') msg = 'That value is already taken (unique constraint).'
-    else if (e.code === 'P2025') msg = 'Record not found.'
-    else if (e.code === 'P2003') msg = 'Referenced item does not exist.'
+    let msg = (e && e.message) ? String(e.message) : 'Internal server error'
+    if (e && e.code === 'P2002') msg = 'A record with that value already exists.'
+    else if (e && e.code === 'P2025') msg = 'Record not found.'
+    else if (e && e.code === 'P2003') msg = 'Referenced item does not exist.'
     else if (msg.includes("Can't reach database")) msg = 'Database temporarily unavailable. Please try again.'
-    else if (msg.length > 200) msg = msg.split('\n')[0].slice(0, 200)
+    else if (msg.includes('Unknown argument')) {
+      const m = msg.match(/Unknown argument `([^`]+)`/)
+      msg = m ? `Server schema mismatch on field "${m[1]}". Please contact support.` : 'Server schema mismatch. Please contact support.'
+    } else if (msg.length > 300) {
+      // Prisma verbose errors: get the first meaningful line
+      const line = msg.split('\n').map(s => s.trim()).find(s => s && !s.startsWith('?') && !s.startsWith('{') && s.length < 200)
+      msg = line || 'Server error. Please try again or contact support.'
+    }
+    if (!msg || !msg.trim()) msg = 'Server error. Please try again or contact support.'
     return err(msg, 500)
   }
 }

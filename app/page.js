@@ -869,18 +869,31 @@ function SubmitAbstract({ setRoute, user }) {
 
   const submit = async (asDraft) => {
     setSubmitError('')
-    // Validations - concise inline messages that stay visible
-    if (!conferenceId) { setSubmitError('Please choose a conference.'); return }
-    if (!title) { setSubmitError('Please enter a title.'); return }
-    if (titleWordCount > TITLE_WORD_LIMIT) { setSubmitError(`Title exceeds ${TITLE_WORD_LIMIT} words (currently ${titleWordCount}).`); return }
-    if (!body && !docFile) { setSubmitError('Enter abstract body or upload a Word document.'); return }
-    if (body && bodyWordCount > WORD_LIMIT) { setSubmitError(`Abstract body exceeds ${WORD_LIMIT} words (currently ${bodyWordCount}).`); return }
-    if (!authors.some(a => a.isCorresponding)) { setSubmitError('Please mark one author as corresponding.'); return }
-    if (authors.some(a => !a.fullName || !a.email)) { setSubmitError('Every author must have a name and email.'); return }
-    if (keywordList.length > 5) { setSubmitError('Maximum 5 keywords allowed.'); return }
+    // Comprehensive validation - collect ALL issues at once
+    const issues = []
+    if (!conferenceId) issues.push('Choose a conference.')
+    if (!title.trim()) issues.push('Enter a title.')
+    else if (titleWordCount > TITLE_WORD_LIMIT) issues.push(`Title exceeds ${TITLE_WORD_LIMIT} words (currently ${titleWordCount}).`)
+    if (!body && !docFile) issues.push('Enter abstract body or upload a Word document.')
+    if (body && bodyWordCount > WORD_LIMIT) issues.push(`Abstract body exceeds ${WORD_LIMIT} words (currently ${bodyWordCount}). Remove ${bodyWordCount - WORD_LIMIT} word(s).`)
+    if (!authors.some(a => a.isCorresponding)) issues.push('Mark one author as the corresponding author (radio button).')
+    authors.forEach((a, i) => {
+      if (!a.fullName?.trim()) issues.push(`Author #${i + 1}: full name is required.`)
+      if (!a.email?.trim()) issues.push(`Author #${i + 1}: email is required.`)
+      else if (!a.email.includes('@')) issues.push(`Author #${i + 1}: email is not valid.`)
+      if (a.isCorresponding && !a.phone?.trim()) issues.push(`Author #${i + 1} (corresponding): phone number is required.`)
+      if (a.isCorresponding && !a.affiliation?.trim()) issues.push(`Author #${i + 1} (corresponding): affiliated institution is required.`)
+    })
+    if (keywordList.length > 5) issues.push(`Too many keywords (${keywordList.length}). Maximum is 5.`)
     if (docFile) {
       const err = validateDocFile(docFile)
-      if (err) { setSubmitError(err); return }
+      if (err) issues.push(err)
+    }
+    if (issues.length > 0) {
+      setSubmitError(issues.length === 1 ? issues[0] : `Please correct the following:\n• ${issues.join('\n• ')}`)
+      // Scroll to error
+      setTimeout(() => document.querySelector('[role="alert"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
+      return
     }
 
     setLoading(true)
@@ -908,11 +921,16 @@ function SubmitAbstract({ setRoute, user }) {
       }
       setRoute({ name: 'abstract', id: d.abstract.id })
     } catch (e) {
-      const msg = String(e.message || 'Submission failed')
-      let clean = msg
-      if (msg.length > 160) clean = 'Submission failed. Please check your details and try again.'
-      if (msg.toLowerCase().includes('database') || msg.toLowerCase().includes('reach')) clean = 'Server temporarily unavailable. Please try again in a moment.'
+      const raw = String(e.message || '')
+      let clean = raw
+      if (raw.includes('exceeds')) clean = raw  // keep word-count errors
+      else if (raw.toLowerCase().includes('database') || raw.toLowerCase().includes('reach')) clean = 'Server is temporarily unavailable. Please try again in a moment.'
+      else if (raw.toLowerCase().includes('schema mismatch')) clean = 'Server needs an update. Please contact the administrator. (Details: ' + raw + ')'
+      else if (raw.toLowerCase().includes('conferenceid') || raw.toLowerCase().includes('required')) clean = raw
+      else if (raw.length > 200) clean = 'Submission failed on the server. Original error: ' + raw.slice(0, 200) + '…'
+      else if (!raw.trim()) clean = 'Unknown server error. Please contact support.'
       setSubmitError(clean)
+      setTimeout(() => document.querySelector('[role="alert"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
     } finally { setLoading(false) }
   }
 
@@ -1097,7 +1115,7 @@ function SubmitAbstract({ setRoute, user }) {
             </Button>
           </div>
           {submitError && (
-            <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm">
+            <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm whitespace-pre-line">
               <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
               <div className="flex-1"><b>Cannot submit: </b>{submitError}</div>
               <button type="button" onClick={() => setSubmitError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>

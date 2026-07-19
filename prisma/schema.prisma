@@ -179,6 +179,14 @@ enum PresentationType {
   UNDECIDED
 }
 
+enum ReportType {
+  ORIGINAL_RESEARCH
+  CASE_REPORT
+  CASE_SERIES
+  REVIEW
+  OTHER
+}
+
 model Abstract {
   id              String   @id @default(uuid())
   submissionCode  String   @unique  // e.g. CONF2027-000001
@@ -190,6 +198,8 @@ model Abstract {
   submittedBy     User     @relation("SubmittedBy", fields: [submittedById], references: [id])
 
   title           String
+  reportType      ReportType @default(ORIGINAL_RESEARCH)
+  disclosureStatement String? @db.Text
   currentState    AbstractState @default(DRAFT)
   presentationType PresentationType @default(UNDECIDED)
   keywords        String[] @default([])
@@ -220,6 +230,8 @@ model AbstractAuthor {
   user        User?    @relation(fields: [userId], references: [id])
   fullName    String
   email       String
+  phone       String?
+  department  String?
   affiliation String?
   isCorresponding Boolean @default(false)
   orderIndex  Int      @default(0)
