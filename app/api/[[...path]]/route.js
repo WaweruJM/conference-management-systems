@@ -834,7 +834,14 @@ async function router(request, { params }) {
     return err(`Route ${route} not found`, 404)
   } catch (e) {
     console.error('API Error', e)
-    return err(e.message || 'Internal server error', 500)
+    // Return concise error messages (avoid leaking stack traces)
+    let msg = e.message || 'Internal server error'
+    if (e.code === 'P2002') msg = 'That value is already taken (unique constraint).'
+    else if (e.code === 'P2025') msg = 'Record not found.'
+    else if (e.code === 'P2003') msg = 'Referenced item does not exist.'
+    else if (msg.includes("Can't reach database")) msg = 'Database temporarily unavailable. Please try again.'
+    else if (msg.length > 200) msg = msg.split('\n')[0].slice(0, 200)
+    return err(msg, 500)
   }
 }
 

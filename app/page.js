@@ -416,9 +416,31 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
   const [lastName, setLastName] = useState('')
   const [role, setRole] = useState('AUTHOR')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const cleanError = (raw) => {
+    if (!raw) return 'Something went wrong. Please try again.'
+    const msg = String(raw)
+    if (msg.length > 160) {
+      // Try to grab the most meaningful chunk
+      if (msg.toLowerCase().includes('unique constraint') || msg.toLowerCase().includes('already')) return 'Email is already registered. Please sign in instead.'
+      if (msg.toLowerCase().includes('database') || msg.toLowerCase().includes('reach')) return 'Server temporarily unavailable. Please try again in a moment.'
+      if (msg.toLowerCase().includes('password')) return 'Invalid password.'
+      return 'Registration failed. Please check your details and try again.'
+    }
+    return msg
+  }
 
   const submit = async (e) => {
     e.preventDefault()
+    setError('')
+    // Client-side validation with concise messages
+    if (!email || !email.includes('@')) return setError('Please enter a valid email address.')
+    if (!password || password.length < 6) return setError('Password must be at least 6 characters.')
+    if (mode === 'register') {
+      if (!firstName.trim()) return setError('Please enter your first name.')
+      if (!lastName.trim()) return setError('Please enter your last name.')
+    }
     setLoading(true)
     try {
       if (mode === 'login') {
@@ -432,7 +454,9 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
         toast.success('Account created')
         onDone(d.user)
       }
-    } catch (e) { toast.error(e.message) } finally { setLoading(false) }
+    } catch (e) {
+      setError(cleanError(e.message))
+    } finally { setLoading(false) }
   }
 
   return (
@@ -448,11 +472,18 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
         </CardHeader>
         <form onSubmit={submit}>
           <CardContent className="space-y-3">
+            {error && (
+              <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <div className="flex-1">{error}</div>
+                <button type="button" onClick={() => setError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>
+              </div>
+            )}
             {mode === 'register' && (
               <>
                 <div className="grid grid-cols-2 gap-2">
-                  <div><Label>First name</Label><Input value={firstName} onChange={e => setFirstName(e.target.value)} required /></div>
-                  <div><Label>Last name</Label><Input value={lastName} onChange={e => setLastName(e.target.value)} required /></div>
+                  <div><Label>First name</Label><Input value={firstName} onChange={e => { setFirstName(e.target.value); setError('') }} required /></div>
+                  <div><Label>Last name</Label><Input value={lastName} onChange={e => { setLastName(e.target.value); setError('') }} required /></div>
                 </div>
                 <div>
                   <Label>Role</Label>
@@ -468,8 +499,8 @@ function AuthPage({ mode, onDone, onSwitch, onBack }) {
                 </div>
               </>
             )}
-            <div><Label>Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
-            <div><Label>Password</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
+            <div><Label>Email</Label><Input type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }} required /></div>
+            <div><Label>Password</Label><Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }} required /></div>
           </CardContent>
           <CardFooter className="flex-col gap-2 items-stretch">
             <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700">
@@ -799,6 +830,7 @@ function SubmitAbstract({ setRoute, user }) {
   ])
   const [loading, setLoading] = useState(false)
   const [docFile, setDocFile] = useState(null)
+  const [submitError, setSubmitError] = useState('')
 
   useEffect(() => { api('/conferences').then(d => {
     setConferences(d.conferences || [])
@@ -836,18 +868,19 @@ function SubmitAbstract({ setRoute, user }) {
   }
 
   const submit = async (asDraft) => {
-    // Validations
-    if (!conferenceId) return toast.error('Choose a conference')
-    if (!title) return toast.error('Enter a title')
-    if (titleWordCount > TITLE_WORD_LIMIT) return toast.error(`Title exceeds ${TITLE_WORD_LIMIT} words`)
-    if (!body && !docFile) return toast.error('Enter abstract body or upload a Word document')
-    if (body && bodyWordCount > WORD_LIMIT) return toast.error(`Abstract body exceeds ${WORD_LIMIT} words (currently ${bodyWordCount})`)
-    if (!authors.some(a => a.isCorresponding)) return toast.error('Mark at least one author as corresponding')
-    if (authors.some(a => !a.fullName || !a.email)) return toast.error('Each author must have name and email')
-    if (keywordList.length > 5) return toast.error('Maximum 5 keywords allowed')
+    setSubmitError('')
+    // Validations - concise inline messages that stay visible
+    if (!conferenceId) { setSubmitError('Please choose a conference.'); return }
+    if (!title) { setSubmitError('Please enter a title.'); return }
+    if (titleWordCount > TITLE_WORD_LIMIT) { setSubmitError(`Title exceeds ${TITLE_WORD_LIMIT} words (currently ${titleWordCount}).`); return }
+    if (!body && !docFile) { setSubmitError('Enter abstract body or upload a Word document.'); return }
+    if (body && bodyWordCount > WORD_LIMIT) { setSubmitError(`Abstract body exceeds ${WORD_LIMIT} words (currently ${bodyWordCount}).`); return }
+    if (!authors.some(a => a.isCorresponding)) { setSubmitError('Please mark one author as corresponding.'); return }
+    if (authors.some(a => !a.fullName || !a.email)) { setSubmitError('Every author must have a name and email.'); return }
+    if (keywordList.length > 5) { setSubmitError('Maximum 5 keywords allowed.'); return }
     if (docFile) {
       const err = validateDocFile(docFile)
-      if (err) return toast.error(err)
+      if (err) { setSubmitError(err); return }
     }
 
     setLoading(true)
@@ -874,7 +907,13 @@ function SubmitAbstract({ setRoute, user }) {
         toast.success(`Draft saved as ${d.abstract.submissionCode}`)
       }
       setRoute({ name: 'abstract', id: d.abstract.id })
-    } catch (e) { toast.error(e.message) } finally { setLoading(false) }
+    } catch (e) {
+      const msg = String(e.message || 'Submission failed')
+      let clean = msg
+      if (msg.length > 160) clean = 'Submission failed. Please check your details and try again.'
+      if (msg.toLowerCase().includes('database') || msg.toLowerCase().includes('reach')) clean = 'Server temporarily unavailable. Please try again in a moment.'
+      setSubmitError(clean)
+    } finally { setLoading(false) }
   }
 
   const SECTION_HINTS_ORIG = [
@@ -1057,6 +1096,13 @@ function SubmitAbstract({ setRoute, user }) {
               Submit for review
             </Button>
           </div>
+          {submitError && (
+            <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="flex-1"><b>Cannot submit: </b>{submitError}</div>
+              <button type="button" onClick={() => setSubmitError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
