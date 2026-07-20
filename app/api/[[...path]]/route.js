@@ -457,7 +457,10 @@ async function handleAbstracts(route, method, request) {
     const scope = url.searchParams.get('scope') // 'mine' | 'assigned' | 'all'
     const where = {}
     if (conferenceId) where.conferenceId = conferenceId
-    if (state) where.currentState = state
+    if (state) {
+      if (state.includes(',')) where.currentState = { in: state.split(',').map(s => s.trim()).filter(Boolean) }
+      else where.currentState = state
+    }
     if (scope === 'mine') where.submittedById = user.id
     if (scope === 'assigned') {
       // editor or reviewer assignments
@@ -1045,7 +1048,7 @@ async function handleAnalytics(route, method, request) {
 
 async function handleProgramme(route, method, request) {
   const user = await getCurrentUser(request)
-  const progMatch = route.match(/^\/programme\/([^\/]+)$/)
+  const progMatch = route.match(/^\/programme\/([^\/.]+)$/)
   if (progMatch && method === 'GET') {
     const sessions = await prisma.programmeSession.findMany({
       where: { conferenceId: progMatch[1] },
@@ -1058,7 +1061,7 @@ async function handleProgramme(route, method, request) {
     return ok({ sessions })
   }
   if (route === '/sessions' && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const s = await prisma.programmeSession.create({
       data: {
@@ -1069,20 +1072,98 @@ async function handleProgramme(route, method, request) {
     })
     return ok({ session: s })
   }
+  const sesMatch = route.match(/^\/sessions\/([^\/]+)$/)
+  if (sesMatch && method === 'PUT') {
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const patch = {}
+    ;['title', 'room', 'chair', 'themeId'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    if (body.startTime) patch.startTime = new Date(body.startTime)
+    if (body.endTime) patch.endTime = new Date(body.endTime)
+    const s = await prisma.programmeSession.update({ where: { id: sesMatch[1] }, data: patch })
+    return ok({ session: s })
+  }
+  if (sesMatch && method === 'DELETE') {
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    await prisma.programmeSession.delete({ where: { id: sesMatch[1] } })
+    return ok({ ok: true })
+  }
   const itemMatch = route.match(/^\/sessions\/([^\/]+)\/items$/)
   if (itemMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
+    // ProgrammeItem has @unique on abstractId, so an abstract can only be in one session
+    // Delete existing item for this abstract if any
+    await prisma.programmeItem.deleteMany({ where: { abstractId: body.abstractId } })
+    // Determine orderIndex
+    const count = await prisma.programmeItem.count({ where: { sessionId: itemMatch[1] } })
     const item = await prisma.programmeItem.create({
       data: {
         sessionId: itemMatch[1],
         abstractId: body.abstractId,
-        orderIndex: body.orderIndex || 0,
+        orderIndex: body.orderIndex !== undefined ? body.orderIndex : count,
         durationMin: body.durationMin || 15,
       },
+      include: { abstract: { include: { authors: true } } },
     })
     return ok({ item })
   }
+  const itemIdMatch = route.match(/^\/programme-items\/([^\/]+)$/)
+  if (itemIdMatch && method === 'PUT') {
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const patch = {}
+    ;['orderIndex', 'durationMin'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    const item = await prisma.programmeItem.update({ where: { id: itemIdMatch[1] }, data: patch })
+    return ok({ item })
+  }
+  if (itemIdMatch && method === 'DELETE') {
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    await prisma.programmeItem.delete({ where: { id: itemIdMatch[1] } })
+    return ok({ ok: true })
+  }
+
+  // ---------- Downloads ----------
+  const csvMatch = route.match(/^\/programme\/([^\/]+)\.csv$/)
+  if (csvMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const sessions = await prisma.programmeSession.findMany({
+      where: { conferenceId: csvMatch[1] },
+      include: { items: { include: { abstract: { include: { authors: true } } }, orderBy: { orderIndex: 'asc' } } },
+      orderBy: { startTime: 'asc' },
+    })
+    const rows = [['Session', 'Day', 'Start', 'End', 'Room', 'Chair', 'Order', 'Duration', 'Abstract Code', 'Title', 'Authors']]
+    sessions.forEach(s => {
+      const day = new Date(s.startTime).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+      if (s.items.length === 0) rows.push([s.title, day, new Date(s.startTime).toISOString(), new Date(s.endTime).toISOString(), s.room || '', s.chair || '', '', '', '', '', ''])
+      s.items.forEach((it, idx) => {
+        rows.push([
+          s.title, day, new Date(s.startTime).toISOString(), new Date(s.endTime).toISOString(),
+          s.room || '', s.chair || '', idx + 1, it.durationMin || 15,
+          it.abstract?.submissionCode || '', it.abstract?.title || '',
+          (it.abstract?.authors || []).map(a => a.fullName).join('; '),
+        ])
+      })
+    })
+    const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
+    return new NextResponse(csv, { status: 200, headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="programme.csv"` } })
+  }
+
+  const pdfMatch = route.match(/^\/programme\/([^\/]+)\.pdf$/)
+  if (pdfMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const conference = await prisma.conference.findUnique({ where: { id: pdfMatch[1] } })
+    if (!conference) return err('Conference not found', 404)
+    const sessions = await prisma.programmeSession.findMany({
+      where: { conferenceId: pdfMatch[1] },
+      include: { items: { include: { abstract: { include: { authors: true } } }, orderBy: { orderIndex: 'asc' } } },
+      orderBy: { startTime: 'asc' },
+    })
+    const { generateProgrammePDF } = await import('@/lib/pdf')
+    const buf = await generateProgrammePDF({ conference, sessions })
+    return new NextResponse(buf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${conference.code || 'conference'}-programme.pdf"` } })
+  }
+
   return null
 }
 
@@ -1538,6 +1619,47 @@ async function handleSurveys(route, method, request) {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     await prisma.feedbackSurvey.delete({ where: { id: oneMatch[1] } })
     return ok({ ok: true })
+  }
+
+  // Send TEST — sends only to the admin's own email
+  const testMatch = route.match(/^\/surveys\/([^\/]+)\/send-test$/)
+  if (testMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const survey = await prisma.feedbackSurvey.findUnique({ where: { id: testMatch[1] }, include: { conference: true } })
+    if (!survey) return err('Survey not found', 404)
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
+    // Reuse or create a test response for this admin
+    let resp = await prisma.feedbackResponse.findFirst({ where: { surveyId: survey.id, userId: user.id } })
+    if (!resp) {
+      resp = await prisma.feedbackResponse.create({
+        data: { surveyId: survey.id, userId: user.id, email: user.email, token: crypto.randomBytes(24).toString('hex') },
+      })
+    }
+    const url = `${baseUrl}/?survey=${resp.token}`
+    const subject = `[TEST] ${survey.dayNumber ? `Day ${survey.dayNumber} · ` : ''}${survey.title}`
+    const bodyText = `Dear ${user.firstName || 'Admin'},
+
+This is a TEST send of the survey "${survey.title}" so you can preview it before dispatching to delegates.
+
+${survey.description ? survey.description + '\n\n' : ''}Preview link: ${url}
+
+If the email arrives as expected, use "Send to all" to dispatch to registered delegates.
+
+Editorial Committee`
+    const { sendEmail } = await import('@/lib/email')
+    const { renderEmailHtml } = await import('@/lib/email-templates')
+    try {
+      await sendEmail({
+        to: user.email,
+        subject,
+        text: bodyText,
+        html: renderEmailHtml({ subject, body: bodyText, conferenceName: survey.conference.name }),
+      })
+      return ok({ email: user.email, previewLink: url })
+    } catch (e) {
+      return err('Test email failed: ' + e.message, 500)
+    }
   }
 
   const sendMatch = route.match(/^\/surveys\/([^\/]+)\/send$/)

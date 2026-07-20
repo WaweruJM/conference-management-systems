@@ -645,6 +645,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'templates', label: 'Templates', icon: FileText, show: true },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin },
     { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor },
+    { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor },
     { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor },
     { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
@@ -758,6 +759,7 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'conferences') return <Conferences />
   if (route.name === 'conference-admin') return <ConferenceAdmin />
   if (route.name === 'booth-admin') return <BoothAdmin />
+  if (route.name === 'programme-admin') return <ProgrammeAdmin />
   if (route.name === 'book-admin') return <ConferenceBookAdmin />
   if (route.name === 'surveys') return <SurveyAdmin />
   if (route.name === 'programme') return <Programme />
@@ -2213,34 +2215,94 @@ function Programme() {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   const [sessions, setSessions] = useState([])
+  const [downloadingType, setDownloadingType] = useState(null)
   useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
   useEffect(() => { if (confId) api(`/programme/${confId}`).then(d => setSessions(d.sessions || [])) }, [confId])
+
+  const download = async (type) => {
+    setDownloadingType(type)
+    try {
+      const token = getToken()
+      const resp = await fetch(`/api/programme/${confId}.${type}`, { headers: { 'Authorization': `Bearer ${token}` } })
+      if (!resp.ok) throw new Error(await resp.text() || 'Failed')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const conf = confs.find(c => c.id === confId)
+      const a = document.createElement('a'); a.href = url; a.download = `${conf?.code || 'conference'}-programme.${type}`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { toast.error(e.message || 'Download failed') } finally { setDownloadingType(null) }
+  }
+
+  // Group sessions by day
+  const dayGroups = {}
+  sessions.forEach(s => {
+    const key = new Date(s.startTime).toISOString().slice(0, 10)
+    if (!dayGroups[key]) dayGroups[key] = { date: new Date(s.startTime), items: [] }
+    dayGroups[key].items.push(s)
+  })
+  const days = Object.entries(dayGroups).sort(([a], [b]) => a.localeCompare(b))
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">Conference programme</h1>
-        <Select value={confId} onValueChange={setConfId}>
-          <SelectTrigger className="w-72"><SelectValue /></SelectTrigger>
-          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
-        </Select>
+      <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Calendar className="h-7 w-7 text-indigo-600" /> Conference programme</h1>
+          <p className="text-muted-foreground">Full schedule of sessions and presentations. Download as PDF booklet or CSV for planning.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={confId} onValueChange={setConfId}>
+            <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+            <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button variant="outline" onClick={() => download('pdf')} disabled={!confId || downloadingType === 'pdf'}>
+            {downloadingType === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />} PDF
+          </Button>
+          <Button variant="outline" onClick={() => download('csv')} disabled={!confId || downloadingType === 'csv'}>
+            {downloadingType === 'csv' ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />} CSV
+          </Button>
+        </div>
       </div>
       {sessions.length === 0 ? <EmptyState label="No sessions scheduled yet" /> : (
-        <div className="space-y-4">
-          {sessions.map(s => (
-            <Card key={s.id}>
-              <CardHeader>
-                <CardTitle>{s.title}</CardTitle>
-                <CardDescription>{new Date(s.startTime).toLocaleString()} – {new Date(s.endTime).toLocaleTimeString()} · Room: {s.room} · Chair: {s.chair}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {s.items.map(i => (
-                  <div key={i.id} className="border-l-2 border-indigo-200 pl-3 py-1.5 mb-1">
-                    <div className="text-sm font-medium">{i.abstract.title}</div>
-                    <div className="text-xs text-muted-foreground">{i.abstract.authors.map(a => a.fullName).join(', ')} · {i.durationMin} min</div>
-                  </div>
+        <div className="space-y-8">
+          {days.map(([key, g]) => (
+            <div key={key}>
+              <div className="mb-3 pb-2 border-b-2 border-indigo-200 flex items-baseline gap-3">
+                <h2 className="text-xl font-bold text-indigo-700">{g.date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2>
+                <span className="text-xs text-muted-foreground">{g.items.length} sessions</span>
+              </div>
+              <div className="grid gap-3">
+                {g.items.map(s => (
+                  <Card key={s.id} className="overflow-hidden">
+                    <div className="flex">
+                      <div className="w-40 bg-gradient-to-br from-indigo-600 to-fuchsia-600 p-4 flex flex-col justify-center text-white">
+                        <div className="text-lg font-bold">{new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        <div className="text-xs opacity-90">to {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        {s.room && <div className="text-[11px] mt-2 opacity-90">{s.room}</div>}
+                      </div>
+                      <div className="flex-1 p-4">
+                        <div className="font-bold text-lg">{s.title}</div>
+                        <div className="text-xs text-muted-foreground mb-2">
+                          {s.chair && `Chair: ${s.chair}`}{s.chair && s.theme?.name && ' · '}{s.theme?.name && `Theme: ${s.theme.name}`}
+                        </div>
+                        {(s.items || []).length > 0 && (
+                          <div className="space-y-1 mt-2 border-t pt-2">
+                            {s.items.map(i => (
+                              <div key={i.id} className="text-sm flex gap-3">
+                                <span className="text-xs text-muted-foreground shrink-0 w-14">{i.durationMin || 15} min</span>
+                                <div className="flex-1">
+                                  <div className="text-sm">{i.abstract.title} <span className="text-xs text-muted-foreground">({i.abstract.submissionCode})</span></div>
+                                  <div className="text-xs text-muted-foreground">{(i.abstract.authors || []).map(a => a.fullName).join(', ')}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
                 ))}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -3201,56 +3263,149 @@ function ResetPasswordPage({ token, onDone }) {
 function ExhibitionBoothsPublic({ conf }) {
   const [booths, setBooths] = useState([])
   const [idx, setIdx] = useState(0)
+  const [paused, setPaused] = useState(false)
   useEffect(() => { if (conf?.id) fetch(`/api/conferences/${conf.id}/booths`).then(r => r.json()).then(d => setBooths(d.booths || [])) }, [conf?.id])
   useEffect(() => {
-    if (booths.length < 2) return
+    if (booths.length < 2 || paused) return
     const t = setInterval(() => setIdx(v => (v + 1) % booths.length), 15000)
     return () => clearInterval(t)
-  }, [booths.length])
-  if (booths.length === 0) return <div className="container mx-auto px-6 py-10 text-center text-muted-foreground">No exhibition booths yet. Check back closer to the conference date.</div>
+  }, [booths.length, paused])
+
+  if (booths.length === 0) return (
+    <div className="container mx-auto px-6 py-16 text-center">
+      <Building2 className="h-16 w-16 mx-auto text-slate-300 mb-3" />
+      <div className="text-lg font-semibold text-slate-500">No exhibition booths yet</div>
+      <div className="text-sm text-muted-foreground">Check back closer to the conference date to explore our sponsors and industry partners.</div>
+    </div>
+  )
   const b = booths[idx]
+
   return (
-    <div className="container mx-auto px-6 py-8 max-w-5xl">
-      <div className="mb-6 flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Virtual Exhibition Booths</h1>
-          <p className="text-muted-foreground">Rotating every 15 seconds · Booth {idx + 1} of {booths.length}</p>
+    <div className="bg-gradient-to-br from-slate-50 via-white to-indigo-50 min-h-screen">
+      <div className="container mx-auto px-6 py-10 max-w-6xl">
+        <div className="text-center mb-8">
+          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 mb-2">SPONSORS & EXHIBITORS</Badge>
+          <h1 className="text-4xl font-bold tracking-tight">Virtual Exhibition Hall</h1>
+          <p className="text-muted-foreground mt-2">Meet the industry partners powering {conf?.name || 'this conference'}</p>
         </div>
-        <div className="flex gap-1 flex-wrap">
-          {booths.map((_, i) => (
-            <button key={i} onClick={() => setIdx(i)} className={`h-2 w-8 rounded-full transition ${i === idx ? 'bg-indigo-600' : 'bg-slate-300'}`} />
-          ))}
-        </div>
-      </div>
-      <Card className="overflow-hidden shadow-xl">
-        {b.bannerPath && (
-          <div className="w-full h-64 bg-slate-100 overflow-hidden">
-            <img src={b.bannerPath} alt={b.sponsorName} className="w-full h-full object-cover" />
-          </div>
-        )}
-        <CardContent className="p-8">
-          <div className="flex items-start gap-6">
-            {b.logoPath && <img src={b.logoPath} alt="" className="h-24 w-24 object-contain border rounded-md p-2" />}
-            <div className="flex-1">
-              <h2 className="text-3xl font-bold text-indigo-700">{b.sponsorName}</h2>
-              {b.companyType && <div className="text-sm text-muted-foreground mt-1">{b.companyType}</div>}
-              {b.message && <p className="mt-4 text-base whitespace-pre-wrap">{b.message}</p>}
-              {b.products && (
-                <div className="mt-4">
-                  <div className="text-sm font-semibold mb-1">Products / Services</div>
-                  <p className="text-sm whitespace-pre-wrap text-slate-700">{b.products}</p>
+
+        {/* Main rotating card */}
+        <div className="relative" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          <Card className="overflow-hidden shadow-2xl border-0 ring-1 ring-slate-200">
+            <div className="relative">
+              {b.bannerPath ? (
+                <div className="w-full h-80 bg-slate-100 relative overflow-hidden">
+                  <img src={b.bannerPath} alt={b.sponsorName} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-8 text-white">
+                    <div className="flex items-end gap-4">
+                      {b.logoPath && (
+                        <div className="h-20 w-20 bg-white rounded-lg p-2 shadow-lg shrink-0">
+                          <img src={b.logoPath} alt="" className="h-full w-full object-contain" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <Badge className="bg-white/25 border-white/40 text-white backdrop-blur-sm mb-2">{b.companyType || 'Sponsor'}</Badge>
+                        <h2 className="text-4xl font-bold drop-shadow-lg">{b.sponsorName}</h2>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-indigo-600 to-fuchsia-600 p-10 text-white">
+                  <h2 className="text-4xl font-bold">{b.sponsorName}</h2>
+                  {b.companyType && <div className="text-lg opacity-90 mt-1">{b.companyType}</div>}
                 </div>
               )}
-              <div className="mt-4 flex flex-wrap gap-3 text-sm">
-                {b.websiteUrl && <a href={b.websiteUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">🌐 {b.websiteUrl}</a>}
-                {b.contactEmail && <a href={`mailto:${b.contactEmail}`} className="text-indigo-600 hover:underline">📧 {b.contactEmail}</a>}
-                {b.contactPhone && <span>📞 {b.contactPhone}</span>}
-              </div>
             </div>
+
+            <CardContent className="p-8">
+              <div className="grid md:grid-cols-3 gap-8">
+                <div className="md:col-span-2 space-y-5">
+                  {b.message && (
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-2">About</div>
+                      <p className="text-base leading-relaxed text-slate-700 whitespace-pre-wrap">{b.message}</p>
+                    </div>
+                  )}
+                  {b.products && (
+                    <div className="border-t pt-4">
+                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-2">Products & Services</div>
+                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{b.products}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-4 rounded-lg bg-slate-50 border">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Get in touch</div>
+                    <div className="space-y-2 text-sm">
+                      {b.websiteUrl && (
+                        <a href={b.websiteUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-indigo-600 hover:text-indigo-800 hover:underline">
+                          <Globe className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{b.websiteUrl.replace(/^https?:\/\//, '')}</span>
+                        </a>
+                      )}
+                      {b.contactEmail && (
+                        <a href={`mailto:${b.contactEmail}`} className="flex items-center gap-2 text-indigo-600 hover:text-indigo-800 hover:underline">
+                          <Mail className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{b.contactEmail}</span>
+                        </a>
+                      )}
+                      {b.contactPhone && (
+                        <div className="flex items-center gap-2 text-slate-700">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h1.28a1 1 0 01.95.68l1.5 4.5a1 1 0 01-.5 1.21l-2.26 1.13a11 11 0 005.52 5.52l1.13-2.26a1 1 0 011.21-.5l4.5 1.5a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" /></svg>
+                          <span>{b.contactPhone}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {b.otherLinks && b.otherLinks.length > 0 && (
+                    <div className="p-4 rounded-lg bg-indigo-50 border border-indigo-100">
+                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-700 mb-3">Explore more</div>
+                      <div className="space-y-1.5">
+                        {b.otherLinks.map((l, i) => (
+                          <a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 hover:underline">
+                            <ChevronRight className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{l.label}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Nav arrows */}
+          {booths.length > 1 && (
+            <>
+              <button onClick={() => setIdx((idx - 1 + booths.length) % booths.length)} className="absolute -left-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border">
+                <ChevronRight className="h-5 w-5 rotate-180" />
+              </button>
+              <button onClick={() => setIdx((idx + 1) % booths.length)} className="absolute -right-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border">
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Progress + thumbs */}
+        <div className="mt-8">
+          <div className="text-center text-xs text-muted-foreground mb-3">
+            Booth {idx + 1} of {booths.length} · {paused ? 'Paused (hovering)' : 'Auto-rotates every 15 seconds'}
           </div>
-        </CardContent>
-      </Card>
-      <p className="text-xs text-muted-foreground text-center mt-4">Booth auto-rotates every 15 seconds. Click any dot above to jump to a specific sponsor.</p>
+          <div className="flex justify-center gap-2 flex-wrap">
+            {booths.map((booth, i) => (
+              <button key={i} onClick={() => setIdx(i)} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition ${i === idx ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'}`}>
+                <div className={`h-1.5 w-1.5 rounded-full ${i === idx ? 'bg-white' : 'bg-slate-400'}`} />
+                <span className="font-medium">{booth.sponsorName}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3531,6 +3686,8 @@ function SurveyAdmin() {
   const [surveys, setSurveys] = useState([])
   const [editing, setEditing] = useState(null)
   const [viewingAnalytics, setViewingAnalytics] = useState(null)
+  const [sendingId, setSendingId] = useState(null)
+  const [sendResult, setSendResult] = useState(null)
 
   const refresh = () => confId && api(`/conferences/${confId}/surveys`).then(d => setSurveys(d.surveys || []))
   useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
@@ -3541,13 +3698,22 @@ function SurveyAdmin() {
     if (!confirm('Delete this survey? All responses will be lost.')) return
     try { await api(`/surveys/${id}`, { method: 'DELETE' }); refresh(); toast.success('Deleted') } catch (e) { toast.error(e.message) }
   }
-  const send = async (id) => {
-    if (!confirm('Send this survey to all registered delegates?')) return
+  const send = async (survey) => {
+    if (!confirm(`Send "${survey.title}" to all registered delegates?`)) return
+    setSendingId(survey.id)
+    setSendResult(null)
     try {
-      const d = await api(`/surveys/${id}/send`, { method: 'POST' })
-      toast.success(`Sent to ${d.sent}/${d.total} delegates`)
+      const d = await api(`/surveys/${survey.id}/send`, { method: 'POST' })
+      setSendResult({ survey, ...d })
       refresh()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { toast.error(e.message || 'Send failed') } finally { setSendingId(null) }
+  }
+  const sendTest = async (survey) => {
+    setSendingId(survey.id + ':test')
+    try {
+      const d = await api(`/surveys/${survey.id}/send-test`, { method: 'POST' })
+      toast.success(`Test email sent to ${d.email}. Preview link: ${d.previewLink ? 'included' : 'included'}`)
+    } catch (e) { toast.error(e.message || 'Test send failed') } finally { setSendingId(null) }
   }
 
   return (
@@ -3580,13 +3746,18 @@ function SurveyAdmin() {
                 </div>
                 {s.description && <p className="text-sm text-muted-foreground line-clamp-1">{s.description}</p>}
                 <div className="text-xs text-muted-foreground mt-1">
-                  {s.questions?.length || 0} questions · {s.submittedCount || 0} responses received{s.sentAt ? ` · Sent ${new Date(s.sentAt).toLocaleDateString()}` : ''}
+                  {s.questions?.length || 0} questions · {s.submittedCount || 0} responses received{s.sentAt ? ` · Last sent ${new Date(s.sentAt).toLocaleDateString()}` : ''}
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1 w-40">
                 <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
                 <Button size="sm" variant="outline" onClick={() => setViewingAnalytics(s)}><BarChart3 className="h-3 w-3 mr-1" />Results</Button>
-                <Button size="sm" onClick={() => send(s.id)} className="bg-indigo-600 hover:bg-indigo-700"><Mail className="h-3 w-3 mr-1" />Send</Button>
+                <Button size="sm" variant="outline" onClick={() => sendTest(s)} disabled={sendingId === s.id + ':test'}>
+                  {sendingId === s.id + ':test' ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Mail className="h-3 w-3 mr-1" />}Send test
+                </Button>
+                <Button size="sm" onClick={() => send(s)} disabled={sendingId === s.id} className="bg-indigo-600 hover:bg-indigo-700">
+                  {sendingId === s.id ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Sending…</> : <><Send className="h-3 w-3 mr-1" />Send to all</>}
+                </Button>
                 <Button size="sm" variant="destructive" onClick={() => remove(s.id)}><Trash2 className="h-3 w-3" /></Button>
               </div>
             </CardContent>
@@ -3596,6 +3767,34 @@ function SurveyAdmin() {
 
       {editing && <SurveyEditDialog conferenceId={confId} survey={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh() }} />}
       {viewingAnalytics && <SurveyAnalyticsDialog survey={viewingAnalytics} onClose={() => setViewingAnalytics(null)} />}
+      {sendResult && (
+        <Dialog open onOpenChange={() => setSendResult(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-green-600" /> Survey dispatch complete</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="text-sm text-slate-600">Survey: <b>{sendResult.survey.title}</b></div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="p-3 bg-slate-50 rounded"><div className="text-2xl font-bold">{sendResult.total}</div><div className="text-[10px] text-muted-foreground">Delegates</div></div>
+                <div className="p-3 bg-indigo-50 rounded"><div className="text-2xl font-bold text-indigo-600">{sendResult.created}</div><div className="text-[10px] text-muted-foreground">New tokens</div></div>
+                <div className="p-3 bg-green-50 rounded"><div className="text-2xl font-bold text-green-600">{sendResult.sent}</div><div className="text-[10px] text-muted-foreground">Sent</div></div>
+                <div className="p-3 bg-red-50 rounded"><div className="text-2xl font-bold text-red-600">{sendResult.failed}</div><div className="text-[10px] text-muted-foreground">Failed</div></div>
+              </div>
+              {sendResult.total === 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
+                  <AlertCircle className="h-4 w-4 inline mr-1" />
+                  No delegates are registered for this conference yet. Please invite users to register before sending the survey.
+                </div>
+              )}
+              {sendResult.failed > 0 && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+                  <b>{sendResult.failed}</b> email(s) failed to deliver. Common causes: invalid email address, recipient's mailbox full, or Resend API restrictions. Check server logs.
+                </div>
+              )}
+            </div>
+            <DialogFooter><Button onClick={() => setSendResult(null)}>Done</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -3880,6 +4079,241 @@ function PublicSurveyPage({ token, onDone }) {
         </Card>
       </div>
     </div>
+  )
+}
+
+// ============ PROGRAMME ADMIN ============
+function ProgrammeAdmin() {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [sessions, setSessions] = useState([])
+  const [acceptedAbstracts, setAcceptedAbstracts] = useState([])
+  const [editing, setEditing] = useState(null)
+  const [addingToSession, setAddingToSession] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const refresh = async () => {
+    if (!confId) return
+    setLoading(true)
+    try {
+      const d = await api(`/programme/${confId}`)
+      setSessions(d.sessions || [])
+      // Load abstracts eligible for scheduling
+      const ab = await api(`/abstracts?state=ACCEPTED,PROGRAMME_SCHEDULING,ORAL,POSTER,FINAL_ACCEPTANCE,PUBLISHED`)
+      setAcceptedAbstracts((ab.abstracts || []).filter(a => a.conferenceId === confId))
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+  useEffect(() => { refresh() }, [confId])
+
+  const createSession = () => setEditing({ isNew: true, title: '', room: '', chair: '', startTime: '', endTime: '' })
+
+  const deleteSession = async (id) => {
+    if (!confirm('Delete this session and all its items?')) return
+    try { await api(`/sessions/${id}`, { method: 'DELETE' }); refresh(); toast.success('Session deleted') } catch (e) { toast.error(e.message) }
+  }
+  const removeItem = async (id) => {
+    try { await api(`/programme-items/${id}`, { method: 'DELETE' }); refresh() } catch (e) { toast.error(e.message) }
+  }
+
+  // Scheduled abstract ids
+  const scheduledIds = new Set()
+  sessions.forEach(s => (s.items || []).forEach(i => scheduledIds.add(i.abstract.id)))
+  const unscheduled = acceptedAbstracts.filter(a => !scheduledIds.has(a.id))
+
+  // Group by day
+  const dayGroups = {}
+  sessions.forEach(s => {
+    const key = new Date(s.startTime).toISOString().slice(0, 10)
+    if (!dayGroups[key]) dayGroups[key] = { date: new Date(s.startTime), items: [] }
+    dayGroups[key].items.push(s)
+  })
+  const days = Object.entries(dayGroups).sort(([a], [b]) => a.localeCompare(b))
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Calendar className="h-7 w-7 text-indigo-600" /> Programme Admin</h1>
+          <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts to build the daily programme.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={confId} onValueChange={setConfId}>
+            <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+            <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button onClick={createSession} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New session</Button>
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 space-y-6">
+          {loading && <div className="text-center py-6"><Loader2 className="animate-spin inline" /></div>}
+          {!loading && sessions.length === 0 && <EmptyState label="No sessions scheduled yet" onAction={createSession} actionLabel="Create first session" />}
+          {days.map(([key, g]) => (
+            <div key={key}>
+              <div className="mb-2 pb-1 border-b border-indigo-200 flex items-baseline gap-3">
+                <h2 className="text-lg font-bold text-indigo-700">{g.date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
+                <span className="text-xs text-muted-foreground">{g.items.length} sessions</span>
+              </div>
+              <div className="space-y-3">
+                {g.items.map(s => (
+                  <Card key={s.id}>
+                    <CardContent className="p-4">
+                      <div className="flex justify-between items-start gap-3 mb-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="font-bold">{s.title}</div>
+                            <Badge variant="outline" className="text-[10px]">{s.items?.length || 0} items</Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {s.room && ` · ${s.room}`}{s.chair && ` · Chair: ${s.chair}`}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                          <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3" /></Button>
+                          <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                        </div>
+                      </div>
+                      {(s.items || []).length > 0 && (
+                        <div className="space-y-1 mt-2 border-t pt-2">
+                          {s.items.map((i, idx) => (
+                            <div key={i.id} className="flex items-center gap-2 text-sm p-1.5 rounded hover:bg-slate-50 group">
+                              <span className="text-xs text-slate-400 w-6">{idx + 1}.</span>
+                              <span className="text-xs text-muted-foreground w-14">{i.durationMin || 15}m</span>
+                              <div className="flex-1">
+                                <div className="text-sm">{i.abstract.title} <span className="text-xs text-muted-foreground">({i.abstract.submissionCode})</span></div>
+                                <div className="text-[10px] text-muted-foreground">{(i.abstract.authors || []).map(a => a.fullName).join(', ')}</div>
+                              </div>
+                              <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="lg:col-span-1">
+          <Card className="sticky top-4">
+            <CardHeader><CardTitle className="text-base">Unscheduled abstracts</CardTitle><CardDescription>{unscheduled.length} accepted, not yet in programme</CardDescription></CardHeader>
+            <CardContent className="space-y-2 max-h-[70vh] overflow-y-auto">
+              {unscheduled.length === 0 && <div className="text-xs text-muted-foreground text-center py-4">All accepted abstracts scheduled</div>}
+              {unscheduled.map(a => (
+                <div key={a.id} className="border rounded p-2 hover:bg-slate-50">
+                  <div className="text-xs font-medium">{a.submissionCode}</div>
+                  <div className="text-sm line-clamp-2">{a.title}</div>
+                  <Badge variant="outline" className="text-[10px] mt-1">{a.currentState}</Badge>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {editing && <SessionEditDialog conferenceId={confId} session={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh() }} />}
+      {addingToSession && <AddItemDialog session={addingToSession} abstracts={unscheduled} onClose={() => setAddingToSession(null)} onDone={() => { setAddingToSession(null); refresh() }} />}
+    </div>
+  )
+}
+
+function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
+  const toLocal = (d) => d ? new Date(d).toISOString().slice(0, 16) : ''
+  const [form, setForm] = useState({
+    title: session.title || '', room: session.room || '', chair: session.chair || '',
+    startTime: toLocal(session.startTime), endTime: toLocal(session.endTime),
+  })
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    if (!form.title) { toast.error('Title required'); return }
+    if (!form.startTime || !form.endTime) { toast.error('Start and end time required'); return }
+    if (new Date(form.endTime) <= new Date(form.startTime)) { toast.error('End must be after start'); return }
+    setSaving(true)
+    try {
+      if (session.isNew) {
+        await api('/sessions', { method: 'POST', body: JSON.stringify({ conferenceId, ...form }) })
+      } else {
+        await api(`/sessions/${session.id}`, { method: 'PUT', body: JSON.stringify(form) })
+      }
+      toast.success('Saved'); onDone()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>{session.isNew ? 'New session' : 'Edit session'}</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <div><Label>Title <span className="text-red-500">*</span></Label><Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Opening Ceremony, Session 1A: Cardiology" /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Start <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} /></div>
+            <div><Label>End <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Room / Hall</Label><Input value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Hall A" /></div>
+            <div><Label>Chair</Label><Input value={form.chair} onChange={e => setForm({ ...form, chair: e.target.value })} placeholder="Prof. Doe" /></div>
+          </div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AddItemDialog({ session, abstracts, onClose, onDone }) {
+  const [selected, setSelected] = useState([])
+  const [duration, setDuration] = useState(15)
+  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const filtered = abstracts.filter(a =>
+    !search || a.title.toLowerCase().includes(search.toLowerCase()) || a.submissionCode.toLowerCase().includes(search.toLowerCase())
+  )
+  const toggle = (id) => setSelected(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
+
+  const save = async () => {
+    if (selected.length === 0) { toast.error('Select at least one abstract'); return }
+    setSaving(true)
+    try {
+      for (const abstractId of selected) {
+        await api(`/sessions/${session.id}/items`, { method: 'POST', body: JSON.stringify({ abstractId, durationMin: parseInt(duration) || 15 }) })
+      }
+      toast.success(`Added ${selected.length} to programme`); onDone()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader><DialogTitle>Add to "{session.title}"</DialogTitle><DialogDescription>Select accepted abstracts to schedule in this session</DialogDescription></DialogHeader>
+        <div className="flex-1 overflow-hidden flex flex-col space-y-2">
+          <div className="flex gap-2">
+            <Input placeholder="Search by title or code..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
+            <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
+          </div>
+          <div className="flex-1 overflow-y-auto border rounded space-y-1 p-2 min-h-[200px]">
+            {filtered.length === 0 && <div className="text-center text-xs text-muted-foreground py-4">No unscheduled abstracts match</div>}
+            {filtered.map(a => (
+              <label key={a.id} className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${selected.includes(a.id) ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-slate-50'}`}>
+                <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} className="mt-1" />
+                <div className="flex-1">
+                  <div className="text-xs font-semibold text-indigo-600">{a.submissionCode} <Badge variant="outline" className="text-[9px] ml-1">{a.currentState}</Badge></div>
+                  <div className="text-sm">{a.title}</div>
+                  <div className="text-[10px] text-muted-foreground">{(a.authors || []).map(au => au.fullName).slice(0, 3).join(', ')}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="text-xs text-muted-foreground">{selected.length} selected</div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving || selected.length === 0} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}Add {selected.length} to programme</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

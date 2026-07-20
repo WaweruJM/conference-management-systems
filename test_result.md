@@ -291,12 +291,52 @@ backend:
       - working: true
         agent: "main"
         comment: |
-          Three fixes:
-          1) EMAIL_FROM updated to editorial@medals-scms.com (user's verified Resend domain). Confirmed working: survey email delivered to author@scms.io (log: '[email] resend ok').
-          2) Fixed public /reviewer-invitations/verify/:token endpoint — was returning 401 because handleAbstracts, handleTechnicalScore, handleAnnouncements had top-level auth checks BEFORE route matching, blocking downstream handlers. Refactored to early-return null when route doesn't belong to the handler.
-          3) Reviewer registration UI overhauled: (a) When ?reviewerInvite=token is present, page now shows dedicated 'Accept Reviewer Invitation' card with double-blind explanation banner, (b) Registering-as is displayed as a read-only pill (External Reviewer + by invitation badge) instead of an empty dropdown, (c) Specialty field pre-filled from invitation is required, (d) Affiliation field added, (e) Email read-only (from invitation), (f) Title prefix like 'Dr.'/'Prof.' automatically stripped when splitting fullName into first/last name, and passed separately in title field.
-          4) Standard registration form now shows helper text: 'Are you a peer reviewer? External reviewers are added by invitation only.'
-          5) ReviewForm enhanced: renamed fields for clarity, added double-blind reminder banner, added file attachment support (uploads as REVIEWER_ANNOTATION category to the abstract, visible to editor only), separated confidential notes to editor from review comments.
+          Three fixes: EMAIL_FROM updated to verified medals-scms.com domain. Fixed public /reviewer-invitations/verify/:token 401 error by adding route-prefix guards. Reviewer registration UI overhauled with dedicated invitation card, specialty field, title prefix parsing. ReviewForm enhanced with file attachments and double-blind reminder banner.
+
+  - task: "Conference Programme admin + downloads"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js, /app/lib/pdf.js, /app/app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Full Programme admin CRUD + downloads implemented.
+          Backend: PUT/DELETE /sessions/:id, POST/PUT/DELETE /programme-items, GET /programme/:id.pdf (branded PDF booklet grouped by day), GET /programme/:id.csv. Fixed regex so .pdf/.csv routes don't shadow the JSON GET /programme/:id. Also fixed abstracts state filter to accept comma-separated list for multi-state queries.
+          Frontend: New ProgrammeAdmin component with day-grouped session cards, add/edit/delete session, add abstracts to session (multi-select checkbox picker with search), remove items on hover. Unscheduled-abstracts sidebar. Public Programme page redesigned with day headers, gradient time-badge cards, and PDF/CSV download buttons. Verified: PDF 3.2KB %PDF-1.3, CSV correctly shows all sessions with day/time/room.
+
+  - task: "Feedback survey send UX + test send"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js, /app/app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Send button previously appeared unresponsive because there was no loading state and result toast was easy to miss.
+          Fixed: Send button now shows 'Sending…' spinner during the (~2-5 second) send call. On completion opens a detailed dispatch dialog showing Delegates / New tokens / Sent / Failed counts. Added new 'Send test' button per-survey which sends only to the admin's own email so they can preview the survey before dispatching to all delegates. Added new backend endpoint POST /surveys/:id/send-test. Empty-delegate case now shown as an amber warning in the dispatch dialog instead of a silent toast.
+          Verified: send-test returned admin's email + preview link, send returned created=1, sent=1, failed=0.
+
+  - task: "Sample exhibition booths + premium public layout"
+    implemented: true
+    working: true
+    file: "/app/app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Seeded 3 realistic sample sponsor booths on the featured conference (NovaMed Pharmaceuticals, BioDx Diagnostics, Aetheria Health Systems) each with royalty-free banner images from Pexels/Unsplash (blue-toned science/healthcare imagery), full company descriptions, products/services, website/email/phone contact details, and 'Other links' (Clinical trials portal, Product catalogue, Research partnerships etc.).
+          Redesigned ExhibitionBoothsPublic component with premium layout: hero banner image with dark gradient overlay, sponsor name and type overlaid in white on the banner, 2-column body (About + Products/Services on left, Get-in-touch card + Explore-more card on right), Lucide icons for globe/mail/phone. Added prev/next navigation arrows, tab-style booth selector with sponsor names visible (replacing tiny dots), pause-on-hover behaviour for auto-rotate, and clear indicator when paused.
+          Screenshot verified: professional, spacious, sponsor-appealing layout.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
