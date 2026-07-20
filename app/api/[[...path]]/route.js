@@ -203,31 +203,34 @@ async function handleConferences(route, method, request) {
     return ok({ registration: reg })
   }
 
-  // Hero image upload (admin only, multipart)
+  // Hero image upload (admin/chief editor, multipart)
   const heroMatch = route.match(/^\/conferences\/([^\/]+)\/hero-images$/)
   if (heroMatch && method === 'POST') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const formData = await request.formData()
     const file = formData.get('file')
     if (!file) return err('No file')
     if (file.size > 5 * 1024 * 1024) return err('Image too large (max 5 MB)')
     const buf = Buffer.from(await file.arrayBuffer())
-    const safeName = `hero_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const safeName = `hero_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
     const dir = path.join(UPLOAD_DIR, 'hero', heroMatch[1])
     await fs.mkdir(dir, { recursive: true })
     const filePath = path.join(dir, safeName)
     await fs.writeFile(filePath, buf)
     const publicPath = `/api/uploads/hero/${heroMatch[1]}/${safeName}`
+    // Read current, append, save (avoids race conditions with Prisma push)
+    const existing = await prisma.conference.findUnique({ where: { id: heroMatch[1] }, select: { heroImages: true } })
+    const newImages = [...(existing?.heroImages || []), publicPath]
     const conf = await prisma.conference.update({
       where: { id: heroMatch[1] },
-      data: { heroImages: { push: publicPath } },
+      data: { heroImages: newImages },
     })
     return ok({ conference: conf, imagePath: publicPath })
   }
   if (heroMatch && method === 'DELETE') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const conf = await prisma.conference.findUnique({ where: { id: heroMatch[1] } })
     const filtered = (conf.heroImages || []).filter(p => p !== body.imagePath)

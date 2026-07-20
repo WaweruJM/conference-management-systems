@@ -532,9 +532,8 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="AUTHOR">Author (submit abstracts)</SelectItem>
-                      <SelectItem value="ATTENDEE">Attendee (register for conferences)</SelectItem>
-                      <SelectItem value="EXTERNAL_REVIEWER">External Reviewer</SelectItem>
-                      <SelectItem value="INDUSTRY_PARTNER">Industry Partner</SelectItem>
+                      <SelectItem value="ATTENDEE">Conference Attendee</SelectItem>
+                      <SelectItem value="INDUSTRY_PARTNER">Sponsor / Industry / Pharma</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
