@@ -280,6 +280,24 @@ backend:
         agent: "main"
         comment: "Sprint D.2 complete. Added FeedbackSurvey and FeedbackResponse Prisma models. Endpoints: GET/POST /conferences/:id/surveys, PUT/DELETE /surveys/:id, POST /surveys/:id/send (emails all registrants with unique tokens via Resend), GET /surveys/:id/analytics (per-question aggregates, distribution, averages, response rate). Public endpoints: GET/POST /public/survey-response/:token. Supports RATING (1-5, 1-10), MCQ, YESNO, TEXT question types. Max 10 questions enforced. Verified end-to-end: send created 1 token+email, public submit worked, analytics returned 100% response rate with avg 4/5 and correct MCQ distribution."
 
+  - task: "Resend verified domain + reviewer flow fixes"
+    implemented: true
+    working: true
+    file: "/app/.env, /app/app/api/[[...path]]/route.js, /app/app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Three fixes:
+          1) EMAIL_FROM updated to editorial@medals-scms.com (user's verified Resend domain). Confirmed working: survey email delivered to author@scms.io (log: '[email] resend ok').
+          2) Fixed public /reviewer-invitations/verify/:token endpoint — was returning 401 because handleAbstracts, handleTechnicalScore, handleAnnouncements had top-level auth checks BEFORE route matching, blocking downstream handlers. Refactored to early-return null when route doesn't belong to the handler.
+          3) Reviewer registration UI overhauled: (a) When ?reviewerInvite=token is present, page now shows dedicated 'Accept Reviewer Invitation' card with double-blind explanation banner, (b) Registering-as is displayed as a read-only pill (External Reviewer + by invitation badge) instead of an empty dropdown, (c) Specialty field pre-filled from invitation is required, (d) Affiliation field added, (e) Email read-only (from invitation), (f) Title prefix like 'Dr.'/'Prof.' automatically stripped when splitting fullName into first/last name, and passed separately in title field.
+          4) Standard registration form now shows helper text: 'Are you a peer reviewer? External reviewers are added by invitation only.'
+          5) ReviewForm enhanced: renamed fields for clarity, added double-blind reminder banner, added file attachment support (uploads as REVIEWER_ANNOTATION category to the abstract, visible to editor only), separated confidential notes to editor from review comments.
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true

@@ -444,6 +444,8 @@ async function _unused() {
 }
 
 async function handleAbstracts(route, method, request) {
+  // Skip if route doesn't belong to this handler
+  if (!route.startsWith('/abstracts') && !route.startsWith('/documents')) return null
   const user = await getCurrentUser(request)
   if (!user) return err('Unauthenticated', 401)
 
@@ -1224,6 +1226,7 @@ async function handlePasswordReset(route, method, request) {
 
 // ============ TECHNICAL SCORING ============
 async function handleTechnicalScore(route, method, request) {
+  if (!route.match(/^\/abstracts\/[^\/]+\/scores$/)) return null
   const user = await getCurrentUser(request)
   if (!user) return err('Unauthenticated', 401)
 
@@ -1277,6 +1280,7 @@ async function handleTechnicalScore(route, method, request) {
 
 // ============ EDITORS' ANNOUNCEMENT BOARD ============
 async function handleAnnouncements(route, method, request) {
+  if (route !== '/announcements') return null
   const user = await getCurrentUser(request)
   if (!user) return err('Unauthenticated', 401)
   if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Editors only', 403)

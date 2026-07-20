@@ -457,20 +457,33 @@ function BarChartIcon(props) { return <svg {...props} viewBox="0 0 24 24" fill="
 
 // ============ AUTH ============
 function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) {
+  // Split reviewer's fullName into first/last, stripping common title prefixes
+  const parseName = (full) => {
+    if (!full) return { first: '', last: '', title: '' }
+    const parts = full.trim().split(/\s+/)
+    const titleRe = /^(dr|prof|mr|mrs|ms|miss|sir|dame|assoc|assist|professor|doctor)\.?$/i
+    let title = ''
+    while (parts.length > 1 && titleRe.test(parts[0])) title += (title ? ' ' : '') + parts.shift()
+    return { first: parts[0] || '', last: parts.slice(1).join(' '), title }
+  }
+  const parsed = parseName(reviewerInvite?.fullName)
   const [email, setEmail] = useState(mode === 'login' ? 'managing@scms.io' : (reviewerInvite?.email || ''))
   const [password, setPassword] = useState(mode === 'login' ? 'password123' : '')
-  const [firstName, setFirstName] = useState(reviewerInvite?.fullName?.split(' ')[0] || '')
-  const [lastName, setLastName] = useState(reviewerInvite?.fullName?.split(' ').slice(1).join(' ') || '')
+  const [firstName, setFirstName] = useState(parsed.first)
+  const [lastName, setLastName] = useState(parsed.last)
+  const [title, setTitle] = useState(parsed.title)
   const [specialty, setSpecialty] = useState(reviewerInvite?.specialty || '')
+  const [affiliation, setAffiliation] = useState('')
   const [role, setRole] = useState(reviewerInvite ? 'EXTERNAL_REVIEWER' : 'AUTHOR')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const isReviewerInvite = !!reviewerInvite
 
   const cleanError = (raw) => {
     if (!raw) return 'Something went wrong. Please try again.'
     const msg = String(raw)
     if (msg.length > 160) {
-      // Try to grab the most meaningful chunk
       if (msg.toLowerCase().includes('unique constraint') || msg.toLowerCase().includes('already')) return 'Email is already registered. Please sign in instead.'
       if (msg.toLowerCase().includes('database') || msg.toLowerCase().includes('reach')) return 'Server temporarily unavailable. Please try again in a moment.'
       if (msg.toLowerCase().includes('password')) return 'Invalid password.'
@@ -482,12 +495,12 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
   const submit = async (e) => {
     e.preventDefault()
     setError('')
-    // Client-side validation with concise messages
     if (!email || !email.includes('@')) return setError('Please enter a valid email address.')
     if (!password || password.length < 6) return setError('Password must be at least 6 characters.')
     if (mode === 'register') {
       if (!firstName.trim()) return setError('Please enter your first name.')
       if (!lastName.trim()) return setError('Please enter your last name.')
+      if (isReviewerInvite && !specialty.trim()) return setError('Please enter your area of specialty.')
     }
     setLoading(true)
     try {
@@ -497,7 +510,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
         toast.success(`Welcome back, ${d.user.firstName}!`)
         onDone(d.user)
       } else {
-        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, role, specialty, inviteToken: reviewerInvite?.token }) })
+        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, inviteToken: reviewerInvite?.token }) })
         setToken(d.token)
         toast.success('Account created')
         onDone(d.user)
@@ -515,8 +528,8 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
             <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white font-bold">S</div>
             <span className="font-bold text-xl">SCMS</span>
           </div>
-          <CardTitle>{mode === 'login' ? 'Sign in to your account' : 'Create your account'}</CardTitle>
-          <CardDescription>Enterprise scientific conference platform</CardDescription>
+          <CardTitle>{mode === 'login' ? 'Sign in to your account' : (isReviewerInvite ? 'Accept Reviewer Invitation' : 'Create your account')}</CardTitle>
+          <CardDescription>{isReviewerInvite ? 'Register as an External Peer Reviewer' : 'Enterprise scientific conference platform'}</CardDescription>
         </CardHeader>
         <form onSubmit={submit}>
           <CardContent className="space-y-3">
@@ -527,41 +540,70 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                 <button type="button" onClick={() => setError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>
               </div>
             )}
+            {mode === 'register' && isReviewerInvite && (
+              <div className="p-3 rounded-md bg-indigo-50 border border-indigo-200 text-sm text-indigo-900">
+                <div className="flex items-center gap-2 font-semibold mb-1"><Award className="h-4 w-4" /> External Reviewer Invitation</div>
+                <div className="text-indigo-800/90 text-xs">You have been invited to join the peer-review committee. Once registered, an editor will assign abstracts to you for double-blind review. You will see abstract titles and content only — author identities remain hidden.</div>
+              </div>
+            )}
             {mode === 'register' && (
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <div><Label>First name</Label><Input value={firstName} onChange={e => { setFirstName(e.target.value); setError('') }} required /></div>
                   <div><Label>Last name</Label><Input value={lastName} onChange={e => { setLastName(e.target.value); setError('') }} required /></div>
                 </div>
-                <div>
-                  <Label>Role</Label>
-                  <Select value={role} onValueChange={setRole}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="AUTHOR">Author (submit abstracts)</SelectItem>
-                      <SelectItem value="ATTENDEE">Conference Attendee</SelectItem>
-                      <SelectItem value="INDUSTRY_PARTNER">Sponsor / Industry / Pharma</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {isReviewerInvite ? (
+                  <>
+                    <div>
+                      <Label>Registering as</Label>
+                      <div className="flex items-center gap-2 p-2 rounded-md border border-indigo-200 bg-indigo-50/70">
+                        <Award className="h-4 w-4 text-indigo-600" />
+                        <span className="text-sm font-medium text-indigo-800">External Reviewer</span>
+                        <Badge variant="outline" className="ml-auto text-[10px] border-indigo-300 text-indigo-600">by invitation</Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Area of specialty <span className="text-red-500">*</span></Label>
+                      <Input value={specialty} onChange={e => { setSpecialty(e.target.value); setError('') }} placeholder="e.g. Cardiology, Molecular Biology, Public Health" required />
+                    </div>
+                    <div><Label>Affiliation (institution)</Label><Input value={affiliation} onChange={e => setAffiliation(e.target.value)} placeholder="e.g. Aga Khan University Hospital" /></div>
+                  </>
+                ) : (
+                  <div>
+                    <Label>Role</Label>
+                    <Select value={role} onValueChange={setRole}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="AUTHOR">Author (submit abstracts)</SelectItem>
+                        <SelectItem value="ATTENDEE">Conference Attendee</SelectItem>
+                        <SelectItem value="INDUSTRY_PARTNER">Sponsor / Industry / Pharma</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      <span className="font-medium">Are you a peer reviewer?</span> External reviewers are added by invitation only. If you have received an email invitation, please use the link in that email.
+                    </p>
+                  </div>
+                )}
               </>
             )}
-            <div><Label>Email</Label><Input type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }} required /></div>
+            <div><Label>Email</Label><Input type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }} required readOnly={isReviewerInvite} className={isReviewerInvite ? 'bg-slate-50' : ''} /></div>
             <div><Label>Password</Label><Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }} required /></div>
           </CardContent>
           <CardFooter className="flex-col gap-2 items-stretch">
             <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700">
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {mode === 'login' ? 'Sign in' : 'Create account'}
+              {mode === 'login' ? 'Sign in' : (isReviewerInvite ? 'Accept & create reviewer account' : 'Create account')}
             </Button>
             {mode === 'login' && onForgot && (
               <button type="button" onClick={onForgot} className="text-sm text-indigo-600 hover:underline text-center">Forgot password?</button>
             )}
             <div className="flex justify-between text-sm">
               <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground">← Back</button>
-              <button type="button" onClick={onSwitch} className="text-indigo-600 hover:underline">
-                {mode === 'login' ? "Don't have an account? Register" : 'Have an account? Sign in'}
-              </button>
+              {!isReviewerInvite && (
+                <button type="button" onClick={onSwitch} className="text-indigo-600 hover:underline">
+                  {mode === 'login' ? "Don't have an account? Register" : 'Have an account? Sign in'}
+                </button>
+              )}
             </div>
           </CardFooter>
         </form>
@@ -1878,15 +1920,45 @@ function ReviewerWorkspace({ setRoute }) {
 function ReviewForm({ assignment, onClose, onDone }) {
   const [scores, setScores] = useState({ originalityScore: 7, significanceScore: 7, methodologyScore: 7, clarityScore: 7, overallScore: 7 })
   const [recommendation, setRecommendation] = useState('MINOR_REVISION')
-  const [commentsToAuthor, setCommentsToAuthor] = useState('')
-  const [commentsToEditor, setCommentsToEditor] = useState('')
+  const [reviewComments, setReviewComments] = useState('')
+  const [confidentialNotes, setConfidentialNotes] = useState('')
+  const [files, setFiles] = useState([])
+  const [submitting, setSubmitting] = useState(false)
+
+  const addFiles = (e) => {
+    const list = Array.from(e.target.files || [])
+    const oversized = list.find(f => f.size > 25 * 1024 * 1024)
+    if (oversized) { toast.error(`File "${oversized.name}" is over 25MB`); return }
+    setFiles([...files, ...list])
+    e.target.value = ''
+  }
+  const removeFile = (i) => setFiles(files.filter((_, j) => j !== i))
+
   const submit = async () => {
-    if (!commentsToAuthor) return toast.error('Comments to author required')
-    await api(`/reviewer/assignments/${assignment.id}/submit`, {
-      method: 'POST',
-      body: JSON.stringify({ ...scores, recommendation, commentsToAuthor, commentsToEditor }),
-    })
-    toast.success('Review submitted'); onDone()
+    if (!reviewComments.trim()) return toast.error('Review comments are required')
+    setSubmitting(true)
+    try {
+      // 1) Upload any attached files first (as REVIEWER_ANNOTATION docs)
+      for (const f of files) {
+        const fd = new FormData()
+        fd.append('file', f)
+        fd.append('category', 'REVIEWER_ANNOTATION')
+        await apiUpload(`/abstracts/${assignment.abstract.id}/documents`, fd)
+      }
+      // 2) Submit the review report
+      await api(`/reviewer/assignments/${assignment.id}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...scores,
+          recommendation,
+          commentsToAuthor: reviewComments,          // Kept for schema compatibility — this goes to editor first
+          commentsToEditor: confidentialNotes || null,
+        }),
+      })
+      toast.success('Review submitted to editor')
+      onDone()
+    } catch (e) { toast.error(e.message || 'Failed to submit review') }
+    finally { setSubmitting(false) }
   }
   return (
     <Dialog open onOpenChange={onClose}>
@@ -1896,6 +1968,10 @@ function ReviewForm({ assignment, onClose, onDone }) {
           <DialogDescription>{assignment.abstract.submissionCode} — {assignment.abstract.title}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="p-2 rounded-md bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2">
+            <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>Double-blind: author identities are hidden. Your review will be delivered to the editor only. You do not communicate with the author directly.</span>
+          </div>
           <div className="grid grid-cols-5 gap-2">
             {['originalityScore','significanceScore','methodologyScore','clarityScore','overallScore'].map(k => (
               <div key={k}>
@@ -1918,17 +1994,38 @@ function ReviewForm({ assignment, onClose, onDone }) {
             </Select>
           </div>
           <div>
-            <Label>Comments to author</Label>
-            <Textarea rows={6} value={commentsToAuthor} onChange={e => setCommentsToAuthor(e.target.value)} />
+            <Label>Review comments <span className="text-red-500">*</span></Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Detailed critique of the abstract. Submitted to the editor; the editor may share (anonymised) with the author.</p>
+            <Textarea rows={7} value={reviewComments} onChange={e => setReviewComments(e.target.value)} placeholder="Strengths, weaknesses, suggestions for improvement..." />
           </div>
           <div>
-            <Label>Confidential comments to editor</Label>
-            <Textarea rows={3} value={commentsToEditor} onChange={e => setCommentsToEditor(e.target.value)} />
+            <Label>Confidential notes to editor (optional)</Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Only visible to the editorial team, never to the author.</p>
+            <Textarea rows={3} value={confidentialNotes} onChange={e => setConfidentialNotes(e.target.value)} />
+          </div>
+          <div>
+            <Label>Supporting files / annotated abstract (optional)</Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Upload the annotated abstract or any supplementary materials. Files go to the editor.</p>
+            <input type="file" multiple onChange={addFiles} className="text-xs" />
+            {files.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {files.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs p-1.5 rounded bg-slate-50 border">
+                    <FileText className="h-3 w-3 text-indigo-600 shrink-0" />
+                    <span className="truncate flex-1">{f.name}</span>
+                    <span className="text-muted-foreground">{Math.round(f.size / 1024)} KB</span>
+                    <button type="button" onClick={() => removeFile(i)} className="text-red-500 hover:text-red-700">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} className="bg-indigo-600 hover:bg-indigo-700">Submit review</Button>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button onClick={submit} disabled={submitting} className="bg-indigo-600 hover:bg-indigo-700">
+            {submitting && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Submit review
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
