@@ -256,6 +256,30 @@ backend:
         agent: "testing"
         comment: "Audit and RBAC working: GET /audit returns logs with actions (LOGIN, CREATE_ABSTRACT, etc.) for admin (200), non-admin correctly gets 403. RBAC enforced: author cannot POST decision (403), reviewer cannot GET unassigned abstract (403), author cannot POST /users (403). User management: GET /users lists users (200), POST /users creates user with role (200), both admin-only."
 
+  - task: "Conference Book PDF generation with admin controls"
+    implemented: true
+    working: true
+    file: "/app/lib/pdf.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Sprint D.1 complete. Added ConferenceBook Prisma model. Backend endpoints GET/PUT /api/conferences/:id/book-config (auto-creates with 7 default sections) and GET /api/conferences/:id/book.pdf. PDF has cover page, TOC, chief guest/chair/foreword messages, auto-populated programme, accepted abstracts (with authors/affiliations/keywords), sponsors (from booths), acknowledgements, and page numbers. Admin can toggle & reorder sections. Verified via curl: PDF generated 12KB, %PDF-1.3 header, PUT config persists correctly."
+
+  - task: "Daily feedback surveys with analytics"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Sprint D.2 complete. Added FeedbackSurvey and FeedbackResponse Prisma models. Endpoints: GET/POST /conferences/:id/surveys, PUT/DELETE /surveys/:id, POST /surveys/:id/send (emails all registrants with unique tokens via Resend), GET /surveys/:id/analytics (per-question aggregates, distribution, averages, response rate). Public endpoints: GET/POST /public/survey-response/:token. Supports RATING (1-5, 1-10), MCQ, YESNO, TEXT question types. Max 10 questions enforced. Verified end-to-end: send created 1 token+email, public submit worked, analytics returned 100% response rate with avg 4/5 and correct MCQ distribution."
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true

@@ -21,6 +21,7 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail,
 } from 'lucide-react'
 
 const TOKEN_KEY = 'scms_token'
@@ -123,6 +124,7 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
     { key: 'guidelines', label: 'Abstract Submission Guidelines' },
     { key: 'venue', label: 'Venue & Dates' },
     { key: 'themes', label: 'Themes' },
+    { key: 'booths', label: 'Virtual Exhibition Booths' },
     { key: 'contact', label: 'Contact' },
   ]
 
@@ -209,13 +211,16 @@ function App() {
   const [route, setRoute] = useState({ name: 'dashboard' })
   const [resetToken, setResetToken] = useState('')
   const [reviewerInvite, setReviewerInvite] = useState(null)
+  const [surveyToken, setSurveyToken] = useState('')
 
   useEffect(() => {
-    // Detect URL params (?resetToken=... or ?reviewerInvite=...)
+    // Detect URL params (?resetToken=... or ?reviewerInvite=... or ?survey=...)
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
       const rt = params.get('resetToken')
       const ri = params.get('reviewerInvite')
+      const sv = params.get('survey')
+      if (sv) { setSurveyToken(sv); setView('survey'); setLoading(false); return }
       if (rt) { setResetToken(rt); setView('reset'); setLoading(false); return }
       if (ri) {
         api(`/reviewer-invitations/verify/${ri}`).then(d => {
@@ -233,6 +238,7 @@ function App() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>
 
+  if (view === 'survey') return <PublicSurveyPage token={surveyToken} onDone={() => { if (typeof window !== 'undefined') window.history.replaceState({}, '', '/'); setView('landing') }} />
   if (view === 'reset') return <ResetPasswordPage token={resetToken} onDone={() => { setView('login'); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} />
   if (view === 'forgot') return <ForgotPassword onBack={() => setView('login')} />
   if (view === 'landing' && !user) return <Landing onLogin={() => setView('login')} onRegister={() => setView('register')} />
@@ -258,6 +264,7 @@ function Landing({ onLogin, onRegister }) {
       {view === 'guidelines' && <PublicGuidelines />}
       {view === 'venue' && <PublicVenue conf={featured} />}
       {view === 'themes' && <PublicThemes conf={featured} />}
+      {view === 'booths' && <ExhibitionBoothsPublic conf={featured} />}
       {view === 'contact' && <PublicContact conf={featured} />}
     </PublicChrome>
   )
@@ -595,6 +602,9 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: true },
     { key: 'templates', label: 'Templates', icon: FileText, show: true },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin },
+    { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor },
+    { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor },
+    { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin },
@@ -705,6 +715,9 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'reviews') return <ReviewerWorkspace setRoute={setRoute} />
   if (route.name === 'conferences') return <Conferences />
   if (route.name === 'conference-admin') return <ConferenceAdmin />
+  if (route.name === 'booth-admin') return <BoothAdmin />
+  if (route.name === 'book-admin') return <ConferenceBookAdmin />
+  if (route.name === 'surveys') return <SurveyAdmin />
   if (route.name === 'programme') return <Programme />
   if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
   if (route.name === 'announcements') return <AnnouncementsBoard user={user} />
@@ -3087,4 +3100,691 @@ function ResetPasswordPage({ token, onDone }) {
   )
 }
 
+// ============ EXHIBITION BOOTHS ============
+function ExhibitionBoothsPublic({ conf }) {
+  const [booths, setBooths] = useState([])
+  const [idx, setIdx] = useState(0)
+  useEffect(() => { if (conf?.id) fetch(`/api/conferences/${conf.id}/booths`).then(r => r.json()).then(d => setBooths(d.booths || [])) }, [conf?.id])
+  useEffect(() => {
+    if (booths.length < 2) return
+    const t = setInterval(() => setIdx(v => (v + 1) % booths.length), 15000)
+    return () => clearInterval(t)
+  }, [booths.length])
+  if (booths.length === 0) return <div className="container mx-auto px-6 py-10 text-center text-muted-foreground">No exhibition booths yet. Check back closer to the conference date.</div>
+  const b = booths[idx]
+  return (
+    <div className="container mx-auto px-6 py-8 max-w-5xl">
+      <div className="mb-6 flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold">Virtual Exhibition Booths</h1>
+          <p className="text-muted-foreground">Rotating every 15 seconds · Booth {idx + 1} of {booths.length}</p>
+        </div>
+        <div className="flex gap-1 flex-wrap">
+          {booths.map((_, i) => (
+            <button key={i} onClick={() => setIdx(i)} className={`h-2 w-8 rounded-full transition ${i === idx ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+          ))}
+        </div>
+      </div>
+      <Card className="overflow-hidden shadow-xl">
+        {b.bannerPath && (
+          <div className="w-full h-64 bg-slate-100 overflow-hidden">
+            <img src={b.bannerPath} alt={b.sponsorName} className="w-full h-full object-cover" />
+          </div>
+        )}
+        <CardContent className="p-8">
+          <div className="flex items-start gap-6">
+            {b.logoPath && <img src={b.logoPath} alt="" className="h-24 w-24 object-contain border rounded-md p-2" />}
+            <div className="flex-1">
+              <h2 className="text-3xl font-bold text-indigo-700">{b.sponsorName}</h2>
+              {b.companyType && <div className="text-sm text-muted-foreground mt-1">{b.companyType}</div>}
+              {b.message && <p className="mt-4 text-base whitespace-pre-wrap">{b.message}</p>}
+              {b.products && (
+                <div className="mt-4">
+                  <div className="text-sm font-semibold mb-1">Products / Services</div>
+                  <p className="text-sm whitespace-pre-wrap text-slate-700">{b.products}</p>
+                </div>
+              )}
+              <div className="mt-4 flex flex-wrap gap-3 text-sm">
+                {b.websiteUrl && <a href={b.websiteUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">🌐 {b.websiteUrl}</a>}
+                {b.contactEmail && <a href={`mailto:${b.contactEmail}`} className="text-indigo-600 hover:underline">📧 {b.contactEmail}</a>}
+                {b.contactPhone && <span>📞 {b.contactPhone}</span>}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <p className="text-xs text-muted-foreground text-center mt-4">Booth auto-rotates every 15 seconds. Click any dot above to jump to a specific sponsor.</p>
+    </div>
+  )
+}
+
+function BoothAdmin() {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [booths, setBooths] = useState([])
+  const [editing, setEditing] = useState(null)
+  const refresh = () => confId && fetch(`/api/conferences/${confId}/booths`).then(r => r.json()).then(d => setBooths(d.booths || []))
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+  useEffect(() => { refresh() }, [confId])
+
+  const create = async () => {
+    const name = prompt('Sponsor name?')
+    if (!name) return
+    try { await api(`/conferences/${confId}/booths`, { method: 'POST', body: JSON.stringify({ sponsorName: name }) }); refresh() } catch (e) { toast.error(e.message) }
+  }
+  const remove = async (id) => {
+    if (!confirm('Delete this booth?')) return
+    await api(`/booths/${id}`, { method: 'DELETE' }); refresh()
+  }
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold">Exhibition Booths</h1>
+          <p className="text-muted-foreground">Manage sponsor booths displayed publicly (rotating every 15 seconds).</p>
+        </div>
+        <Button onClick={create} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> Add sponsor</Button>
+      </div>
+      <div className="mb-4">
+        <Select value={confId} onValueChange={setConfId}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className="grid gap-3">
+        {booths.length === 0 ? <EmptyState label="No booths yet" onAction={create} actionLabel="Add first booth" />
+        : booths.map(b => (
+          <Card key={b.id}>
+            <CardContent className="p-4 flex gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="font-bold text-lg">{b.sponsorName}</div>
+                  {b.companyType && <Badge variant="outline" className="text-[10px]">{b.companyType}</Badge>}
+                </div>
+                {b.message && <p className="text-sm text-muted-foreground line-clamp-2">{b.message}</p>}
+                <div className="text-xs text-muted-foreground mt-1">
+                  {b.bannerPath ? '🖼 Banner ✓' : '⚠ No banner'} · {b.logoPath ? 'Logo ✓' : 'No logo'} · Order: {b.displayOrder}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Button size="sm" variant="outline" onClick={() => setEditing(b)}>Edit</Button>
+                <Button size="sm" variant="destructive" onClick={() => remove(b.id)}>Delete</Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {editing && <BoothEditDialog booth={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh() }} />}
+    </div>
+  )
+}
+
+function BoothEditDialog({ booth, onClose, onDone }) {
+  const [form, setForm] = useState({
+    sponsorName: booth.sponsorName || '', companyType: booth.companyType || '',
+    products: booth.products || '', message: booth.message || '',
+    websiteUrl: booth.websiteUrl || '', contactEmail: booth.contactEmail || '',
+    contactPhone: booth.contactPhone || '', displayOrder: booth.displayOrder || 0,
+  })
+  const [uploading, setUploading] = useState(false)
+
+  const save = async () => {
+    try { await api(`/booths/${booth.id}`, { method: 'PUT', body: JSON.stringify(form) }); toast.success('Saved'); onDone() } catch (e) { toast.error(e.message) }
+  }
+  const uploadImage = async (kind, e) => {
+    const f = e.target.files?.[0]; if (!f) return
+    setUploading(true)
+    try { const fd = new FormData(); fd.append('file', f); await apiUpload(`/booths/${booth.id}/${kind}`, fd); toast.success(`${kind} uploaded`); onDone() } catch (e) { toast.error(e.message) } finally { setUploading(false); e.target.value = '' }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+        <DialogHeader><DialogTitle>Edit booth: {booth.sponsorName}</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Sponsor name</Label><Input value={form.sponsorName} onChange={e => setForm({ ...form, sponsorName: e.target.value })} /></div>
+            <div><Label>Company type</Label><Input value={form.companyType} onChange={e => setForm({ ...form, companyType: e.target.value })} placeholder="e.g. Pharmaceutical" /></div>
+          </div>
+          <div><Label>Message</Label><Textarea rows={3} value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} /></div>
+          <div><Label>Products / Services</Label><Textarea rows={3} value={form.products} onChange={e => setForm({ ...form, products: e.target.value })} /></div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label>Website</Label><Input value={form.websiteUrl} onChange={e => setForm({ ...form, websiteUrl: e.target.value })} placeholder="https://..." /></div>
+            <div><Label>Email</Label><Input value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
+            <div><Label>Phone</Label><Input value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
+          </div>
+          <div><Label>Display order</Label><Input type="number" value={form.displayOrder} onChange={e => setForm({ ...form, displayOrder: parseInt(e.target.value) || 0 })} /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Banner (5MB, wide)</Label>
+              {booth.bannerPath && <img src={booth.bannerPath} className="w-full h-16 object-cover rounded border mb-1" />}
+              <input type="file" accept="image/*" onChange={e => uploadImage('banner', e)} disabled={uploading} className="text-xs" />
+            </div>
+            <div>
+              <Label>Logo (5MB, square)</Label>
+              {booth.logoPath && <img src={booth.logoPath} className="w-16 h-16 object-contain rounded border mb-1" />}
+              <input type="file" accept="image/*" onChange={e => uploadImage('logo', e)} disabled={uploading} className="text-xs" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} className="bg-indigo-600 hover:bg-indigo-700">Save</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ============ CONFERENCE BOOK ADMIN ============
+function ConferenceBookAdmin() {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [book, setBook] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+  useEffect(() => {
+    if (!confId) return
+    api(`/conferences/${confId}/book-config`).then(d => setBook(d.book)).catch(e => toast.error(e.message))
+  }, [confId])
+
+  if (!book) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+
+  const update = (k, v) => setBook({ ...book, [k]: v })
+  const toggleSection = (key) => {
+    const sections = (book.sections || []).map(s => s.key === key ? { ...s, enabled: !s.enabled } : s)
+    setBook({ ...book, sections })
+  }
+  const moveSection = (idx, dir) => {
+    const sections = [...(book.sections || [])]
+    const to = idx + dir
+    if (to < 0 || to >= sections.length) return
+    ;[sections[idx], sections[to]] = [sections[to], sections[idx]]
+    setBook({ ...book, sections })
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const patch = {
+        coverTitle: book.coverTitle, coverSubtitle: book.coverSubtitle,
+        chiefGuestName: book.chiefGuestName, chiefGuestTitle: book.chiefGuestTitle, chiefGuestMessage: book.chiefGuestMessage,
+        chairName: book.chairName, chairTitle: book.chairTitle, chairMessage: book.chairMessage,
+        foreword: book.foreword, acknowledgements: book.acknowledgements, sections: book.sections,
+      }
+      const d = await api(`/conferences/${confId}/book-config`, { method: 'PUT', body: JSON.stringify(patch) })
+      setBook(d.book)
+      toast.success('Saved')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const generate = async () => {
+    setDownloading(true)
+    try {
+      const token = getToken()
+      const resp = await fetch(`/api/conferences/${confId}/book.pdf`, { headers: { 'Authorization': `Bearer ${token}` } })
+      if (!resp.ok) throw new Error(await resp.text() || 'Failed to generate PDF')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const conf = confs.find(c => c.id === confId)
+      const a = document.createElement('a'); a.href = url; a.download = `${conf?.code || 'conference'}-book.pdf`; a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Conference book downloaded')
+    } catch (e) { toast.error(e.message || 'Failed') } finally { setDownloading(false) }
+  }
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="flex justify-between items-start mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-2"><BookOpen className="h-7 w-7 text-indigo-600" /> Conference Book</h1>
+          <p className="text-muted-foreground">Configure sections and generate the official conference book PDF (cover, messages, programme, abstracts, sponsors).</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button>
+          <Button onClick={generate} disabled={downloading} className="bg-indigo-600 hover:bg-indigo-700">
+            {downloading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />} Generate PDF
+          </Button>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <Label>Conference</Label>
+        <Select value={confId} onValueChange={setConfId}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-4">
+        {/* Section order */}
+        <Card className="md:col-span-1">
+          <CardHeader><CardTitle className="text-base">Sections</CardTitle><CardDescription>Enable, disable and reorder</CardDescription></CardHeader>
+          <CardContent className="space-y-2">
+            {(book.sections || []).map((s, i) => (
+              <div key={s.key} className="flex items-center gap-2 p-2 border rounded">
+                <div className="flex flex-col">
+                  <button onClick={() => moveSection(i, -1)} className="text-xs text-slate-400 hover:text-slate-700" disabled={i === 0}>▲</button>
+                  <button onClick={() => moveSection(i, 1)} className="text-xs text-slate-400 hover:text-slate-700" disabled={i === book.sections.length - 1}>▼</button>
+                </div>
+                <div className="flex-1 text-sm">{s.label}</div>
+                <input type="checkbox" checked={!!s.enabled} onChange={() => toggleSection(s.key)} className="h-4 w-4" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* Content */}
+        <div className="md:col-span-2 space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="text-base">Cover</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div><Label>Cover title</Label><Input value={book.coverTitle || ''} onChange={e => update('coverTitle', e.target.value)} placeholder="Overrides conference name on the cover" /></div>
+              <div><Label>Cover subtitle</Label><Input value={book.coverSubtitle || ''} onChange={e => update('coverSubtitle', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Chief Guest</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Name</Label><Input value={book.chiefGuestName || ''} onChange={e => update('chiefGuestName', e.target.value)} placeholder="e.g. Prof. Jane Doe" /></div>
+                <div><Label>Title / Designation</Label><Input value={book.chiefGuestTitle || ''} onChange={e => update('chiefGuestTitle', e.target.value)} placeholder="e.g. President, World Medical Society" /></div>
+              </div>
+              <div><Label>Message</Label><Textarea rows={5} value={book.chiefGuestMessage || ''} onChange={e => update('chiefGuestMessage', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Conference Chair</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Name</Label><Input value={book.chairName || ''} onChange={e => update('chairName', e.target.value)} /></div>
+                <div><Label>Title</Label><Input value={book.chairTitle || ''} onChange={e => update('chairTitle', e.target.value)} /></div>
+              </div>
+              <div><Label>Message</Label><Textarea rows={5} value={book.chairMessage || ''} onChange={e => update('chairMessage', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Foreword & Acknowledgements</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div><Label>Foreword</Label><Textarea rows={4} value={book.foreword || ''} onChange={e => update('foreword', e.target.value)} /></div>
+              <div><Label>Acknowledgements</Label><Textarea rows={4} value={book.acknowledgements || ''} onChange={e => update('acknowledgements', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+          <Card className="bg-indigo-50/50">
+            <CardContent className="p-4 text-sm">
+              <div className="font-semibold mb-1">Auto-populated sections</div>
+              <div className="text-muted-foreground">The following sections are compiled automatically when you generate the PDF:</div>
+              <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-700">
+                <li><b>Conference Programme</b> — from scheduled sessions and items</li>
+                <li><b>Accepted Abstracts</b> — all abstracts in ACCEPTED / ORAL / POSTER / FINAL_ACCEPTANCE / PUBLISHED states</li>
+                <li><b>Sponsors & Exhibitors</b> — from Exhibition Booths (active booths only)</li>
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============ SURVEY ADMIN ============
+function SurveyAdmin() {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [surveys, setSurveys] = useState([])
+  const [editing, setEditing] = useState(null)
+  const [viewingAnalytics, setViewingAnalytics] = useState(null)
+
+  const refresh = () => confId && api(`/conferences/${confId}/surveys`).then(d => setSurveys(d.surveys || []))
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+  useEffect(() => { refresh() }, [confId])
+
+  const create = () => setEditing({ isNew: true, title: '', description: '', dayNumber: null, questions: [] })
+  const remove = async (id) => {
+    if (!confirm('Delete this survey? All responses will be lost.')) return
+    try { await api(`/surveys/${id}`, { method: 'DELETE' }); refresh(); toast.success('Deleted') } catch (e) { toast.error(e.message) }
+  }
+  const send = async (id) => {
+    if (!confirm('Send this survey to all registered delegates?')) return
+    try {
+      const d = await api(`/surveys/${id}/send`, { method: 'POST' })
+      toast.success(`Sent to ${d.sent}/${d.total} delegates`)
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-2"><ListChecks className="h-7 w-7 text-indigo-600" /> Feedback Surveys</h1>
+          <p className="text-muted-foreground">Create daily feedback surveys (up to 10 questions) and email them to delegates.</p>
+        </div>
+        <Button onClick={create} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New survey</Button>
+      </div>
+
+      <div className="mb-4">
+        <Select value={confId} onValueChange={setConfId}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid gap-3">
+        {surveys.length === 0 ? <EmptyState label="No surveys yet" onAction={create} actionLabel="Create first survey" />
+        : surveys.map(s => (
+          <Card key={s.id}>
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="font-bold text-lg">{s.title}</div>
+                  {s.dayNumber ? <Badge variant="outline">Day {s.dayNumber}</Badge> : null}
+                  {s.isPublished ? <Badge className="bg-green-600">Published</Badge> : <Badge variant="secondary">Draft</Badge>}
+                </div>
+                {s.description && <p className="text-sm text-muted-foreground line-clamp-1">{s.description}</p>}
+                <div className="text-xs text-muted-foreground mt-1">
+                  {s.questions?.length || 0} questions · {s.submittedCount || 0} responses received{s.sentAt ? ` · Sent ${new Date(s.sentAt).toLocaleDateString()}` : ''}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                <Button size="sm" variant="outline" onClick={() => setViewingAnalytics(s)}><BarChart3 className="h-3 w-3 mr-1" />Results</Button>
+                <Button size="sm" onClick={() => send(s.id)} className="bg-indigo-600 hover:bg-indigo-700"><Mail className="h-3 w-3 mr-1" />Send</Button>
+                <Button size="sm" variant="destructive" onClick={() => remove(s.id)}><Trash2 className="h-3 w-3" /></Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {editing && <SurveyEditDialog conferenceId={confId} survey={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh() }} />}
+      {viewingAnalytics && <SurveyAnalyticsDialog survey={viewingAnalytics} onClose={() => setViewingAnalytics(null)} />}
+    </div>
+  )
+}
+
+function SurveyEditDialog({ conferenceId, survey, onClose, onDone }) {
+  const [form, setForm] = useState({
+    title: survey.title || '',
+    description: survey.description || '',
+    dayNumber: survey.dayNumber || '',
+    questions: survey.questions || [],
+  })
+  const [saving, setSaving] = useState(false)
+
+  const addQ = (type) => {
+    if (form.questions.length >= 10) { toast.error('Maximum 10 questions'); return }
+    const id = `q${Date.now()}${Math.floor(Math.random() * 1000)}`
+    const base = { id, type, label: '' }
+    const q = type === 'MCQ' ? { ...base, options: ['Option 1', 'Option 2'] } : type === 'RATING' ? { ...base, scale: 5 } : base
+    setForm({ ...form, questions: [...form.questions, q] })
+  }
+  const updateQ = (i, patch) => {
+    const q = [...form.questions]; q[i] = { ...q[i], ...patch }; setForm({ ...form, questions: q })
+  }
+  const removeQ = (i) => { const q = form.questions.filter((_, j) => j !== i); setForm({ ...form, questions: q }) }
+  const moveQ = (i, dir) => {
+    const q = [...form.questions]; const to = i + dir; if (to < 0 || to >= q.length) return
+    ;[q[i], q[to]] = [q[to], q[i]]; setForm({ ...form, questions: q })
+  }
+
+  const save = async () => {
+    if (!form.title) { toast.error('Title required'); return }
+    if (form.questions.length === 0) { toast.error('At least one question required'); return }
+    if (form.questions.some(q => !q.label)) { toast.error('Every question needs a label'); return }
+    setSaving(true)
+    try {
+      const payload = {
+        title: form.title, description: form.description || null,
+        dayNumber: form.dayNumber ? parseInt(form.dayNumber) : null,
+        questions: form.questions,
+      }
+      if (survey.isNew) await api(`/conferences/${conferenceId}/surveys`, { method: 'POST', body: JSON.stringify(payload) })
+      else await api(`/surveys/${survey.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+      toast.success('Saved'); onDone()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto">
+        <DialogHeader><DialogTitle>{survey.isNew ? 'New Survey' : 'Edit Survey'}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2"><Label>Title</Label><Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Day 1 Feedback" /></div>
+            <div><Label>Day number (optional)</Label><Input type="number" min="1" value={form.dayNumber} onChange={e => setForm({ ...form, dayNumber: e.target.value })} /></div>
+          </div>
+          <div><Label>Description</Label><Textarea rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Optional intro shown in the email and on the survey page" /></div>
+
+          <div className="border-t pt-3">
+            <div className="flex justify-between items-center mb-2">
+              <div className="font-semibold">Questions <span className="text-xs text-muted-foreground">({form.questions.length}/10)</span></div>
+              <div className="flex gap-1">
+                <Button size="sm" variant="outline" onClick={() => addQ('RATING')} disabled={form.questions.length >= 10}>+ Rating</Button>
+                <Button size="sm" variant="outline" onClick={() => addQ('MCQ')} disabled={form.questions.length >= 10}>+ Multiple choice</Button>
+                <Button size="sm" variant="outline" onClick={() => addQ('YESNO')} disabled={form.questions.length >= 10}>+ Yes/No</Button>
+                <Button size="sm" variant="outline" onClick={() => addQ('TEXT')} disabled={form.questions.length >= 10}>+ Text</Button>
+              </div>
+            </div>
+            {form.questions.length === 0 && <div className="text-sm text-muted-foreground p-4 text-center border-dashed border rounded">Add up to 10 questions.</div>}
+            <div className="space-y-2">
+              {form.questions.map((q, i) => (
+                <div key={q.id} className="border rounded p-3 space-y-2 bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-semibold text-slate-500 w-6">{i + 1}.</div>
+                    <Badge variant="outline" className="text-[10px]">{q.type}</Badge>
+                    <Input className="flex-1" value={q.label} onChange={e => updateQ(i, { label: e.target.value })} placeholder="Question text" />
+                    <button onClick={() => moveQ(i, -1)} className="text-slate-400 hover:text-slate-700 px-1" disabled={i === 0}>▲</button>
+                    <button onClick={() => moveQ(i, 1)} className="text-slate-400 hover:text-slate-700 px-1" disabled={i === form.questions.length - 1}>▼</button>
+                    <Button size="sm" variant="ghost" onClick={() => removeQ(i)}><Trash2 className="h-3 w-3 text-red-500" /></Button>
+                  </div>
+                  {q.type === 'RATING' && (
+                    <div className="pl-8"><Label className="text-xs">Scale</Label>
+                      <Select value={String(q.scale || 5)} onValueChange={v => updateQ(i, { scale: parseInt(v) })}>
+                        <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">1 – 5</SelectItem>
+                          <SelectItem value="10">1 – 10</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {q.type === 'MCQ' && (
+                    <div className="pl-8 space-y-1">
+                      <Label className="text-xs">Options (one per line)</Label>
+                      <Textarea rows={3} value={(q.options || []).join('\n')} onChange={e => updateQ(i, { options: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) })} />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function SurveyAnalyticsDialog({ survey, onClose }) {
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    api(`/surveys/${survey.id}/analytics`).then(setData).catch(e => toast.error(e.message))
+  }, [survey.id])
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto">
+        <DialogHeader><DialogTitle>Results — {survey.title}</DialogTitle></DialogHeader>
+        {!data ? <div className="p-6 text-center"><Loader2 className="animate-spin inline" /></div> : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              <Card><CardContent className="p-3"><div className="text-xs text-muted-foreground">Invited</div><div className="text-2xl font-bold">{data.totals.invited}</div></CardContent></Card>
+              <Card><CardContent className="p-3"><div className="text-xs text-muted-foreground">Submitted</div><div className="text-2xl font-bold">{data.totals.submitted}</div></CardContent></Card>
+              <Card><CardContent className="p-3"><div className="text-xs text-muted-foreground">Response rate</div><div className="text-2xl font-bold">{Math.round(data.totals.responseRate * 100)}%</div></CardContent></Card>
+            </div>
+            {data.perQuestion.map((q, i) => (
+              <Card key={q.questionId}>
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <div className="text-xs text-muted-foreground">Q{i + 1} · {q.type} · {q.count} answers</div>
+                      <div className="font-semibold">{q.label}</div>
+                    </div>
+                    {q.type === 'RATING' && <Badge className="bg-indigo-600"><Star className="h-3 w-3 mr-1" />{q.average.toFixed(2)}</Badge>}
+                  </div>
+                  {q.type === 'RATING' || q.type === 'MCQ' || q.type === 'YESNO' ? (
+                    <div className="space-y-1">
+                      {Object.entries(q.distribution || {}).map(([k, v]) => {
+                        const pct = q.count > 0 ? (v / q.count * 100) : 0
+                        return (
+                          <div key={k} className="flex items-center gap-2">
+                            <div className="w-24 text-xs text-slate-600 truncate">{k}</div>
+                            <div className="flex-1 bg-slate-100 rounded h-4 relative overflow-hidden">
+                              <div className="absolute inset-y-0 left-0 bg-indigo-500" style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="w-16 text-xs text-slate-600 text-right">{v} ({Math.round(pct)}%)</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-1 max-h-48 overflow-auto">
+                      {(q.textResponses || []).length === 0 && <div className="text-xs text-muted-foreground italic">No text responses</div>}
+                      {(q.textResponses || []).map((t, j) => <div key={j} className="text-sm bg-slate-50 p-2 rounded border-l-2 border-indigo-400">{t}</div>)}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose}>Close</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ============ PUBLIC SURVEY PAGE ============
+function PublicSurveyPage({ token, onDone }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [data, setData] = useState(null)
+  const [answers, setAnswers] = useState({})
+  const [submitting, setSubmitting] = useState(false)
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/public/survey-response/${token}`).then(r => r.json()).then(d => {
+      if (d.error) setError(d.error)
+      else {
+        setData(d)
+        if (d.response.submittedAt) { setDone(true); setAnswers(d.response.answers || {}) }
+      }
+    }).catch(e => setError(e.message)).finally(() => setLoading(false))
+  }, [token])
+
+  const submit = async () => {
+    if (!data) return
+    // Validate required
+    const missing = data.survey.questions.find(q => (answers[q.id] === undefined || answers[q.id] === ''))
+    if (missing) { toast.error(`Please answer: "${missing.label}"`); return }
+    setSubmitting(true)
+    try {
+      const resp = await fetch(`/api/public/survey-response/${token}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers }),
+      })
+      const j = await resp.json()
+      if (!resp.ok) throw new Error(j.error || 'Failed')
+      setDone(true)
+      toast.success('Thank you for your feedback!')
+    } catch (e) { toast.error(e.message) } finally { setSubmitting(false) }
+  }
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>
+  if (error) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <Card className="max-w-md"><CardContent className="p-8 text-center">
+        <XCircle className="h-12 w-12 text-red-500 mx-auto mb-3" />
+        <div className="text-xl font-bold mb-2">Invalid link</div>
+        <div className="text-muted-foreground">{error}</div>
+        <Button className="mt-4" onClick={onDone}>Go home</Button>
+      </CardContent></Card>
+    </div>
+  )
+  const { survey } = data
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-fuchsia-50 py-10 px-4">
+      <div className="max-w-2xl mx-auto">
+        <Card className="shadow-xl">
+          <CardHeader className="bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white rounded-t-lg">
+            <div className="text-xs opacity-90">{survey.conference?.name} · {survey.conference?.code}</div>
+            <CardTitle className="text-2xl">{survey.title}</CardTitle>
+            {survey.dayNumber ? <Badge className="bg-white/20 border-white/30 text-white w-fit">Day {survey.dayNumber}</Badge> : null}
+            {survey.description && <CardDescription className="text-white/90 mt-2">{survey.description}</CardDescription>}
+          </CardHeader>
+          <CardContent className="p-6 space-y-5">
+            {done ? (
+              <div className="text-center py-8">
+                <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-3" />
+                <div className="text-2xl font-bold mb-1">Thank you!</div>
+                <div className="text-muted-foreground">Your feedback has been recorded.</div>
+                <Button className="mt-4" onClick={onDone}>Return to home</Button>
+              </div>
+            ) : (
+              <>
+                {survey.questions.map((q, i) => (
+                  <div key={q.id} className="space-y-2">
+                    <Label className="text-base"><span className="font-bold text-indigo-600">Q{i + 1}.</span> {q.label}</Label>
+                    {q.type === 'RATING' && (
+                      <div className="flex gap-1">
+                        {[...Array(q.scale || 5).keys()].map(n => (
+                          <button key={n} type="button" onClick={() => setAnswers({ ...answers, [q.id]: n + 1 })}
+                            className={`w-10 h-10 rounded-lg border font-bold transition ${answers[q.id] === n + 1 ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-indigo-50 border-slate-200'}`}>
+                            {n + 1}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === 'MCQ' && (
+                      <div className="space-y-1">
+                        {(q.options || []).map(o => (
+                          <label key={o} className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                            <input type="radio" name={q.id} checked={answers[q.id] === o} onChange={() => setAnswers({ ...answers, [q.id]: o })} />
+                            <span>{o}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === 'YESNO' && (
+                      <div className="flex gap-2">
+                        {['Yes', 'No'].map(v => (
+                          <button key={v} type="button" onClick={() => setAnswers({ ...answers, [q.id]: v })}
+                            className={`flex-1 py-2 rounded border font-medium ${answers[q.id] === v ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-indigo-50 border-slate-200'}`}>
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === 'TEXT' && (
+                      <Textarea rows={3} value={answers[q.id] || ''} onChange={e => setAnswers({ ...answers, [q.id]: e.target.value })} placeholder="Your answer..." />
+                    )}
+                  </div>
+                ))}
+                <Button onClick={submit} disabled={submitting} className="w-full bg-indigo-600 hover:bg-indigo-700">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null} Submit feedback
+                </Button>
+                <div className="text-xs text-center text-muted-foreground">Your responses are anonymous and used only for internal analysis.</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
 export default App
+

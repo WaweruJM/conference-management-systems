@@ -129,6 +129,8 @@ model Conference {
   registrations    Registration[]
   userRoles        UserRole[]
   submissionCounter Int     @default(0)
+  book             ConferenceBook?
+  surveys          FeedbackSurvey[]
 }
 
 model Theme {
@@ -610,5 +612,78 @@ model ReviewerInvitation {
   registeredUserId String?
   createdAt        DateTime @default(now())
   @@index([email])
+  @@index([token])
+}
+
+model ExhibitionBooth {
+  id           String   @id @default(uuid())
+  conferenceId String
+  sponsorName  String
+  companyType  String?
+  bannerPath   String?
+  logoPath     String?
+  products     String?  @db.Text
+  message      String?  @db.Text
+  websiteUrl   String?
+  contactEmail String?
+  contactPhone String?
+  otherLinks   Json?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([conferenceId])
+}
+
+// ============ CONFERENCE BOOK ============
+model ConferenceBook {
+  id                String   @id @default(uuid())
+  conferenceId      String   @unique
+  conference        Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  coverTitle        String?
+  coverSubtitle     String?
+  chiefGuestName    String?
+  chiefGuestTitle   String?
+  chiefGuestMessage String?  @db.Text
+  chairName         String?
+  chairTitle        String?
+  chairMessage      String?  @db.Text
+  foreword          String?  @db.Text
+  acknowledgements  String?  @db.Text
+  sections          Json?    // ordered list of { key: string, enabled: boolean }
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+}
+
+// ============ FEEDBACK SURVEYS ============
+model FeedbackSurvey {
+  id           String   @id @default(uuid())
+  conferenceId String
+  conference   Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  dayNumber    Int?     // 1, 2, 3 ... or null for general
+  title        String
+  description  String?  @db.Text
+  questions    Json     // [{ id, type: RATING|TEXT|MCQ|YESNO, label, options? }]
+  isPublished  Boolean  @default(false)
+  sentAt       DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  responses    FeedbackResponse[]
+
+  @@index([conferenceId])
+}
+
+model FeedbackResponse {
+  id          String   @id @default(uuid())
+  surveyId    String
+  survey      FeedbackSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  userId      String?
+  email       String?
+  token       String   @unique
+  answers     Json?    // { questionId: value }
+  submittedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([surveyId])
   @@index([token])
 }

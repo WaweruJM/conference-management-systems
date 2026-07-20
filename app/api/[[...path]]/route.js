@@ -1360,6 +1360,344 @@ ${confName} Editorial Committee`
 
   return null
 }
+// ============ CONFERENCE BOOK ============
+async function handleConferenceBook(route, method, request) {
+  const cfgMatch = route.match(/^\/conferences\/([^\/]+)\/book-config$/)
+  if (cfgMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    let book = await prisma.conferenceBook.findUnique({ where: { conferenceId: cfgMatch[1] } })
+    if (!book) {
+      book = await prisma.conferenceBook.create({
+        data: {
+          conferenceId: cfgMatch[1],
+          sections: [
+            { key: 'chiefGuest', label: 'Message from the Chief Guest', enabled: true },
+            { key: 'chair', label: 'Message from the Conference Chair', enabled: true },
+            { key: 'foreword', label: 'Foreword', enabled: true },
+            { key: 'programme', label: 'Conference Programme', enabled: true },
+            { key: 'abstracts', label: 'Accepted Abstracts', enabled: true },
+            { key: 'sponsors', label: 'Sponsors & Exhibitors', enabled: true },
+            { key: 'acknowledgements', label: 'Acknowledgements', enabled: true },
+          ],
+        },
+      })
+    }
+    return ok({ book })
+  }
+  if (cfgMatch && method === 'PUT') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const allowed = ['coverTitle', 'coverSubtitle', 'chiefGuestName', 'chiefGuestTitle', 'chiefGuestMessage',
+      'chairName', 'chairTitle', 'chairMessage', 'foreword', 'acknowledgements', 'sections']
+    const patch = {}
+    allowed.forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    const book = await prisma.conferenceBook.upsert({
+      where: { conferenceId: cfgMatch[1] },
+      update: patch,
+      create: { conferenceId: cfgMatch[1], ...patch },
+    })
+    await logAudit({ actorId: user.id, action: 'UPDATE_BOOK_CONFIG', entityType: 'ConferenceBook', entityId: book.id })
+    return ok({ book })
+  }
+
+  const pdfMatch = route.match(/^\/conferences\/([^\/]+)\/book\.pdf$/)
+  if (pdfMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    const conferenceId = pdfMatch[1]
+    const conference = await prisma.conference.findUnique({ where: { id: conferenceId } })
+    if (!conference) return err('Conference not found', 404)
+    const book = await prisma.conferenceBook.findUnique({ where: { conferenceId } })
+    const abstracts = await prisma.abstract.findMany({
+      where: { conferenceId, currentState: { in: ['ACCEPTED', 'PUBLISHED', 'ORAL', 'POSTER', 'FINAL_ACCEPTANCE', 'PROGRAMME_SCHEDULING'] } },
+      include: {
+        authors: { orderBy: { orderIndex: 'asc' } },
+        theme: true,
+        versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
+      },
+      orderBy: { submissionCode: 'asc' },
+    })
+    const sessions = await prisma.programmeSession.findMany({
+      where: { conferenceId },
+      include: { items: { include: { abstract: true }, orderBy: { orderIndex: 'asc' } } },
+      orderBy: { startTime: 'asc' },
+    })
+    const booths = await prisma.exhibitionBooth.findMany({
+      where: { conferenceId, isActive: true },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+    })
+    const { generateConferenceBookPDF } = await import('@/lib/pdf')
+    const buf = await generateConferenceBookPDF({ conference, book, abstracts, sessions, booths })
+    await logAudit({ actorId: user.id, action: 'GENERATE_CONFERENCE_BOOK', entityType: 'Conference', entityId: conferenceId })
+    return new NextResponse(buf, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${conference.code || 'conference'}-book.pdf"`,
+      },
+    })
+  }
+  return null
+}
+
+// ============ FEEDBACK SURVEYS ============
+async function handleSurveys(route, method, request) {
+  // Public GET/POST via response token
+  const publicGet = route.match(/^\/public\/survey-response\/([^\/]+)$/)
+  if (publicGet && method === 'GET') {
+    const resp = await prisma.feedbackResponse.findUnique({
+      where: { token: publicGet[1] },
+      include: { survey: { include: { conference: { select: { name: true, code: true, subtitle: true, theme: true } } } } },
+    })
+    if (!resp) return err('Invalid survey link', 404)
+    return ok({
+      response: { id: resp.id, submittedAt: resp.submittedAt, answers: resp.answers, email: resp.email },
+      survey: {
+        id: resp.survey.id, title: resp.survey.title, description: resp.survey.description,
+        questions: resp.survey.questions, dayNumber: resp.survey.dayNumber, isPublished: resp.survey.isPublished,
+        conference: resp.survey.conference,
+      },
+    })
+  }
+  if (publicGet && method === 'POST') {
+    const resp = await prisma.feedbackResponse.findUnique({ where: { token: publicGet[1] } })
+    if (!resp) return err('Invalid survey link', 404)
+    if (resp.submittedAt) return err('You have already submitted this survey. Thank you!', 409)
+    const body = await request.json()
+    const updated = await prisma.feedbackResponse.update({
+      where: { id: resp.id },
+      data: { answers: body.answers || {}, submittedAt: new Date() },
+    })
+    return ok({ response: updated })
+  }
+
+  // Admin routes below - require auth
+  const listMatch = route.match(/^\/conferences\/([^\/]+)\/surveys$/)
+  if (listMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    const surveys = await prisma.feedbackSurvey.findMany({
+      where: { conferenceId: listMatch[1] },
+      include: { _count: { select: { responses: true } } },
+      orderBy: [{ dayNumber: 'asc' }, { createdAt: 'desc' }],
+    })
+    // Attach submitted count
+    const withStats = await Promise.all(surveys.map(async s => {
+      const submitted = await prisma.feedbackResponse.count({ where: { surveyId: s.id, NOT: { submittedAt: null } } })
+      return { ...s, invitedCount: s._count.responses, submittedCount: submitted }
+    }))
+    return ok({ surveys: withStats })
+  }
+  if (listMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    if (!body.title) return err('Title is required')
+    const questions = Array.isArray(body.questions) ? body.questions : []
+    if (questions.length === 0) return err('At least one question is required')
+    if (questions.length > 10) return err('Maximum 10 questions per survey')
+    const survey = await prisma.feedbackSurvey.create({
+      data: {
+        conferenceId: listMatch[1],
+        dayNumber: body.dayNumber || null,
+        title: body.title,
+        description: body.description || null,
+        questions,
+      },
+    })
+    await logAudit({ actorId: user.id, action: 'CREATE_SURVEY', entityType: 'FeedbackSurvey', entityId: survey.id })
+    return ok({ survey })
+  }
+
+  const oneMatch = route.match(/^\/surveys\/([^\/]+)$/)
+  if (oneMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    const survey = await prisma.feedbackSurvey.findUnique({ where: { id: oneMatch[1] } })
+    if (!survey) return err('Not found', 404)
+    return ok({ survey })
+  }
+  if (oneMatch && method === 'PUT') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const patch = {}
+    ;['title', 'description', 'dayNumber', 'questions', 'isPublished'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    if (patch.questions && patch.questions.length > 10) return err('Maximum 10 questions per survey')
+    const survey = await prisma.feedbackSurvey.update({ where: { id: oneMatch[1] }, data: patch })
+    return ok({ survey })
+  }
+  if (oneMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    await prisma.feedbackSurvey.delete({ where: { id: oneMatch[1] } })
+    return ok({ ok: true })
+  }
+
+  const sendMatch = route.match(/^\/surveys\/([^\/]+)\/send$/)
+  if (sendMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const survey = await prisma.feedbackSurvey.findUnique({
+      where: { id: sendMatch[1] },
+      include: { conference: true },
+    })
+    if (!survey) return err('Survey not found', 404)
+    // Gather all registrants for this conference
+    const regs = await prisma.registration.findMany({
+      where: { conferenceId: survey.conferenceId },
+      include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+    })
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
+    const { sendEmail } = await import('@/lib/email')
+    const { renderEmailHtml } = await import('@/lib/email-templates')
+    let created = 0, sent = 0, failed = 0
+    for (const r of regs) {
+      const email = r.user?.email
+      if (!email) continue
+      // Reuse token if already exists for this survey/user
+      let resp = await prisma.feedbackResponse.findFirst({ where: { surveyId: survey.id, userId: r.userId } })
+      if (!resp) {
+        const token = crypto.randomBytes(24).toString('hex')
+        resp = await prisma.feedbackResponse.create({
+          data: { surveyId: survey.id, userId: r.userId, email, token },
+        })
+        created++
+      }
+      const url = `${baseUrl}/?survey=${resp.token}`
+      const subject = `${survey.dayNumber ? `Day ${survey.dayNumber} · ` : ''}${survey.title} — Feedback Requested`
+      const greet = `Dear ${r.user?.firstName || 'Delegate'},`
+      const bodyText = `${greet}
+
+Thank you for participating in ${survey.conference.name}. Your feedback is invaluable to us and helps us continually improve the conference experience.
+
+${survey.description ? survey.description + '\n\n' : ''}Please take a moment to complete this short survey (10 questions or fewer):
+
+${url}
+
+Your responses are anonymous and will be used purely for internal analysis.
+
+With warm regards,
+${survey.conference.name} Editorial Committee`
+      try {
+        await sendEmail({
+          to: email,
+          subject,
+          text: bodyText,
+          html: renderEmailHtml({ subject, body: bodyText, conferenceName: survey.conference.name }),
+        })
+        sent++
+      } catch (e) {
+        failed++
+      }
+    }
+    await prisma.feedbackSurvey.update({ where: { id: survey.id }, data: { sentAt: new Date(), isPublished: true } })
+    await logAudit({ actorId: user.id, action: 'SEND_SURVEY', entityType: 'FeedbackSurvey', entityId: survey.id, metadata: { created, sent, failed } })
+    return ok({ created, sent, failed, total: regs.length })
+  }
+
+  const analyticsMatch = route.match(/^\/surveys\/([^\/]+)\/analytics$/)
+  if (analyticsMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    const survey = await prisma.feedbackSurvey.findUnique({ where: { id: analyticsMatch[1] } })
+    if (!survey) return err('Not found', 404)
+    const responses = await prisma.feedbackResponse.findMany({
+      where: { surveyId: survey.id, NOT: { submittedAt: null } },
+      orderBy: { submittedAt: 'desc' },
+    })
+    const invited = await prisma.feedbackResponse.count({ where: { surveyId: survey.id } })
+    // Aggregate per question
+    const questions = survey.questions || []
+    const perQuestion = questions.map(q => {
+      const values = responses.map(r => (r.answers || {})[q.id]).filter(v => v !== undefined && v !== null && v !== '')
+      const stat = { questionId: q.id, label: q.label, type: q.type, count: values.length }
+      if (q.type === 'RATING') {
+        const nums = values.map(v => Number(v)).filter(n => !isNaN(n))
+        stat.average = nums.length > 0 ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0
+        const dist = {}
+        nums.forEach(n => { dist[n] = (dist[n] || 0) + 1 })
+        stat.distribution = dist
+      } else if (q.type === 'MCQ' || q.type === 'YESNO') {
+        const dist = {}
+        values.forEach(v => { dist[v] = (dist[v] || 0) + 1 })
+        stat.distribution = dist
+      } else {
+        stat.textResponses = values.slice(0, 50)
+      }
+      return stat
+    })
+    return ok({
+      survey,
+      totals: { invited, submitted: responses.length, responseRate: invited > 0 ? (responses.length / invited) : 0 },
+      perQuestion,
+      recent: responses.slice(0, 20).map(r => ({ id: r.id, submittedAt: r.submittedAt, email: r.email })),
+    })
+  }
+
+  return null
+}
+
+// ============ EXHIBITION BOOTHS ============
+async function handleBooths(route, method, request) {
+  const listMatch = route.match(/^\/conferences\/([^\/]+)\/booths$/)
+  if (listMatch && method === 'GET') {
+    const list = await prisma.exhibitionBooth.findMany({ where: { conferenceId: listMatch[1], isActive: true }, orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }] })
+    return ok({ booths: list })
+  }
+  if (listMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    if (!body.sponsorName) return err('sponsorName required')
+    const b = await prisma.exhibitionBooth.create({
+      data: {
+        conferenceId: listMatch[1], sponsorName: body.sponsorName, companyType: body.companyType || null,
+        products: body.products || null, message: body.message || null,
+        websiteUrl: body.websiteUrl || null, contactEmail: body.contactEmail || null,
+        contactPhone: body.contactPhone || null, otherLinks: body.otherLinks || null,
+        displayOrder: body.displayOrder || 0,
+      },
+    })
+    return ok({ booth: b })
+  }
+  const oneMatch = route.match(/^\/booths\/([^\/]+)$/)
+  if (oneMatch && method === 'PUT') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const b = await prisma.exhibitionBooth.update({ where: { id: oneMatch[1] }, data: body })
+    return ok({ booth: b })
+  }
+  if (oneMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    await prisma.exhibitionBooth.delete({ where: { id: oneMatch[1] } })
+    return ok({ ok: true })
+  }
+  const imgMatch = route.match(/^\/booths\/([^\/]+)\/(banner|logo)$/)
+  if (imgMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const formData = await request.formData()
+    const file = formData.get('file')
+    if (!file) return err('No file')
+    if (file.size > 5 * 1024 * 1024) return err('Image too large (5MB max)')
+    const buf = Buffer.from(await file.arrayBuffer())
+    const safeName = `${imgMatch[2]}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const dir = path.join(UPLOAD_DIR, 'booths', imgMatch[1])
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, safeName), buf)
+    const publicPath = `/api/uploads/booths/${imgMatch[1]}/${safeName}`
+    const patch = imgMatch[2] === 'banner' ? { bannerPath: publicPath } : { logoPath: publicPath }
+    const b = await prisma.exhibitionBooth.update({ where: { id: imgMatch[1] }, data: patch })
+    return ok({ booth: b, imagePath: publicPath })
+  }
+  return null
+}
+
 async function router(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
@@ -1373,10 +1711,14 @@ async function router(request, { params }) {
     r = await handlePasswordReset(route, method, request); if (r) return r
     r = await handleConferences(route, method, request); if (r) return r
     r = await handleTemplates(route, method, request); if (r) return r
+    r = await handleBooths(route, method, request); if (r) return r
+    r = await handleConferenceBook(route, method, request); if (r) return r
+    r = await handleSurveys(route, method, request); if (r) return r
     r = await handleAbstracts(route, method, request); if (r) return r
     r = await handleTechnicalScore(route, method, request); if (r) return r
     r = await handleAnnouncements(route, method, request); if (r) return r
     r = await handleReviewerInvitations(route, method, request); if (r) return r
+    r = await handleBooths(route, method, request); if (r) return r
     r = await handleReviewer(route, method, request); if (r) return r
     r = await handleUsers(route, method, request); if (r) return r
     r = await handleNotifications(route, method, request); if (r) return r
