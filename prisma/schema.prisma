@@ -117,6 +117,9 @@ model Conference {
   status           ConferenceStatus @default(DRAFT)
   websiteBanner    String?
   heroImages       String[] @default([])
+  hotelImagePath   String?  // Uploaded venue hotel image path or external URL
+  mapUrl           String?  // Google Maps embed/place URL
+  mapAddress       String?  // Address string used to auto-build Google Maps embed
   isFeatured       Boolean  @default(false)
   contactEmail     String?
   contactPhone     String?

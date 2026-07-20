@@ -417,6 +417,26 @@ async function handleConferences(route, method, request) {
     const updated = await prisma.conference.update({ where: { id: heroMatch[1] }, data: { heroImages: filtered } })
     return ok({ conference: updated })
   }
+
+  // Hotel/venue image upload
+  const hotelMatch = route.match(/^\/conferences\/([^\/]+)\/hotel-image$/)
+  if (hotelMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const formData = await request.formData()
+    const file = formData.get('file')
+    if (!file) return err('No file')
+    if (file.size > 8 * 1024 * 1024) return err('Image too large (max 8 MB)')
+    const buf = Buffer.from(await file.arrayBuffer())
+    const safeName = `hotel_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const dir = path.join(UPLOAD_DIR, 'hotel', hotelMatch[1])
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, safeName), buf)
+    const publicPath = `/api/uploads/hotel/${hotelMatch[1]}/${safeName}`
+    const conf = await prisma.conference.update({ where: { id: hotelMatch[1] }, data: { hotelImagePath: publicPath } })
+    await logAudit({ actorId: user.id, action: 'UPLOAD_HOTEL_IMAGE', entityType: 'Conference', entityId: hotelMatch[1] })
+    return ok({ conference: conf, imagePath: publicPath })
+  }
   return null
 }
 

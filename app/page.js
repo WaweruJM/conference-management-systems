@@ -378,44 +378,253 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
 function PublicGuidelines() {
   const [txt, setTxt] = useState('')
   useEffect(() => { fetch('/abstract-guidelines.txt').then(r => r.text()).then(setTxt).catch(() => setTxt('Failed to load')) }, [])
+
+  // Parse the plain-text guidelines into structured sections
+  const parseSections = (text) => {
+    if (!text) return []
+    const lines = text.split('\n')
+    const sections = []
+    // Find all indices of "====" delimiter lines
+    const delims = []
+    lines.forEach((l, i) => { if (/^={3,}$/.test(l.trim())) delims.push(i) })
+    // Pairs of delims wrap a title. Between odd/even pairs we get title, then body until next pair.
+    for (let k = 0; k + 1 < delims.length; k += 2) {
+      const titleIdx = delims[k] + 1
+      const closeIdx = delims[k + 1]
+      const title = (lines[titleIdx] || '').trim()
+      // Body runs from closeIdx+1 up to the next opening delim (delims[k+2]) or EOF
+      const nextOpen = delims[k + 2] ?? lines.length
+      const body = lines.slice(closeIdx + 1, nextOpen)
+      if (title) sections.push({ title, body })
+    }
+    return sections
+  }
+  const sections = parseSections(txt)
+
+  const icons = ['📝', '🎯', '👥', '📄', '🔬', '📊', '✅', '📚', '📅', '🏆', '💡', '🎓']
+  const colors = [
+    { bg: 'from-blue-500 to-indigo-500', chip: 'bg-blue-100 text-blue-700' },
+    { bg: 'from-indigo-500 to-purple-500', chip: 'bg-indigo-100 text-indigo-700' },
+    { bg: 'from-purple-500 to-fuchsia-500', chip: 'bg-purple-100 text-purple-700' },
+    { bg: 'from-fuchsia-500 to-pink-500', chip: 'bg-fuchsia-100 text-fuchsia-700' },
+    { bg: 'from-teal-500 to-cyan-500', chip: 'bg-teal-100 text-teal-700' },
+    { bg: 'from-emerald-500 to-teal-500', chip: 'bg-emerald-100 text-emerald-700' },
+    { bg: 'from-amber-500 to-orange-500', chip: 'bg-amber-100 text-amber-700' },
+    { bg: 'from-rose-500 to-red-500', chip: 'bg-rose-100 text-rose-700' },
+  ]
+
+  const renderBody = (bodyLines) => {
+    // Merge continuation lines (indented, no bullet marker) into previous item
+    const items = []
+    let currentPara = []
+    const flushPara = () => { if (currentPara.length) { items.push({ type: 'para', text: currentPara.join(' ') }); currentPara = [] } }
+    bodyLines.forEach((raw) => {
+      const trimmed = raw.trim()
+      if (!trimmed) { flushPara(); return }
+      const numMatch = trimmed.match(/^(\d+)\.\s+(.*)/)
+      const letterMatch = trimmed.match(/^([a-z])\.\s+(.*)/i)
+      const romanMatch = trimmed.match(/^\((\d+)\)\s+(.*)/)
+      if (numMatch) { flushPara(); items.push({ type: 'numbered', num: numMatch[1], text: numMatch[2] }); return }
+      if (letterMatch) { flushPara(); items.push({ type: 'lettered', letter: letterMatch[1], text: letterMatch[2] }); return }
+      if (romanMatch) { flushPara(); items.push({ type: 'sub', num: romanMatch[1], text: romanMatch[2] }); return }
+      // Continuation line — if last item is a bullet, append to its text
+      const last = items[items.length - 1]
+      if (currentPara.length === 0 && last && (last.type === 'numbered' || last.type === 'lettered' || last.type === 'sub')) {
+        last.text += ' ' + trimmed
+      } else {
+        currentPara.push(trimmed)
+      }
+    })
+    flushPara()
+    return items.map((it, i) => {
+      if (it.type === 'numbered') return <div key={i} className="flex gap-3 mt-3 first:mt-0"><div className="shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center">{it.num}</div><div className="flex-1 text-slate-700 leading-relaxed">{it.text}</div></div>
+      if (it.type === 'lettered') return <div key={i} className="flex gap-3 mt-1.5 ml-8"><div className="shrink-0 h-5 w-5 rounded-full bg-slate-100 text-slate-600 font-semibold text-[10px] flex items-center justify-center uppercase mt-0.5">{it.letter}</div><div className="flex-1 text-sm text-slate-700 leading-relaxed">{it.text}</div></div>
+      if (it.type === 'sub') return <div key={i} className="flex gap-3 mt-1 ml-14"><div className="shrink-0 h-4 w-4 rounded bg-indigo-50 text-indigo-600 font-semibold text-[9px] flex items-center justify-center mt-0.5">{it.num}</div><div className="flex-1 text-xs text-slate-600 leading-relaxed">{it.text}</div></div>
+      return <p key={i} className="text-slate-700 leading-relaxed mt-2 first:mt-0">{it.text}</p>
+    })
+  }
+
   return (
-    <div className="container mx-auto px-6 py-10 max-w-4xl">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold">Abstract Submission Guidelines</h1>
-          <p className="text-muted-foreground mt-1">Please read carefully before submitting your abstract.</p>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      <div className="container mx-auto px-6 py-10 max-w-5xl">
+        <div className="text-center mb-10">
+          <Badge className="bg-blue-100 text-blue-700 border-blue-200 mb-3">FOR AUTHORS</Badge>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Abstract Submission Guidelines</h1>
+          <p className="text-slate-600 mt-3 max-w-2xl mx-auto">Read carefully before submitting your abstract. Following these guidelines ensures a smooth peer-review process.</p>
+          <div className="flex justify-center gap-2 mt-6">
+            <Button onClick={downloadGuidelines} className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" /> Download PDF/TXT</Button>
+          </div>
         </div>
-        <Button onClick={downloadGuidelines} className="bg-indigo-600 hover:bg-indigo-700"><Download className="h-4 w-4 mr-1" /> Download</Button>
+
+        {sections.length === 0 ? (
+          <Card><CardContent className="p-6"><Loader2 className="animate-spin inline" /> Loading guidelines...</CardContent></Card>
+        ) : (
+          <div className="space-y-5">
+            {sections.map((s, i) => {
+              const c = colors[i % colors.length]
+              const icon = icons[i % icons.length]
+              return (
+                <Card key={i} className="overflow-hidden shadow-lg border-0 ring-1 ring-slate-200 hover:ring-blue-300 transition">
+                  <div className={`bg-gradient-to-r ${c.bg} px-6 py-4 text-white flex items-center gap-3`}>
+                    <div className="h-10 w-10 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center text-2xl">{icon}</div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-white/80">Section {i + 1}</div>
+                      <h2 className="text-xl font-bold">{s.title}</h2>
+                    </div>
+                  </div>
+                  <CardContent className="p-6 bg-white">
+                    {renderBody(s.body)}
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="mt-10 text-center">
+          <Card className="border-blue-200 bg-blue-50/50">
+            <CardContent className="p-6">
+              <div className="text-sm text-slate-700">Have questions? Reach out to the editorial office or start your submission below.</div>
+              <Button onClick={downloadGuidelines} className="mt-3 bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" /> Download guidelines</Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
-      <Card>
-        <CardContent className="p-6">
-          <pre className="whitespace-pre-wrap text-sm leading-relaxed font-mono">{txt}</pre>
-        </CardContent>
-      </Card>
     </div>
   )
 }
 
 function PublicVenue({ conf }) {
+  if (!conf) return (
+    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-white flex items-center justify-center">
+      <div className="text-slate-500">No conference registered yet.</div>
+    </div>
+  )
+  const mapEmbed = conf.mapUrl || (conf.mapAddress ? `https://www.google.com/maps?q=${encodeURIComponent(conf.mapAddress)}&output=embed` : (conf.venue ? `https://www.google.com/maps?q=${encodeURIComponent([conf.venue, conf.city, conf.country].filter(Boolean).join(', '))}&output=embed` : null))
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'
+
   return (
-    <div className="container mx-auto px-6 py-10 max-w-4xl">
-      <h1 className="text-3xl font-bold mb-6">Venue & Dates</h1>
-      {conf ? (
-        <Card>
-          <CardHeader><CardTitle>{conf.name}</CardTitle><CardDescription>{conf.subtitle}</CardDescription></CardHeader>
-          <CardContent className="space-y-3 text-base">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Venue</div><div className="font-medium">{conf.venue || '—'}</div></div>
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">City / Country</div><div className="font-medium">{conf.city}{conf.country && `, ${conf.country}`}</div></div>
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Conference dates</div><div className="font-medium">{conf.startDate && new Date(conf.startDate).toLocaleDateString()} – {conf.endDate && new Date(conf.endDate).toLocaleDateString()}</div></div>
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Submission window</div><div className="font-medium">{conf.submissionOpen && new Date(conf.submissionOpen).toLocaleDateString()} – {conf.submissionClose && new Date(conf.submissionClose).toLocaleDateString()}</div></div>
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Registration window</div><div className="font-medium">{conf.registrationOpen && new Date(conf.registrationOpen).toLocaleDateString()} – {conf.registrationClose && new Date(conf.registrationClose).toLocaleDateString()}</div></div>
-              <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Status</div><div className="font-medium">{stateLabel(conf.status)}</div></div>
-            </div>
-            {conf.description && <div><div className="text-xs uppercase tracking-wider text-muted-foreground mb-1 mt-4">About</div><p className="text-sm leading-relaxed">{conf.description}</p></div>}
-          </CardContent>
-        </Card>
-      ) : <div className="text-muted-foreground">No conference registered yet.</div>}
+    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-white">
+      <div className="container mx-auto px-6 py-10 max-w-6xl">
+        <div className="text-center mb-10">
+          <Badge className="bg-blue-100 text-blue-700 border-blue-200 mb-3">GET READY</Badge>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-blue-900">Venue & Dates</h1>
+          <p className="text-slate-600 mt-3 max-w-2xl mx-auto">Everything you need to plan your attendance at {conf.name}</p>
+        </div>
+
+        {/* Hotel image + info cards */}
+        <div className="grid lg:grid-cols-5 gap-6 mb-8">
+          {/* Hotel image */}
+          <div className="lg:col-span-3">
+            <Card className="overflow-hidden shadow-xl border-0 h-full">
+              {conf.hotelImagePath ? (
+                <div className="relative h-80 lg:h-full min-h-[320px]">
+                  <img src={conf.hotelImagePath} alt="Conference venue" className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-blue-900/80 via-blue-900/10 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                    <Badge className="bg-white/25 backdrop-blur-sm border-white/40 text-white mb-2">CONFERENCE VENUE</Badge>
+                    <h2 className="text-3xl font-bold drop-shadow-lg">{conf.venue || 'Venue TBA'}</h2>
+                    <p className="text-white/90 mt-1">{[conf.city, conf.country].filter(Boolean).join(', ')}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-blue-500 to-indigo-600 h-80 flex flex-col items-center justify-center text-white p-6">
+                  <Building2 className="h-16 w-16 mb-3 opacity-90" />
+                  <h2 className="text-3xl font-bold">{conf.venue || 'Venue TBA'}</h2>
+                  <p className="opacity-90 mt-1">{[conf.city, conf.country].filter(Boolean).join(', ')}</p>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Location map */}
+          <div className="lg:col-span-2">
+            <Card className="overflow-hidden shadow-xl border-0 h-full">
+              {mapEmbed ? (
+                <iframe src={mapEmbed} className="w-full h-80 lg:h-full min-h-[320px] border-0" loading="lazy" referrerPolicy="no-referrer-when-downgrade" title="Venue location" />
+              ) : (
+                <div className="h-80 bg-slate-100 flex flex-col items-center justify-center text-slate-400">
+                  <Globe className="h-12 w-12 mb-2" />
+                  <div className="text-sm">Map not yet configured</div>
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
+
+        {/* Horizontal subsections */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <Card className="border-0 shadow-md bg-gradient-to-br from-blue-600 to-blue-700 text-white">
+            <CardContent className="p-5">
+              <Calendar className="h-6 w-6 mb-2 opacity-90" />
+              <div className="text-[10px] font-bold uppercase tracking-widest opacity-80">Conference dates</div>
+              <div className="text-sm font-semibold mt-2">{fmtDate(conf.startDate)}</div>
+              <div className="text-xs opacity-90">to {fmtDate(conf.endDate)}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-md bg-white ring-1 ring-blue-100">
+            <CardContent className="p-5">
+              <FileUp className="h-6 w-6 mb-2 text-blue-600" />
+              <div className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Abstract submission</div>
+              <div className="text-sm font-semibold text-slate-800 mt-2">{fmtDate(conf.submissionOpen)}</div>
+              <div className="text-xs text-slate-500">to {fmtDate(conf.submissionClose)}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-md bg-white ring-1 ring-blue-100">
+            <CardContent className="p-5">
+              <Users className="h-6 w-6 mb-2 text-blue-600" />
+              <div className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Registration</div>
+              <div className="text-sm font-semibold text-slate-800 mt-2">{fmtDate(conf.registrationOpen)}</div>
+              <div className="text-xs text-slate-500">to {fmtDate(conf.registrationClose)}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-md bg-gradient-to-br from-indigo-600 to-blue-700 text-white">
+            <CardContent className="p-5">
+              <ShieldCheck className="h-6 w-6 mb-2 opacity-90" />
+              <div className="text-[10px] font-bold uppercase tracking-widest opacity-80">Status</div>
+              <div className="text-sm font-semibold mt-2">{stateLabel(conf.status)}</div>
+              <div className="text-xs opacity-90 mt-1">{conf.doubleBlind ? 'Double-blind review' : 'Open review'}</div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* About + Contact — horizontal split */}
+        <div className="grid md:grid-cols-3 gap-6">
+          {conf.description && (
+            <Card className="md:col-span-2 border-0 shadow-md">
+              <CardContent className="p-6">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-blue-600 mb-2">About</div>
+                <h3 className="text-xl font-bold text-blue-900 mb-2">{conf.name}</h3>
+                {conf.subtitle && <div className="text-sm text-slate-500 italic mb-3">{conf.subtitle}</div>}
+                <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{conf.description}</p>
+              </CardContent>
+            </Card>
+          )}
+          <Card className="border-0 shadow-md bg-blue-50/50">
+            <CardContent className="p-6">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-blue-600 mb-3">Contact</div>
+              {conf.contactEmail && (
+                <a href={`mailto:${conf.contactEmail}`} className="flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900 hover:underline mb-2">
+                  <Mail className="h-4 w-4 shrink-0" />{conf.contactEmail}
+                </a>
+              )}
+              {conf.contactPhone && (
+                <div className="flex items-center gap-2 text-sm text-slate-700 mb-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h1.28a1 1 0 01.95.68l1.5 4.5a1 1 0 01-.5 1.21l-2.26 1.13a11 11 0 005.52 5.52l1.13-2.26a1 1 0 011.21-.5l4.5 1.5a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" /></svg>
+                  <span>{conf.contactPhone}</span>
+                </div>
+              )}
+              <div className="flex items-start gap-2 text-sm text-slate-700 mt-3 pt-3 border-t border-blue-200">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                <div>
+                  <div className="font-medium">{conf.venue || '—'}</div>
+                  <div className="text-xs text-slate-500">{[conf.city, conf.country].filter(Boolean).join(', ')}</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   )
 }
@@ -656,9 +865,16 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   ]
 
   return (
-    <div className="min-h-screen flex bg-slate-50">
+    <div className="min-h-screen flex bg-slate-50 relative">
+      {/* Subtle background pattern */}
+      <div className="fixed inset-0 pointer-events-none opacity-[0.35] z-0" style={{
+        backgroundImage: `radial-gradient(circle at 20% 15%, rgba(99, 102, 241, 0.08) 0%, transparent 45%), radial-gradient(circle at 85% 85%, rgba(219, 39, 119, 0.06) 0%, transparent 45%), radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.05) 0%, transparent 60%)`,
+      }} />
+      <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-0" style={{
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Cg fill='%234f46e5' fill-opacity='1'%3E%3Ccircle cx='2' cy='2' r='1'/%3E%3C/g%3E%3C/svg%3E")`,
+      }} />
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r flex flex-col">
+      <aside className="w-64 bg-white/95 backdrop-blur-sm border-r flex flex-col relative z-10">
         <div className="p-4 border-b">
           <div className="flex items-center gap-2">
             <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white font-bold">S</div>
@@ -695,8 +911,8 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 flex flex-col">
-        <header className="h-16 border-b bg-white flex items-center justify-between px-6 shadow-sm">
+      <main className="flex-1 flex flex-col relative z-10">
+        <header className="h-16 border-b bg-white/95 backdrop-blur-sm flex items-center justify-between px-6 shadow-sm">
           <div>
             <div className="text-base font-bold tracking-tight">{confTitle}</div>
             <div className="text-xs text-muted-foreground">{route.name === 'abstract' ? 'Abstract detail' : nav.find(n => n.key === route.name)?.label || 'SCMS'}</div>
@@ -2750,7 +2966,26 @@ function ConferenceDialog({ editing, onClose, onDone }) {
     registrationClose: editing?.registrationClose?.slice(0, 10) || '',
     doubleBlind: editing?.doubleBlind ?? true,
     status: editing?.status || 'OPEN_FOR_SUBMISSION',
+    mapAddress: editing?.mapAddress || '',
+    mapUrl: editing?.mapUrl || '',
+    hotelImagePath: editing?.hotelImagePath || '',
   })
+  const [uploadingHotel, setUploadingHotel] = useState(false)
+
+  const uploadHotel = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) return toast.error('Only image files allowed')
+    if (file.size > 8 * 1024 * 1024) return toast.error('Image exceeds 8 MB limit')
+    if (!editing?.id) return toast.error('Save the conference first, then upload the hotel image')
+    setUploadingHotel(true)
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const d = await apiUpload(`/conferences/${editing.id}/hotel-image`, fd)
+      setForm({ ...form, hotelImagePath: d.imagePath })
+      toast.success('Hotel image uploaded')
+    } catch (e) { toast.error(e.message) } finally { setUploadingHotel(false); e.target.value = '' }
+  }
 
   const submit = async () => {
     if (!form.code || !form.name) return toast.error('Code and name required')
@@ -2798,6 +3033,31 @@ function ConferenceDialog({ editing, onClose, onDone }) {
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
             <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
             <div><Label>Country</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} /></div>
+          </div>
+
+          {/* Hotel image + Google Map */}
+          <div className="border rounded-lg p-3 bg-blue-50/40 space-y-2">
+            <div className="text-xs font-bold uppercase tracking-wider text-blue-700">Hotel / venue location</div>
+            <div><Label>Google Maps address <span className="text-[10px] text-muted-foreground">(auto-generates map, e.g. "Sarova Whitesands Beach Resort Mombasa")</span></Label>
+              <Input value={form.mapAddress} onChange={e => setForm({ ...form, mapAddress: e.target.value })} placeholder="Sarova Whitesands Beach Resort, Mombasa, Kenya" />
+            </div>
+            <div><Label>Custom map embed URL <span className="text-[10px] text-muted-foreground">(optional, overrides address)</span></Label>
+              <Input value={form.mapUrl} onChange={e => setForm({ ...form, mapUrl: e.target.value })} placeholder="https://www.google.com/maps/embed?pb=..." />
+            </div>
+            <div>
+              <Label>Hotel exterior image</Label>
+              {form.hotelImagePath && (
+                <div className="my-2 relative">
+                  <img src={form.hotelImagePath} className="w-full h-40 object-cover rounded border" alt="Hotel" />
+                  <button type="button" onClick={() => setForm({ ...form, hotelImagePath: '' })} className="absolute top-1 right-1 bg-red-600 text-white rounded p-1 opacity-90 hover:opacity-100">
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+              <input type="file" accept="image/*" onChange={uploadHotel} disabled={uploadingHotel || !editing?.id} className="text-xs" />
+              {!editing?.id && <div className="text-[10px] text-muted-foreground mt-1">Save the conference first to enable image upload.</div>}
+              {uploadingHotel && <div className="text-xs text-indigo-600 mt-1"><Loader2 className="h-3 w-3 animate-spin inline" /> Uploading…</div>}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Contact email</Label><Input type="email" value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>

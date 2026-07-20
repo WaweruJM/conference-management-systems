@@ -334,9 +334,28 @@ backend:
       - working: true
         agent: "main"
         comment: |
-          Seeded 3 realistic sample sponsor booths on the featured conference (NovaMed Pharmaceuticals, BioDx Diagnostics, Aetheria Health Systems) each with royalty-free banner images from Pexels/Unsplash (blue-toned science/healthcare imagery), full company descriptions, products/services, website/email/phone contact details, and 'Other links' (Clinical trials portal, Product catalogue, Research partnerships etc.).
-          Redesigned ExhibitionBoothsPublic component with premium layout: hero banner image with dark gradient overlay, sponsor name and type overlaid in white on the banner, 2-column body (About + Products/Services on left, Get-in-touch card + Explore-more card on right), Lucide icons for globe/mail/phone. Added prev/next navigation arrows, tab-style booth selector with sponsor names visible (replacing tiny dots), pause-on-hover behaviour for auto-rotate, and clear indicator when paused.
-          Screenshot verified: professional, spacious, sponsor-appealing layout.
+          Seeded 3 sample sponsor booths with royalty-free banner images. Redesigned ExhibitionBoothsPublic component with premium hero banner, 2-column body, and tab-style sponsor selector.
+
+  - task: "Public pages redesign — guidelines, venue, backgrounds"
+    implemented: true
+    working: true
+    file: "/app/app/page.js, /app/prisma/schema.prisma"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Three public/UX enhancements delivered:
+          
+          1) PublicGuidelines redesigned: parses the plain-text file into structured sections (regex delimiter pairs), renders each as a coloured gradient card (8 rotating colour palettes) with icon, section number and title. Multi-line bullets are merged automatically. Supports numbered items (1., 2.) with blue circular badges, lettered sub-items (a., b.) with grey badges, and (1) roman sub-items indented deeper.
+          
+          2) PublicVenue redesigned with white/blue theme, horizontal layout: hero card with hotel banner + gradient overlay + venue name overlaid, side-by-side Google Maps iframe (auto-built from mapAddress or custom mapUrl), 4 horizontal stat cards (Conference dates, Abstract submission, Registration, Status — alternating gradient/white), and horizontal About + Contact split at bottom.
+          
+          3) Schema extended: Conference gets hotelImagePath, mapUrl, mapAddress fields. New POST /api/conferences/:id/hotel-image endpoint (8 MB max) uploads and stores the image path. ConferenceDialog admin form has a new 'Hotel / venue location' section with map-address input, custom-embed override, and hotel image upload (JPG/PNG). Sample hotel image + address seeded on the featured conference.
+          
+          4) Background patterns added: authenticated AppShell now has two subtle background layers (radial-gradient blobs in indigo/pink/blue + dot pattern) at low opacity, sidebar and header use backdrop-blur white/95 for a glassy effect. Main content stays crisp on top.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
