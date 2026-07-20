@@ -121,6 +121,7 @@ model Conference {
   mapUrl           String?  // Google Maps embed/place URL
   mapAddress       String?  // Address string used to auto-build Google Maps embed
   isFeatured       Boolean  @default(false)
+  isLive           Boolean  @default(false)
   contactEmail     String?
   contactPhone     String?
   createdAt        DateTime @default(now())

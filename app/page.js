@@ -21,8 +21,10 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
-  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase,
 } from 'lucide-react'
+import dynamic from 'next/dynamic'
+const LiveConference = dynamic(() => import('@/components/LiveConference'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
 
 const TOKEN_KEY = 'scms_token'
 const getToken = () => (typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null)
@@ -847,6 +849,8 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true },
     { key: 'submit', label: 'New Submission', icon: Plus, show: true },
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin },
+    { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin },
+    { key: 'live', label: 'Live Conference', icon: Radio, show: true },
     { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin },
     { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin },
     { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer },
@@ -971,6 +975,8 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
+  if (route.name === 'workspace') return <EditorWorkspace setRoute={setRoute} user={user} />
+  if (route.name === 'live') return <LiveConferencePage user={user} />
   if (route.name === 'reviews') return <ReviewerWorkspace setRoute={setRoute} />
   if (route.name === 'conferences') return <Conferences />
   if (route.name === 'conference-admin') return <ConferenceAdmin />
@@ -4574,6 +4580,117 @@ function AddItemDialog({ session, abstracts, onClose, onDone }) {
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving || selected.length === 0} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}Add {selected.length} to programme</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ============ EDITOR WORKSPACE ============
+function EditorWorkspace({ setRoute, user }) {
+  const [list, setList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('active')
+  useEffect(() => {
+    api('/abstracts?scope=assigned').then(d => setList(d.abstracts || [])).catch(e => toast.error(e.message)).finally(() => setLoading(false))
+  }, [])
+
+  const activeStates = ['UNDER_REVIEW', 'PEER_REVIEW', 'EDITORIAL_DECISION', 'AWAITING_DECISION', 'ASSIGNED', 'REVIEW_IN_PROGRESS', 'MINOR_REVISION', 'MAJOR_REVISION', 'AWAITING_REVISION', 'RESUBMITTED', 'PROGRAMME_SCHEDULING']
+  const doneStates = ['ACCEPTED', 'FINAL_ACCEPTANCE', 'ORAL', 'POSTER', 'REJECTED', 'PUBLISHED', 'WITHDRAWN']
+  const visible = list.filter(a => filter === 'all' || (filter === 'active' && activeStates.includes(a.currentState)) || (filter === 'done' && doneStates.includes(a.currentState)))
+  const counts = { active: list.filter(a => activeStates.includes(a.currentState)).length, done: list.filter(a => doneStates.includes(a.currentState)).length, all: list.length }
+
+  const groups = { }
+  visible.forEach(a => { const s = a.currentState; if (!groups[s]) groups[s] = []; groups[s].push(a) })
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold flex items-center gap-2"><Briefcase className="h-7 w-7 text-indigo-600" /> My Editor Workspace</h1>
+        <p className="text-muted-foreground">All abstracts assigned to you — {list.length} paper{list.length !== 1 ? 's' : ''} total. Click any card to open the per-abstract workspace with review, reviewer, correspondence and document tabs.</p>
+      </div>
+
+      <div className="mb-4 flex items-center gap-2">
+        <Button variant={filter === 'active' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('active')} className={filter === 'active' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
+          Active <Badge variant="secondary" className="ml-1">{counts.active}</Badge>
+        </Button>
+        <Button variant={filter === 'done' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('done')} className={filter === 'done' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
+          Decided <Badge variant="secondary" className="ml-1">{counts.done}</Badge>
+        </Button>
+        <Button variant={filter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('all')} className={filter === 'all' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
+          All <Badge variant="secondary" className="ml-1">{counts.all}</Badge>
+        </Button>
+      </div>
+
+      {loading ? <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> : (
+        list.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="p-10 text-center">
+              <Briefcase className="h-12 w-12 mx-auto text-slate-300 mb-3" />
+              <div className="text-lg font-semibold text-slate-500">No abstracts assigned yet</div>
+              <div className="text-sm text-muted-foreground mt-1">The Managing Editor will assign abstracts to your queue. Once assigned, they appear here for full editorial handling.</div>
+              <Button className="mt-4" variant="outline" onClick={() => setRoute({ name: 'editorial' })}>View Editorial Office</Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0])).map(([state, abs]) => (
+              <div key={state}>
+                <div className="flex items-center gap-2 mb-3 pb-1 border-b border-slate-200">
+                  <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{stateLabel(state)}</Badge>
+                  <span className="text-xs text-muted-foreground">{abs.length} paper{abs.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="grid gap-3">
+                  {abs.map(a => (
+                    <Card key={a.id} className="hover:shadow-md hover:border-indigo-300 transition cursor-pointer" onClick={() => setRoute({ name: 'abstract', id: a.id })}>
+                      <CardContent className="p-4 flex items-center gap-4">
+                        <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                          {a.submissionCode?.split('-').pop() || '?'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-indigo-600">{a.submissionCode}</div>
+                          <div className="font-semibold truncate">{a.title}</div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
+                            {a.theme?.name && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
+                            {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
+                            <span>Reviewers: {a.reviewAssignments?.length || 0}</span>
+                            <span>·</span>
+                            <span>Submitted {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : 'draft'}</span>
+                          </div>
+                        </div>
+                        <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ============ LIVE CONFERENCE PAGE ============
+function LiveConferencePage({ user }) {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }) }, [])
+  const conf = confs.find(c => c.id === confId)
+  const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r))
+
+  if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+
+  return (
+    <div>
+      <div className="border-b bg-white/95 backdrop-blur-sm px-6 py-3 flex items-center gap-3">
+        <Radio className="h-5 w-5 text-red-600" />
+        <div className="font-semibold">Live Conference Portal</div>
+        <Select value={confId} onValueChange={setConfId}>
+          <SelectTrigger className="w-64 ml-auto"><SelectValue /></SelectTrigger>
+          <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <LiveConference conf={conf} isAdmin={isAdmin} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+    </div>
   )
 }
 

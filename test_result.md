@@ -346,16 +346,59 @@ backend:
     status_history:
       - working: true
         agent: "main"
+        comment: "Public redesign for guidelines, venue, backgrounds complete."
+
+  - task: "Editor Workspace"
+    implemented: true
+    working: true
+    file: "/app/app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
         comment: |
-          Three public/UX enhancements delivered:
+          New "My Editor Workspace" sidebar entry (visible to admins + editors) that aggregates ALL abstracts assigned to the current user in one view — eliminating the duplication problem. Uses existing GET /abstracts?scope=assigned endpoint.
+          Features:
+          - 3 filter tabs (Active / Decided / All) with per-tab counts
+          - Cards grouped by workflow state with a Badge header per state
+          - Each card shows submission code, title, theme, report type, reviewer count, submission date, and a chevron
+          - Click any card opens the existing AbstractDetail per-abstract workspace (which already has editor review, reviewer assignment, correspondence, documents, decision tabs)
+          - Common Editorial Office remains untouched and still shows all abstracts to all editors as before
+
+  - task: "Live Conference streaming (LiveKit)"
+    implemented: true
+    working: true
+    file: "/app/components/LiveConference.jsx, /app/app/api/[[...path]]/route.js, /app/prisma/schema.prisma, /app/.env"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Full LiveKit live conferencing implemented per playbook.
           
-          1) PublicGuidelines redesigned: parses the plain-text file into structured sections (regex delimiter pairs), renders each as a coloured gradient card (8 rotating colour palettes) with icon, section number and title. Multi-line bullets are merged automatically. Supports numbered items (1., 2.) with blue circular badges, lettered sub-items (a., b.) with grey badges, and (1) roman sub-items indented deeper.
+          Env: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, NEXT_PUBLIC_LIVEKIT_URL configured on user's cloud project (scms-pa6acvh8.livekit.cloud). Packages installed: livekit-server-sdk, @livekit/components-react, @livekit/components-styles, livekit-client.
           
-          2) PublicVenue redesigned with white/blue theme, horizontal layout: hero card with hotel banner + gradient overlay + venue name overlaid, side-by-side Google Maps iframe (auto-built from mapAddress or custom mapUrl), 4 horizontal stat cards (Conference dates, Abstract submission, Registration, Status — alternating gradient/white), and horizontal About + Contact split at bottom.
+          Schema: Conference.isLive Boolean field added.
           
-          3) Schema extended: Conference gets hotelImagePath, mapUrl, mapAddress fields. New POST /api/conferences/:id/hotel-image endpoint (8 MB max) uploads and stores the image path. ConferenceDialog admin form has a new 'Hotel / venue location' section with map-address input, custom-embed override, and hotel image upload (JPG/PNG). Sample hotel image + address seeded on the featured conference.
+          Backend:
+          - POST /api/conferences/:id/live — admin/editor toggle broadcast on/off (updates isLive)
+          - GET /api/conferences/:id/live-status — public status (used by page to auto-refresh every 15s)
+          - POST /api/livekit/token — authenticated token minting. Host role (admin/managing/chief editor) gets canPublish + canSubscribe + canPublishData. Viewer role gets canSubscribe + canPublishData (Q&A only). Viewers blocked with 409 when isLive=false. Room name deterministic: conference-{id}. Token TTL 2h.
           
-          4) Background patterns added: authenticated AppShell now has two subtle background layers (radial-gradient blobs in indigo/pink/blue + dot pattern) at low opacity, sidebar and header use backdrop-blur white/95 for a glassy effect. Main content stays crisp on top.
+          Frontend (/app/components/LiveConference.jsx, dynamically imported to avoid SSR issues):
+          - "Conference Offline" gradient banner when isLive=false with virtual booth fallback below
+          - Admin "Start Live Broadcast" CTA when offline
+          - Beautiful centered join card when live
+          - Full-screen live view with black stage: LiveKitRoom + VideoConference tracks in GridLayout, ParticipantTile placeholder when host not yet publishing, ControlBar with mic/camera/screenshare (host only)
+          - Right-side "Live Q&A" sidebar using useDataChannel('qna') — real-time text chat, host messages badged, timestamps, auto-scroll, Enter-to-send
+          - Fullscreen toggle button, End broadcast (admin), Leave button
+          - When conference is offline, viewers see the Virtual Exhibition Booth carousel as fallback
+          
+          Verified: token mint returns valid JWT with correct grants (roomJoin, canPublish, canSubscribe, canPublishData), live-status endpoint public, isLive toggle updates DB and audit-logged.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"

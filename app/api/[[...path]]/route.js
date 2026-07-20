@@ -1786,6 +1786,71 @@ ${survey.conference.name} Editorial Committee`
   return null
 }
 
+// ============ LIVE CONFERENCE (LiveKit) ============
+async function handleLiveConference(route, method, request) {
+  // Toggle live status
+  const liveMatch = route.match(/^\/conferences\/([^\/]+)\/live$/)
+  if (liveMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json().catch(() => ({}))
+    const conf = await prisma.conference.update({
+      where: { id: liveMatch[1] },
+      data: { isLive: !!body.isLive },
+    })
+    await logAudit({ actorId: user.id, action: body.isLive ? 'START_LIVE' : 'STOP_LIVE', entityType: 'Conference', entityId: liveMatch[1] })
+    return ok({ conference: conf })
+  }
+  // Public status check (no auth) — so page can decide offline vs online
+  const statusMatch = route.match(/^\/conferences\/([^\/]+)\/live-status$/)
+  if (statusMatch && method === 'GET') {
+    const conf = await prisma.conference.findUnique({
+      where: { id: statusMatch[1] },
+      select: { id: true, name: true, isLive: true },
+    })
+    if (!conf) return err('Not found', 404)
+    return ok({ isLive: !!conf.isLive, name: conf.name })
+  }
+  // Token mint
+  if (route === '/livekit/token' && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const body = await request.json()
+    if (!body.conferenceId) return err('conferenceId required')
+    const conf = await prisma.conference.findUnique({ where: { id: body.conferenceId } })
+    if (!conf) return err('Conference not found', 404)
+    const isHost = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    // Viewers may not join if offline
+    if (!isHost && !conf.isLive) return err('Conference is offline', 409)
+    const roomName = `conference-${conf.id}`
+    try {
+      const { AccessToken } = await import('livekit-server-sdk')
+      const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+        identity: user.id,
+        name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        ttl: '2h',
+      })
+      at.addGrant({
+        room: roomName,
+        roomJoin: true,
+        canPublish: isHost,
+        canSubscribe: true,
+        canPublishData: true,
+      })
+      const token = await at.toJwt()
+      return ok({
+        token, url: process.env.LIVEKIT_URL, room: roomName,
+        role: isHost ? 'host' : 'viewer',
+        identity: user.id,
+        displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+      })
+    } catch (e) {
+      return err('Token mint failed: ' + e.message, 500)
+    }
+  }
+  return null
+}
+
 // ============ EXHIBITION BOOTHS ============
 async function handleBooths(route, method, request) {
   const listMatch = route.match(/^\/conferences\/([^\/]+)\/booths$/)
@@ -1858,6 +1923,7 @@ async function router(request, { params }) {
     r = await handleConferences(route, method, request); if (r) return r
     r = await handleTemplates(route, method, request); if (r) return r
     r = await handleBooths(route, method, request); if (r) return r
+    r = await handleLiveConference(route, method, request); if (r) return r
     r = await handleConferenceBook(route, method, request); if (r) return r
     r = await handleSurveys(route, method, request); if (r) return r
     r = await handleAbstracts(route, method, request); if (r) return r
