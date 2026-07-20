@@ -2352,7 +2352,56 @@ function DelegatesPage() {
           </CardContent>
         </Card>
       </div>
-      <p className="text-xs text-muted-foreground mt-4">CSV columns: Prefix, First Name, Last Name, Email, Type, Mode, Rank, Unit, Affiliation, Company, Registered. Physical file also contains editors and admin.</p>
+
+      {/* Name tags + certificates */}
+      <div className="grid md:grid-cols-3 gap-4 mt-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">🏷 Print name tags</CardTitle>
+            <CardDescription>PDF with 8 name tags per page — physical attendees + editors + admin.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full bg-slate-800 hover:bg-slate-900" onClick={async () => {
+              const token = getToken()
+              const r = await fetch(`/api/conferences/${confId}/name-tags.pdf`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include' })
+              if (!r.ok) return toast.error('Failed to generate')
+              const b = await r.blob(); const url = URL.createObjectURL(b)
+              const a = document.createElement('a'); a.href = url; a.download = `name-tags.pdf`; a.click(); URL.revokeObjectURL(url)
+            }}><Download className="h-4 w-4 mr-1" /> Generate name tags PDF</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">✉ Attendance certificates</CardTitle>
+            <CardDescription>Email PDF certificate to every registered attendee (marks virtual for virtual delegates).</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={async () => {
+              if (!confirm('Send attendance certificates to every registered attendee?')) return
+              try {
+                const d = await api(`/conferences/${confId}/send-attendance-certificates`, { method: 'POST' })
+                toast.success(`Sent ${d.sent} certificate(s)`)
+              } catch (e) { toast.error(e.message) }
+            }}><Send className="h-4 w-4 mr-1" /> Send attendance certificates</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">🏆 Presentation certificates</CardTitle>
+            <CardDescription>Email certificate to authors of accepted (oral/poster) abstracts.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full bg-fuchsia-600 hover:bg-fuchsia-700" onClick={async () => {
+              if (!confirm('Send presentation certificates to all presenters?')) return
+              try {
+                const d = await api(`/conferences/${confId}/send-presentation-certificates`, { method: 'POST' })
+                toast.success(`Sent ${d.sent} certificate(s)`)
+              } catch (e) { toast.error(e.message) }
+            }}><Send className="h-4 w-4 mr-1" /> Send presentation certificates</Button>
+          </CardContent>
+        </Card>
+      </div>
+      <p className="text-xs text-muted-foreground mt-4">CSV columns: Prefix, First Name, Last Name, Email, Type, Mode, Rank, Unit, Affiliation, Company, Registered. Physical file also contains editors and admin. Name tags are 8 per A4 page (2 columns × 4 rows) — cut along the borders.</p>
     </div>
   )
 }

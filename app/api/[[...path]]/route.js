@@ -235,7 +235,105 @@ async function handleConferences(route, method, request) {
     return ok({ registration: reg })
   }
 
-  // Admin: download delegates as CSV
+  // Admin: download name tags PDF (physical delegates + editors)
+  const tagMatch = route.match(/^\/conferences\/([^\/]+)\/name-tags\.pdf$/)
+  if (tagMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const conf = await prisma.conference.findUnique({ where: { id: tagMatch[1] } })
+    if (!conf) return err('Conference not found', 404)
+    const regs = await prisma.registration.findMany({
+      where: { conferenceId: tagMatch[1], OR: [{ mode: 'PHYSICAL' }, { type: 'SPONSOR', physicalBoothRequested: true }] },
+      include: { user: { select: { firstName: true, lastName: true, affiliation: true } } },
+    })
+    const editors = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','SECTION_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true },
+    })
+    const delegates = [
+      ...regs.map(r => ({
+        prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
+        rank: r.rank || (r.type === 'SPONSOR' ? 'Sponsor' : ''), affiliation: r.affiliation || r.companyName || r.user.affiliation,
+      })),
+      ...editors.map(e => ({ prefix: e.title || '', fullName: `${e.firstName} ${e.lastName}`, rank: 'Editorial Board', affiliation: e.affiliation || '' })),
+    ]
+    const { generateNameTagsPDF } = await import('@/lib/pdf')
+    const buf = await generateNameTagsPDF(delegates, conf)
+    return new NextResponse(buf, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="name-tags-${conf.code}.pdf"` } })
+  }
+
+  // Admin: send attendance certificates via email to all registered attendees
+  const attCertMatch = route.match(/^\/conferences\/([^\/]+)\/send-attendance-certificates$/)
+  if (attCertMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const conf = await prisma.conference.findUnique({ where: { id: attCertMatch[1] } })
+    const regs = await prisma.registration.findMany({
+      where: { conferenceId: attCertMatch[1], type: 'ATTENDEE' },
+      include: { user: { select: { firstName: true, lastName: true, email: true, affiliation: true } } },
+    })
+    const { generateCertificatePDF } = await import('@/lib/pdf')
+    const { sendEmail } = await import('@/lib/email')
+    const { renderEmailHtml } = await import('@/lib/email-templates')
+    let sent = 0
+    for (const r of regs) {
+      const buf = await generateCertificatePDF({
+        recipient: {
+          prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
+          firstName: r.user.firstName, lastName: r.user.lastName,
+          rank: r.rank, affiliation: r.affiliation || r.user.affiliation, mode: r.mode,
+        },
+        conference: conf, kind: 'ATTENDANCE',
+      })
+      const subject = `Certificate of Attendance — ${conf.name}`
+      const body = `Dear ${r.prefix || ''} ${r.fullName || r.user.firstName + ' ' + r.user.lastName},\n\nThank you for attending ${conf.name}${r.mode === 'VIRTUAL' ? ' (virtually)' : ''}. Please find your certificate of attendance attached.\n\nWith warm regards,\n${conf.name} Editorial Office`
+      await sendEmail({
+        to: r.user.email, subject, text: body,
+        html: renderEmailHtml({ subject, body, conferenceName: conf.name }),
+        attachments: [{ filename: `Certificate_${(r.fullName || r.user.firstName).replace(/\s/g, '_')}.pdf`, mimeType: 'application/pdf', contentBase64: buf.toString('base64') }],
+      })
+      sent++
+    }
+    return ok({ sent })
+  }
+
+  // Admin: send presentation certificates to authors of accepted+presenting abstracts
+  const presCertMatch = route.match(/^\/conferences\/([^\/]+)\/send-presentation-certificates$/)
+  if (presCertMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const conf = await prisma.conference.findUnique({ where: { id: presCertMatch[1] } })
+    const abstracts = await prisma.abstract.findMany({
+      where: {
+        conferenceId: presCertMatch[1],
+        currentState: { in: ['ACCEPTED', 'ORAL', 'POSTER', 'PRESENTATION_UPLOAD', 'PRESENTATION_REVIEW', 'PROGRAMME_SCHEDULING', 'FINAL_ACCEPTANCE', 'PUBLISHED'] },
+      },
+      include: { submittedBy: { select: { firstName: true, lastName: true, email: true, title: true, affiliation: true } }, authors: true },
+    })
+    const { generateCertificatePDF } = await import('@/lib/pdf')
+    const { sendEmail } = await import('@/lib/email')
+    const { renderEmailHtml } = await import('@/lib/email-templates')
+    let sent = 0
+    for (const a of abstracts) {
+      const buf = await generateCertificatePDF({
+        recipient: {
+          prefix: a.submittedBy.title, fullName: `${a.submittedBy.firstName} ${a.submittedBy.lastName}`,
+          firstName: a.submittedBy.firstName, lastName: a.submittedBy.lastName,
+          rank: 'Presenter', affiliation: a.submittedBy.affiliation, abstractTitle: a.title,
+        },
+        conference: conf, kind: 'PRESENTATION',
+      })
+      const subject = `Certificate of Presentation — ${conf.name}`
+      const body = `Dear ${a.submittedBy.title || ''} ${a.submittedBy.firstName} ${a.submittedBy.lastName},\n\nCongratulations on presenting "${a.title}" at ${conf.name}. Please find your certificate of presentation attached.\n\nWith warm regards,\n${conf.name} Editorial Office`
+      await sendEmail({
+        to: a.submittedBy.email, subject, text: body,
+        html: renderEmailHtml({ subject, body, conferenceName: conf.name }),
+        attachments: [{ filename: `Presentation_Certificate_${a.submissionCode}.pdf`, mimeType: 'application/pdf', contentBase64: buf.toString('base64') }],
+      })
+      sent++
+    }
+    return ok({ sent })
+  }
   const dlMatch = route.match(/^\/conferences\/([^\/]+)\/delegates\.csv$/)
   if (dlMatch && method === 'GET') {
     const user = await getCurrentUser(request)
