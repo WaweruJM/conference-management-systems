@@ -195,12 +195,94 @@ async function handleConferences(route, method, request) {
     const user = await getCurrentUser(request)
     if (!user) return err('Unauthenticated', 401)
     const body = await request.json().catch(() => ({}))
+    const conf = await prisma.conference.findUnique({ where: { id: regMatch[1] } })
+    if (!conf) return err('Conference not found', 404)
+    const now = new Date()
+    // Timing rules:
+    // AUTHOR: registration open while submission window is open
+    // ATTENDEE: opens 1 month before conference start
+    // SPONSOR: always open until conference end
+    const regType = body.type || 'ATTENDEE'
+    if (regType === 'ATTENDEE' && conf.startDate) {
+      const oneMonthBefore = new Date(conf.startDate); oneMonthBefore.setMonth(oneMonthBefore.getMonth() - 1)
+      if (now < oneMonthBefore) return err(`Attendee registration opens on ${oneMonthBefore.toDateString()}.`)
+      if (conf.endDate && now > conf.endDate) return err('Attendee registration is closed.')
+    }
+    if (regType === 'AUTHOR' && conf.submissionClose && now > conf.submissionClose) return err('Author registration closed (submission window ended).')
     const reg = await prisma.registration.upsert({
       where: { conferenceId_userId: { conferenceId: regMatch[1], userId: user.id } },
-      update: {},
-      create: { conferenceId: regMatch[1], userId: user.id, type: body.type || 'STANDARD' },
+      update: {
+        type: regType, mode: body.mode || null,
+        prefix: body.prefix || null, fullName: body.fullName || null,
+        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
+        sponsorTier: body.sponsorTier || null,
+        virtualBoothRequested: !!body.virtualBoothRequested,
+        physicalBoothRequested: !!body.physicalBoothRequested,
+        sponsorMessage: body.sponsorMessage || null,
+      },
+      create: {
+        conferenceId: regMatch[1], userId: user.id, type: regType, mode: body.mode || null,
+        prefix: body.prefix || null, fullName: body.fullName || null,
+        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
+        sponsorTier: body.sponsorTier || null,
+        virtualBoothRequested: !!body.virtualBoothRequested,
+        physicalBoothRequested: !!body.physicalBoothRequested,
+        sponsorMessage: body.sponsorMessage || null,
+      },
     })
     return ok({ registration: reg })
+  }
+
+  // Admin: download delegates as CSV
+  const dlMatch = route.match(/^\/conferences\/([^\/]+)\/delegates\.csv$/)
+  if (dlMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const url = new URL(request.url)
+    const modeFilter = url.searchParams.get('mode') // PHYSICAL | VIRTUAL | ''
+    const where = { conferenceId: dlMatch[1] }
+    if (modeFilter === 'PHYSICAL') where.OR = [{ mode: 'PHYSICAL' }, { type: 'SPONSOR', physicalBoothRequested: true }]
+    else if (modeFilter === 'VIRTUAL') where.mode = 'VIRTUAL'
+    const regs = await prisma.registration.findMany({
+      where,
+      include: { user: { select: { firstName: true, lastName: true, email: true, roles: { select: { role: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    })
+    // Physical delegates should also include editors + admin per requirement
+    let editorRegs = []
+    if (modeFilter === 'PHYSICAL') {
+      const editors = await prisma.user.findMany({
+        where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','SECTION_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
+        select: { firstName: true, lastName: true, email: true, affiliation: true, roles: { select: { role: true } } },
+      })
+      editorRegs = editors.map(e => ({
+        user: { firstName: e.firstName, lastName: e.lastName, email: e.email, roles: e.roles },
+        prefix: '', rank: '', unit: '', affiliation: e.affiliation, type: 'EDITOR', mode: 'PHYSICAL', companyName: '',
+      }))
+    }
+    const rows = [...regs, ...editorRegs]
+    const escapeCsv = (v) => {
+      if (v == null) return ''
+      const s = String(v)
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"'
+      return s
+    }
+    const header = ['Prefix','First Name','Last Name','Email','Type','Mode','Rank','Unit','Affiliation','Company','Registered']
+    const csv = [header.join(',')].concat(rows.map(r => [
+      escapeCsv(r.prefix), escapeCsv(r.user?.firstName), escapeCsv(r.user?.lastName),
+      escapeCsv(r.user?.email), escapeCsv(r.type), escapeCsv(r.mode),
+      escapeCsv(r.rank), escapeCsv(r.unit), escapeCsv(r.affiliation || r.user?.affiliation),
+      escapeCsv(r.companyName), escapeCsv(r.createdAt ? new Date(r.createdAt).toISOString() : ''),
+    ].join(','))).join('\n')
+    return new NextResponse(csv, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename="delegates_${modeFilter || 'all'}.csv"`,
+      },
+    })
   }
 
   // Hero image upload (admin/chief editor, multipart)

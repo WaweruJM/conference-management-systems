@@ -477,6 +477,21 @@ enum RegistrationType {
   SPEAKER
   INDUSTRY
   GUEST
+  ATTENDEE
+  SPONSOR
+}
+
+enum AttendanceMode {
+  PHYSICAL
+  VIRTUAL
+}
+
+enum SponsorTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
 }
 
 model Registration {
@@ -486,6 +501,20 @@ model Registration {
   userId       String
   user         User     @relation(fields: [userId], references: [id])
   type         RegistrationType @default(STANDARD)
+  mode         AttendanceMode?  // VIRTUAL or PHYSICAL (for attendees)
+  prefix       String?  // Dr, Prof, Mr, Mrs, Ms
+  fullName     String?  // As it should appear on certificates/name tags
+  rank         String?  // e.g. Consultant, Senior Registrar
+  unit         String?  // Department/Unit
+  affiliation  String?
+  // Sponsor-specific
+  companyName  String?
+  companyAddress String?
+  industry     String?
+  sponsorTier  SponsorTier?
+  virtualBoothRequested  Boolean @default(false)
+  physicalBoothRequested Boolean @default(false)
+  sponsorMessage String? @db.Text
   isPaid       Boolean  @default(false)
   createdAt    DateTime @default(now())
 

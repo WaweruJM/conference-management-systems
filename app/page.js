@@ -598,6 +598,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin },
+    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor },
     { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin },
   ]
 
@@ -710,6 +711,7 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
   if (route.name === 'invite-reviewers') return <InviteReviewers />
   if (route.name === 'analytics') return <Analytics />
   if (route.name === 'users') return <UserManagement />
+  if (route.name === 'delegates') return <DelegatesPage />
   if (route.name === 'audit') return <AuditView />
   if (route.name === 'abstract') return <AbstractDetail id={route.id} user={user} isEditor={isEditor} isAdmin={isAdmin} setRoute={setRoute} />
   return <div className="p-6">Not found</div>
@@ -1920,9 +1922,10 @@ function ReviewForm({ assignment, onClose, onDone }) {
   )
 }
 
-// ============ CONFERENCES ============
+// ============ CONFERENCES (public/attendee page with registration dialog) ============
 function Conferences() {
   const [list, setList] = useState([])
+  const [regFor, setRegFor] = useState(null)
   useEffect(() => { api('/conferences').then(d => setList(d.conferences || [])) }, [])
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -1940,14 +1943,159 @@ function Conferences() {
               <div>📅 {c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</div>
               <div>📝 Submissions until {c.submissionClose && new Date(c.submissionClose).toLocaleDateString()}</div>
               <div className="flex flex-wrap gap-1 mt-2">{c.themes?.map(t => <Badge key={t.id} variant="outline" className="text-[10px]">{t.name}</Badge>)}</div>
-              <div className="pt-3">
-                <Button size="sm" onClick={async () => { try { await api(`/conferences/${c.id}/register`, { method: 'POST', body: JSON.stringify({}) }); toast.success('Registered') } catch (e) { toast.error(e.message) } }}>Register</Button>
+              <div className="pt-3 flex gap-2">
+                <Button size="sm" onClick={() => setRegFor({ conf: c, type: 'ATTENDEE' })}>Register as Attendee</Button>
+                <Button size="sm" variant="outline" onClick={() => setRegFor({ conf: c, type: 'AUTHOR' })}>Register as Author</Button>
+                <Button size="sm" variant="outline" onClick={() => setRegFor({ conf: c, type: 'SPONSOR' })}>Sponsor / Pharma</Button>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+      {regFor && <RegistrationDialog conf={regFor.conf} initialType={regFor.type} onClose={() => setRegFor(null)} onDone={() => { setRegFor(null); toast.success('Registration complete') }} />}
     </div>
+  )
+}
+
+function RegistrationDialog({ conf, initialType, onClose, onDone }) {
+  const [type, setType] = useState(initialType)
+  const [form, setForm] = useState({
+    mode: 'PHYSICAL', prefix: 'Dr.', fullName: '', rank: '', unit: '', affiliation: '',
+    companyName: '', companyAddress: '', industry: '', sponsorTier: 'BRONZE',
+    virtualBoothRequested: false, physicalBoothRequested: false, sponsorMessage: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const SPONSOR_TIERS = [
+    { key: 'BRONZE', label: 'Bronze', price: '$1,000', benefits: ['Logo on website', 'Virtual booth', 'Company profile'] },
+    { key: 'SILVER', label: 'Silver', price: '$2,500', benefits: ['All Bronze benefits', 'Physical booth (small)', '2 delegate passes'] },
+    { key: 'GOLD', label: 'Gold', price: '$5,000', benefits: ['All Silver benefits', 'Physical booth (large)', '4 delegate passes', 'Sponsored session'] },
+    { key: 'PLATINUM', label: 'Platinum', price: '$10,000', benefits: ['All Gold benefits', 'Keynote slot', '8 delegate passes', 'Front-page banner'] },
+    { key: 'DIAMOND', label: 'Diamond', price: '$25,000', benefits: ['Named partner', 'Unlimited passes', 'Exclusive branding'] },
+  ]
+
+  const submit = async () => {
+    setError('')
+    if (type === 'ATTENDEE') {
+      if (!form.fullName || !form.rank || !form.unit || !form.affiliation) return setError('Full name, rank, unit and affiliation are required (used on certificate & name tag).')
+    }
+    if (type === 'SPONSOR') {
+      if (!form.companyName || !form.industry || !form.companyAddress) return setError('Company name, industry and address are required.')
+    }
+    setSaving(true)
+    try {
+      await api(`/conferences/${conf.id}/register`, { method: 'POST', body: JSON.stringify({ type, ...form }) })
+      onDone()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>Register for {conf.name}</DialogTitle>
+          <DialogDescription>Choose your registration category</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            {['ATTENDEE', 'AUTHOR', 'SPONSOR'].map(t => (
+              <Button key={t} variant={type === t ? 'default' : 'outline'} size="sm" onClick={() => setType(t)} className={type === t ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
+                {t === 'ATTENDEE' ? 'Attendee' : t === 'AUTHOR' ? 'Author' : 'Sponsor / Pharma'}
+              </Button>
+            ))}
+          </div>
+
+          {error && <div className="p-3 rounded bg-red-50 border border-red-300 text-red-800 text-sm">{error}</div>}
+
+          {type === 'ATTENDEE' && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Attendance mode *</Label>
+                  <Select value={form.mode} onValueChange={v => setForm({ ...form, mode: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PHYSICAL">Physical (in-person)</SelectItem>
+                      <SelectItem value="VIRTUAL">Virtual (online)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Prefix *</Label>
+                  <Select value={form.prefix} onValueChange={v => setForm({ ...form, prefix: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {['Prof.','Dr.','Mr.','Mrs.','Ms.','Rev.','Hon.'].map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div><Label>Full name (as it should appear on certificate & name tag) *</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="e.g. Jane W. Doe" /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Rank / Position *</Label><Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar" /></div>
+                <div><Label>Unit / Department *</Label><Input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="e.g. Cardiology" /></div>
+              </div>
+              <div><Label>Affiliation (Hospital / Institution) *</Label><Input value={form.affiliation} onChange={e => setForm({ ...form, affiliation: e.target.value })} placeholder="e.g. Nairobi Hospital" /></div>
+              <p className="text-xs text-muted-foreground">{form.mode === 'PHYSICAL' ? 'These details will appear on your printed name tag and attendance certificate.' : 'These details will appear on your digital attendance certificate.'}</p>
+            </>
+          )}
+
+          {type === 'AUTHOR' && (
+            <>
+              <div className="p-3 rounded bg-indigo-50 border border-indigo-200 text-sm">
+                Authors submit abstracts through the platform. Registration is open until abstract submission closes ({conf.submissionClose && new Date(conf.submissionClose).toLocaleDateString()}).
+                After submission you'll receive updates via email and can track your submission from the "My Abstracts" page.
+              </div>
+              <div><Label>Full name</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} /></div>
+              <div><Label>Affiliation</Label><Input value={form.affiliation} onChange={e => setForm({ ...form, affiliation: e.target.value })} /></div>
+            </>
+          )}
+
+          {type === 'SPONSOR' && (
+            <>
+              <div><Label>Company / Institution *</Label><Input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Industry *</Label><Input value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })} placeholder="e.g. Pharmaceutical, Medical Devices" /></div>
+                <div><Label>Address *</Label><Input value={form.companyAddress} onChange={e => setForm({ ...form, companyAddress: e.target.value })} placeholder="Company address" /></div>
+              </div>
+              <div>
+                <Label>Sponsorship tier</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
+                  {SPONSOR_TIERS.map(t => (
+                    <button key={t.key} type="button" onClick={() => setForm({ ...form, sponsorTier: t.key })}
+                      className={`text-left p-2 rounded-md border ${form.sponsorTier === t.key ? 'border-indigo-600 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <div className="flex justify-between items-center">
+                        <div className="font-semibold text-sm">{t.label}</div>
+                        <Badge variant="outline">{t.price}</Badge>
+                      </div>
+                      <ul className="text-[11px] text-muted-foreground mt-1 list-disc list-inside">
+                        {t.benefits.map(b => <li key={b}>{b}</li>)}
+                      </ul>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+                  <input type="checkbox" checked={form.virtualBoothRequested} onChange={e => setForm({ ...form, virtualBoothRequested: e.target.checked })} />
+                  <span className="text-sm">Request virtual exhibition booth</span>
+                </label>
+                <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+                  <input type="checkbox" checked={form.physicalBoothRequested} onChange={e => setForm({ ...form, physicalBoothRequested: e.target.checked })} />
+                  <span className="text-sm">Request physical exhibition booth</span>
+                </label>
+              </div>
+              <div><Label>Message to organisers (optional)</Label><Textarea rows={3} value={form.sponsorMessage} onChange={e => setForm({ ...form, sponsorMessage: e.target.value })} /></div>
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Complete registration</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -2129,7 +2277,85 @@ function CreateUserDialog({ onClose, onDone }) {
   )
 }
 
-// ============ CONFERENCE ADMIN ============
+// ============ DELEGATES PAGE ============
+function DelegatesPage() {
+  const [confs, setConfs] = useState([])
+  const [confId, setConfId] = useState('')
+  const [physical, setPhysical] = useState([])
+  const [virtual, setVirtual] = useState([])
+  const [sponsors, setSponsors] = useState([])
+
+  useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
+
+  useEffect(() => {
+    if (!confId) return
+    // For now, we use CSV endpoint. In-page tables via a separate JSON endpoint could be added later.
+  }, [confId])
+
+  const downloadCsv = (mode) => {
+    const link = document.createElement('a')
+    link.href = `/api/conferences/${confId}/delegates.csv?mode=${mode || ''}`
+    const token = getToken()
+    // Use fetch to include the Bearer token then download
+    fetch(link.href, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include' })
+      .then(r => r.blob()).then(b => {
+        const url = URL.createObjectURL(b)
+        const a = document.createElement('a')
+        a.href = url; a.download = `delegates_${mode || 'all'}.csv`; a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(e => toast.error(e.message))
+  }
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Registered delegates</h1>
+        <p className="text-muted-foreground">Download registered attendees for name tag printing and reporting.</p>
+      </div>
+      <Card className="mb-4">
+        <CardContent className="p-4">
+          <Label>Conference</Label>
+          <Select value={confId} onValueChange={setConfId}>
+            <SelectTrigger className="w-full mt-1"><SelectValue placeholder="Choose conference" /></SelectTrigger>
+            <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Physical delegates</CardTitle>
+            <CardDescription>In-person attendees, editors and admin. Use for name-tag printing.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => downloadCsv('PHYSICAL')} className="w-full bg-emerald-600 hover:bg-emerald-700"><Download className="h-4 w-4 mr-1" /> Download CSV</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2"><Globe className="h-5 w-5 text-indigo-600" /> Virtual delegates</CardTitle>
+            <CardDescription>Online attendees only.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => downloadCsv('VIRTUAL')} className="w-full bg-indigo-600 hover:bg-indigo-700"><Download className="h-4 w-4 mr-1" /> Download CSV</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-fuchsia-600" /> All delegates</CardTitle>
+            <CardDescription>Complete registration list (all types).</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => downloadCsv('')} className="w-full bg-fuchsia-600 hover:bg-fuchsia-700"><Download className="h-4 w-4 mr-1" /> Download CSV</Button>
+          </CardContent>
+        </Card>
+      </div>
+      <p className="text-xs text-muted-foreground mt-4">CSV columns: Prefix, First Name, Last Name, Email, Type, Mode, Rank, Unit, Affiliation, Company, Registered. Physical file also contains editors and admin.</p>
+    </div>
+  )
+}
 function ConferenceAdmin() {
   const [list, setList] = useState([])
   const [open, setOpen] = useState(false)
