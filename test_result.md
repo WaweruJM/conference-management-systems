@@ -377,28 +377,76 @@ backend:
     status_history:
       - working: true
         agent: "main"
+        comment: "Full LiveKit live conferencing implemented per playbook — env, packages, schema (isLive), and endpoints (POST /conferences/:id/live, GET /conferences/:id/live-status, POST /livekit/token) all working."
+      - working: true
+        agent: "main"
         comment: |
-          Full LiveKit live conferencing implemented per playbook.
+          BUG FIX + ENHANCEMENTS:
+          1) Added 'Virtual Conference' link to public header nav after 'Virtual Exhibition Booths'.
+          2) On public page (unauthenticated), the Virtual Conference view now ALWAYS shows the virtual booths carousel at the bottom. A top banner shows LIVE or OFFLINE status. When live, an anonymous visitor sees a 'Sign in to join' button that triggers the sign-in flow via onNeedsSignIn callback.
+          3) Fixed the 'Unauthenticated' error: LiveConference component now (a) checks getToken() before calling the API, (b) if the token endpoint returns 401 due to expired session, displays a friendly 'Your session has expired' message and auto-triggers sign-in, (c) admin has the same guard.
+          4) Admin controls (Start/End broadcast) still visible in the app view where they are properly authenticated.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL LIVEKIT AUTHENTICATION TESTS PASSED (10/10)
           
-          Env: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, NEXT_PUBLIC_LIVEKIT_URL configured on user's cloud project (scms-pa6acvh8.livekit.cloud). Packages installed: livekit-server-sdk, @livekit/components-react, @livekit/components-styles, livekit-client.
+          Fix 1 - LiveKit unauthenticated bug verified:
+          a) POST /api/livekit/token with valid admin Bearer token → 200 ✅
+             - Returns token (starts with 'eyJ'), url (wss://scms-pa6acvh8.livekit.cloud), room (conference-{CID}), role ('host'), identity
+          b) POST /api/livekit/token with NO Authorization header → 401 with {"error":"Unauthenticated"} ✅
+          c) POST /api/conferences/{CID}/live with {"isLive":true} as admin → 200 ✅
+             - GET /api/conferences/{CID}/live-status (no auth) → {"isLive":true, "name":"FIFTH MEDICAL SCIENTIFIC CONFERENCE"} ✅
+          d) After setting isLive=false:
+             - Unauthenticated call to POST /api/livekit/token → 401 (auth check first) ✅
+             - Valid non-host viewer (ATTENDEE role) attempting while isLive=false → 409 with {"error":"Conference is offline"} ✅
           
-          Schema: Conference.isLive Boolean field added.
+          All authentication flows working correctly. Auth check happens before conference status check as expected.
+
+  - task: "Editorial Office reconfiguration + Editors' Chat unread badge"
+    implemented: true
+    working: true
+    file: "/app/app/page.js, /app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Editorial Office rewritten with a new EditorialAbstractRow component:
+          - Each abstract row shows submission code, workflow state (color-coded badge), theme, report type
+          - Two side-by-side info panels: 'Committee editor' (indigo if assigned, amber 'Awaiting assignment' if not) and 'External reviewers · N' (fuchsia if reviewers assigned with per-reviewer status badges, slate if none)
+          - Correspondence-to-author details removed from this common view (per requirement) and clearly labelled as handled in the editor's workspace
+          - Backend GET /abstracts now includes editorAssignments (with editor user info) and reviewAssignments (with reviewer user info) so the UI can render assignments
           
-          Backend:
-          - POST /api/conferences/:id/live — admin/editor toggle broadcast on/off (updates isLive)
-          - GET /api/conferences/:id/live-status — public status (used by page to auto-refresh every 15s)
-          - POST /api/livekit/token — authenticated token minting. Host role (admin/managing/chief editor) gets canPublish + canSubscribe + canPublishData. Viewer role gets canSubscribe + canPublishData (Q&A only). Viewers blocked with 409 when isLive=false. Room name deterministic: conference-{id}. Token TTL 2h.
+          Editors' Chat unread badge:
+          - Client-side tracking via localStorage 'scmsChatLastSeen' timestamp
+          - AppShell polls /announcements every 15s; counts messages newer than lastSeen and authored by others
+          - Sidebar nav renders a pulsing red badge next to Editors' Chat with the count
+          - Badge auto-clears (lastSeen = now) when the chat route is opened
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL EDITORIAL OFFICE & EDITORS' CHAT TESTS PASSED (8/8)
           
-          Frontend (/app/components/LiveConference.jsx, dynamically imported to avoid SSR issues):
-          - "Conference Offline" gradient banner when isLive=false with virtual booth fallback below
-          - Admin "Start Live Broadcast" CTA when offline
-          - Beautiful centered join card when live
-          - Full-screen live view with black stage: LiveKitRoom + VideoConference tracks in GridLayout, ParticipantTile placeholder when host not yet publishing, ControlBar with mic/camera/screenshare (host only)
-          - Right-side "Live Q&A" sidebar using useDataChannel('qna') — real-time text chat, host messages badged, timestamps, auto-scroll, Enter-to-send
-          - Fullscreen toggle button, End broadcast (admin), Leave button
-          - When conference is offline, viewers see the Virtual Exhibition Booth carousel as fallback
+          Fix 2 - Editorial Office assignment visibility verified:
+          - GET /api/abstracts (as admin) returns 6 abstracts ✅
+          - Each abstract includes editorAssignments array with .editor object containing firstName/lastName/email ✅
+            Example: Editor Samuel Okonkwo (section@scms.io) assigned to abstracts
+          - Each abstract includes reviewAssignments array with .reviewer object containing firstName/lastName/email plus .status ✅
+            Example: Reviewer Yuki Tanaka (reviewer2@scms.io) with status PENDING
+          - Abstracts without assignments have empty arrays [] (not null/undefined) ✅
           
-          Verified: token mint returns valid JWT with correct grants (roomJoin, canPublish, canSubscribe, canPublishData), live-status endpoint public, isLive toggle updates DB and audit-logged.
+          Fix 3 - Editors' Chat backend intact:
+          - GET /api/announcements as admin → 200 with {announcements: [...]} array (1 item) ✅
+          - GET /api/announcements as managing editor → 200 with {announcements: [...]} array (1 item) ✅
+          - GET /api/announcements as author → 403 (correctly denied) ✅
+          
+          Light regression checks:
+          - POST /api/auth/login returns valid JWT (starts with 'eyJ') ✅
+          - GET /api/notifications returns 200 with notifications array ✅
+          - Featured conference (e01de36e-e09e-479f-bd53-c056b2a90436) has mapAddress and hotelImagePath populated ✅
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
@@ -519,3 +567,34 @@ agent_communication:
       
       Tested comprehensive UI flows with Playwright automation. Backend APIs confirmed working (49/49 tests passed),
       but frontend has data display issues in 2 key components.
+  - agent: "testing"
+    message: |
+      ✅ BACKEND VERIFICATION COMPLETE - ALL 21 TESTS PASSED (100% SUCCESS RATE)
+      
+      Verified all three fixes as per review request:
+      
+      **Fix 1 — LiveKit unauthenticated bug (10 tests):**
+      ✅ POST /api/livekit/token with valid admin Bearer token returns 200 with token (eyJ...), url (wss://scms-pa6acvh8.livekit.cloud), room (conference-{CID}), role ('host'), identity
+      ✅ POST /api/livekit/token with NO Authorization header returns 401 with {"error":"Unauthenticated"}
+      ✅ POST /api/conferences/{CID}/live with {"isLive":true} as admin returns 200
+      ✅ GET /api/conferences/{CID}/live-status (no auth) returns {"isLive":true, "name":"FIFTH MEDICAL SCIENTIFIC CONFERENCE"}
+      ✅ After setting isLive=false, unauthenticated call returns 401 (auth check first)
+      ✅ Valid non-host viewer (ATTENDEE) attempting while isLive=false returns 409 with {"error":"Conference is offline"}
+      
+      **Fix 2 — Editorial Office assignment visibility (5 tests):**
+      ✅ GET /api/abstracts (as admin) returns 6 abstracts with editorAssignments and reviewAssignments arrays
+      ✅ editorAssignments[].editor contains firstName/lastName/email (verified: Samuel Okonkwo, section@scms.io)
+      ✅ reviewAssignments[].reviewer contains firstName/lastName/email plus status (verified: Yuki Tanaka, reviewer2@scms.io, status: PENDING)
+      ✅ Abstracts without assignments have empty arrays [] (not null/undefined)
+      
+      **Fix 3 — Editors' Chat backend intact (3 tests):**
+      ✅ GET /api/announcements as admin returns 200 with {announcements: [...]} array (1 item)
+      ✅ GET /api/announcements as managing editor returns 200 with {announcements: [...]} array (1 item)
+      ✅ GET /api/announcements as author returns 403 (correctly denied)
+      
+      **Light regression checks (3 tests):**
+      ✅ POST /api/auth/login returns valid JWT (starts with 'eyJ')
+      ✅ GET /api/notifications returns 200 with notifications array
+      ✅ Featured conference (e01de36e-e09e-479f-bd53-c056b2a90436) has mapAddress and hotelImagePath populated
+      
+      All backend endpoints working as expected. No code changes made - verification only.

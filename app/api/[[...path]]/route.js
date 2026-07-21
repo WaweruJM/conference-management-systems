@@ -502,6 +502,8 @@ async function handleAbstracts(route, method, request) {
         authors: true,
         submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
         versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
+        editorAssignments: { where: { active: true }, include: { editor: { select: { id: true, firstName: true, lastName: true, email: true } } } },
+        reviewAssignments: { include: { reviewer: { select: { id: true, firstName: true, lastName: true, email: true } } } },
         _count: { select: { reviewAssignments: true, messages: true } },
       },
       orderBy: { createdAt: 'desc' },

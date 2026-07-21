@@ -33,11 +33,12 @@ async function api(path, opts = {}) {
   return d
 }
 
-export default function LiveConference({ conf, isAdmin, fallback }) {
+export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn }) {
   const [status, setStatus] = useState({ isLive: false, checked: false })
   const [tokenData, setTokenData] = useState(null)
   const [error, setError] = useState('')
   const [connecting, setConnecting] = useState(false)
+  const authed = !!getToken()
 
   useEffect(() => {
     if (!conf?.id) return
@@ -49,14 +50,25 @@ export default function LiveConference({ conf, isAdmin, fallback }) {
   }, [conf?.id])
 
   const join = async () => {
+    if (!authed) {
+      if (onNeedsSignIn) onNeedsSignIn()
+      else toast.error('Please sign in to join the live stream')
+      return
+    }
     setConnecting(true); setError('')
     try {
       const d = await api('/livekit/token', { method: 'POST', body: JSON.stringify({ conferenceId: conf.id }) })
       setTokenData(d)
-    } catch (e) { setError(e.message) } finally { setConnecting(false) }
+    } catch (e) {
+      if (String(e.message || '').toLowerCase().includes('unauth')) {
+        setError('Your session has expired. Please sign in again to join.')
+        if (onNeedsSignIn) setTimeout(onNeedsSignIn, 1200)
+      } else setError(e.message)
+    } finally { setConnecting(false) }
   }
 
   const toggleLive = async (goLive) => {
+    if (!authed) { if (onNeedsSignIn) onNeedsSignIn(); return }
     try {
       const d = await api(`/conferences/${conf.id}/live`, { method: 'POST', body: JSON.stringify({ isLive: goLive }) })
       setStatus({ isLive: !!d.conference.isLive, checked: true })
@@ -85,36 +97,49 @@ export default function LiveConference({ conf, isAdmin, fallback }) {
     )
   }
 
-  // Admin sees start button when offline
+  // Show virtual booths + admin controls when not yet connected
   if (!tokenData) {
     return (
-      <div className="p-6 max-w-4xl mx-auto">
-        <Card className="border-2 border-dashed border-indigo-300 bg-gradient-to-br from-indigo-50 to-fuchsia-50">
-          <CardContent className="p-10 text-center">
-            <div className="flex justify-center mb-4">
-              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center shadow-xl">
-                {status.isLive ? <Radio className="h-10 w-10 text-white animate-pulse" /> : <Video className="h-10 w-10 text-white" />}
-              </div>
+      <div>
+        <div className={`bg-gradient-to-r ${status.isLive ? 'from-red-600 to-rose-700' : 'from-slate-700 to-slate-900'} text-white py-6 px-6 mb-4`}>
+          <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[220px]">
+              <Badge className={`${status.isLive ? 'bg-white text-red-700' : 'bg-slate-500 text-white'} mb-2`}>
+                {status.isLive ? <><Radio className="h-3 w-3 mr-1 inline animate-pulse" /> LIVE NOW</> : 'CONFERENCE OFFLINE'}
+              </Badge>
+              <h2 className="text-2xl font-bold">{conf.name}</h2>
+              <p className="text-sm opacity-90 mt-1">
+                {status.isLive
+                  ? 'The conference is broadcasting live. Join now to watch and participate in Q&A.'
+                  : (isAdmin ? 'You have host access. Start the broadcast when ready — the stream is currently offline.' : 'Explore our virtual exhibition below while awaiting the live stream.')}
+              </p>
+              {error && <div className="text-white bg-red-900/40 border border-red-400/50 rounded px-3 py-1.5 mt-2 text-sm">{error}</div>}
             </div>
-            <h2 className="text-3xl font-bold mb-1">{conf.name}</h2>
-            <p className="text-slate-600 mb-6">{status.isLive ? 'Conference is currently LIVE. Click below to join.' : (isAdmin ? 'The conference is offline. Start the live session or join as host.' : 'The conference is offline.')}</p>
-            {error && <div className="text-red-600 text-sm mb-3">{error}</div>}
-            <div className="flex justify-center gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap">
               {isAdmin && !status.isLive && (
-                <Button onClick={() => toggleLive(true)} className="bg-red-600 hover:bg-red-700"><Radio className="h-4 w-4 mr-1" /> Start Live Broadcast</Button>
+                <Button onClick={() => toggleLive(true)} className="bg-white text-red-700 hover:bg-slate-100 shadow-lg font-semibold">
+                  <Radio className="h-4 w-4 mr-1" /> Start live broadcast
+                </Button>
               )}
               {isAdmin && status.isLive && (
-                <Button onClick={() => toggleLive(false)} variant="outline" className="border-red-300 text-red-700 hover:bg-red-50">End broadcast</Button>
+                <Button onClick={() => toggleLive(false)} variant="outline" className="bg-white/10 border-white/40 text-white hover:bg-white/20">End broadcast</Button>
               )}
-              {status.isLive && (
-                <Button onClick={join} disabled={connecting} className="bg-indigo-600 hover:bg-indigo-700">
+              {status.isLive && authed && (
+                <Button onClick={join} disabled={connecting} className="bg-white text-red-700 hover:bg-slate-100 shadow-lg font-semibold">
                   {connecting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Video className="h-4 w-4 mr-1" />}
                   Join {isAdmin ? 'as host' : 'live stream'}
                 </Button>
               )}
+              {status.isLive && !authed && (
+                <Button onClick={() => onNeedsSignIn && onNeedsSignIn()} className="bg-white text-red-700 hover:bg-slate-100 shadow-lg font-semibold">
+                  Sign in to join
+                </Button>
+              )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+        {/* Always show virtual booths carousel below */}
+        {fallback}
       </div>
     )
   }

@@ -127,6 +127,7 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
     { key: 'venue', label: 'Venue & Dates' },
     { key: 'themes', label: 'Themes' },
     { key: 'booths', label: 'Virtual Exhibition Booths' },
+    { key: 'live', label: 'Virtual Conference' },
     { key: 'contact', label: 'Contact' },
   ]
 
@@ -267,6 +268,7 @@ function Landing({ onLogin, onRegister }) {
       {view === 'venue' && <PublicVenue conf={featured} />}
       {view === 'themes' && <PublicThemes conf={featured} />}
       {view === 'booths' && <ExhibitionBoothsPublic conf={featured} />}
+      {view === 'live' && <PublicVirtualConference conf={featured} onSignIn={onLogin} />}
       {view === 'contact' && <PublicContact conf={featured} />}
     </PublicChrome>
   )
@@ -841,6 +843,31 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   }, [])
 
   const unread = notifs.filter(n => !n.isRead).length
+
+  // Editors' Chat unread indicator — track last-seen timestamp locally
+  const [chatUnread, setChatUnread] = useState(0)
+  const refreshChat = async () => {
+    if (!isEditor && !isAdmin) return
+    try {
+      const d = await api('/announcements')
+      const list = d.announcements || []
+      const lastSeen = parseInt(localStorage.getItem('scmsChatLastSeen') || '0', 10)
+      const newer = list.filter(a => new Date(a.createdAt).getTime() > lastSeen && a.authorId !== user.id).length
+      setChatUnread(newer)
+    } catch {}
+  }
+  useEffect(() => {
+    refreshChat()
+    const i = setInterval(refreshChat, 15000)
+    return () => clearInterval(i)
+  }, [isEditor, isAdmin, user.id])
+  // Clear when Editor's Chat opened
+  useEffect(() => {
+    if (route.name === 'announcements') {
+      localStorage.setItem('scmsChatLastSeen', String(Date.now()))
+      setChatUnread(0)
+    }
+  }, [route.name])
   const confTitle = featured?.name || 'Scientific Conference Platform'
   const confTheme = featured?.theme || featured?.subtitle || featured?.description || 'Advancing Science Through Rigorous Peer Review'
 
@@ -851,7 +878,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin },
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin },
     { key: 'live', label: 'Live Conference', icon: Radio, show: true },
-    { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin },
+    { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread },
     { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin },
     { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer },
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: true },
@@ -896,7 +923,13 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
               <button key={n.key}
                 onClick={() => setRoute({ name: n.key })}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition ${active ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100'}`}>
-                <Icon className="h-4 w-4" /> {n.label}
+                <Icon className="h-4 w-4" />
+                <span className="flex-1 truncate">{n.label}</span>
+                {n.badge > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center ${active ? 'bg-white text-indigo-700' : 'bg-red-500 text-white animate-pulse'}`}>
+                    {n.badge > 99 ? '99+' : n.badge}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -2066,7 +2099,7 @@ function EditorialOffice({ setRoute }) {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Editorial office</h1>
-          <p className="text-muted-foreground">All submissions across the platform</p>
+          <p className="text-muted-foreground">All submissions across the platform. Author correspondence is handled inside each assigned editor's workspace.</p>
         </div>
         <Select value={filter || 'ALL'} onValueChange={(v) => setFilter(v === 'ALL' ? '' : v)}>
           <SelectTrigger className="w-56"><SelectValue placeholder="Filter by state" /></SelectTrigger>
@@ -2079,9 +2112,79 @@ function EditorialOffice({ setRoute }) {
       </div>
       <div className="grid gap-3">
         {visible.length === 0 ? <EmptyState label="No abstracts match filter" />
-        : visible.map(a => <AbstractCard key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}
+        : visible.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}
       </div>
     </div>
+  )
+}
+
+function EditorialAbstractRow({ a, onOpen }) {
+  const assignedEditor = (a.editorAssignments || []).find(e => e.active) || (a.editorAssignments || [])[0]
+  const reviewers = a.reviewAssignments || []
+  const stateColor = ({
+    SUBMITTED: 'bg-slate-500', TECHNICAL_CHECK: 'bg-blue-500', EDITORIAL_ASSIGNMENT: 'bg-amber-500',
+    COMMITTEE_REVIEW: 'bg-indigo-500', EXTERNAL_PEER_REVIEW: 'bg-fuchsia-500', REVIEWS_COMPLETED: 'bg-teal-500',
+    EDITORIAL_DECISION: 'bg-purple-500', ACCEPTED: 'bg-green-600', REJECTED: 'bg-red-600',
+    MINOR_REVISION: 'bg-amber-500', MAJOR_REVISION: 'bg-orange-500',
+  })[a.currentState] || 'bg-slate-500'
+  return (
+    <Card className="hover:shadow-md transition cursor-pointer" onClick={onOpen}>
+      <CardContent className="p-4">
+        <div className="flex items-start gap-4">
+          <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white font-bold text-xs flex items-center justify-center shrink-0">
+            {a.submissionCode?.split('-').pop() || '?'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-xs font-semibold text-indigo-600">{a.submissionCode}</span>
+              <Badge className={`${stateColor} text-white text-[10px]`}>{stateLabel(a.currentState)}</Badge>
+              {a.theme?.name && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
+              {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
+            </div>
+            <div className="font-semibold mb-2 truncate">{a.title}</div>
+            <div className="grid md:grid-cols-2 gap-3 mt-2 text-xs">
+              {/* Assigned editor */}
+              <div className={`rounded p-2 border ${assignedEditor ? 'bg-indigo-50 border-indigo-200' : 'bg-amber-50 border-amber-200'}`}>
+                <div className={`text-[10px] font-bold uppercase tracking-wider ${assignedEditor ? 'text-indigo-700' : 'text-amber-700'}`}>Committee editor</div>
+                {assignedEditor ? (
+                  <div className="mt-1">
+                    <div className="font-semibold text-slate-800">{assignedEditor.editor?.firstName} {assignedEditor.editor?.lastName}</div>
+                    <div className="text-[10px] text-slate-500">{assignedEditor.editor?.email}</div>
+                  </div>
+                ) : (
+                  <div className="mt-1 flex items-center gap-1 text-amber-800">
+                    <AlertCircle className="h-3 w-3" />
+                    <span className="italic">Awaiting assignment to committee editor</span>
+                  </div>
+                )}
+              </div>
+              {/* Reviewers */}
+              <div className={`rounded p-2 border ${reviewers.length > 0 ? 'bg-fuchsia-50 border-fuchsia-200' : 'bg-slate-50 border-slate-200'}`}>
+                <div className={`text-[10px] font-bold uppercase tracking-wider ${reviewers.length > 0 ? 'text-fuchsia-700' : 'text-slate-600'}`}>External reviewers · {reviewers.length}</div>
+                {reviewers.length === 0 ? (
+                  <div className="mt-1 italic text-slate-500">No reviewers assigned yet</div>
+                ) : (
+                  <div className="mt-1 space-y-0.5">
+                    {reviewers.slice(0, 3).map(r => (
+                      <div key={r.id} className="flex items-center justify-between gap-2">
+                        <span className="truncate">{r.reviewer?.firstName} {r.reviewer?.lastName}</span>
+                        <Badge variant="outline" className="text-[9px] shrink-0">{r.status || 'PENDING'}</Badge>
+                      </div>
+                    ))}
+                    {reviewers.length > 3 && <div className="text-[10px] text-slate-500">+{reviewers.length - 3} more</div>}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mt-2 text-[10px] text-muted-foreground flex items-center gap-2">
+              <Clock className="h-3 w-3" /> Submitted {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : '—'}
+              {assignedEditor && <span>· Author correspondence handled in editor's workspace</span>}
+            </div>
+          </div>
+          <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -4670,12 +4773,12 @@ function EditorWorkspace({ setRoute, user }) {
 }
 
 // ============ LIVE CONFERENCE PAGE ============
-function LiveConferencePage({ user }) {
+function LiveConferencePage({ user, setRoute }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }) }, [])
   const conf = confs.find(c => c.id === confId)
-  const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r))
+  const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r.role || r))
 
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
 
@@ -4690,6 +4793,16 @@ function LiveConferencePage({ user }) {
         </Select>
       </div>
       <LiveConference conf={conf} isAdmin={isAdmin} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+    </div>
+  )
+}
+
+// ============ PUBLIC VIRTUAL CONFERENCE (public/anonymous) ============
+function PublicVirtualConference({ conf, onSignIn }) {
+  if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+  return (
+    <div className="min-h-screen">
+      <LiveConference conf={conf} isAdmin={false} fallback={<ExhibitionBoothsPublic conf={conf} />} onNeedsSignIn={onSignIn} />
     </div>
   )
 }
