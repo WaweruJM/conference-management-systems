@@ -873,16 +873,21 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
 
   const nav = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true, group: 'core' },
+    // Reviewer-focused (appears near top for reviewers)
+    { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer, group: 'reviewer' },
+    // Editor-focused
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread, group: 'editorial' },
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin, group: 'editorial' },
+    // Author-focused
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
     { key: 'submit', label: 'Submit new abstract', icon: Plus, show: true, group: 'author' },
-    { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer, group: 'reviewer' },
+    // General
     { key: 'live', label: 'Live Conference', icon: Radio, show: true, group: 'general' },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true, group: 'general' },
     { key: 'templates', label: 'Templates', icon: FileText, show: true, group: 'general' },
+    // Admin
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: isAdmin, group: 'admin' },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin, group: 'admin' },
     { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor, group: 'admin' },
@@ -1004,7 +1009,7 @@ function NotificationsBell({ notifs, onOpen, onReadAll, unread }) {
 
 // ============ VIEW ROUTER ============
 function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isReviewer, featured }) {
-  if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} user={user} featured={featured} />
+  if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} user={user} featured={featured} />
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
@@ -1030,18 +1035,42 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
 }
 
 // ============ DASHBOARD ============
-function Dashboard({ setRoute, isAdmin, isEditor, user, featured }) {
+function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) {
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
+  const [assignments, setAssignments] = useState([])
   useEffect(() => {
     if (isAdmin || isEditor) api('/analytics/dashboard').then(d => setStats(d)).catch(() => {})
     api('/abstracts?scope=mine').then(d => setRecent((d.abstracts || []).slice(0, 5))).catch(() => {})
+    if (isReviewer) api('/reviewer/assignments').then(d => setAssignments(d.assignments || [])).catch(() => {})
   }, [])
-  const isAuthorOnly = !isAdmin && !isEditor
+  const isAuthorOnly = !isAdmin && !isEditor && !isReviewer
+  const isReviewerOnly = isReviewer && !isAdmin && !isEditor
   const confTitle = featured?.name || 'the conference'
+
+  // Reviewer stats
+  const pendingInv = assignments.filter(a => a.invitationStatus === 'PENDING').length
+  const inProgress = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report).length
+  const submitted = assignments.filter(a => a.report).length
+  const dueSoon = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report && a.dueDate && new Date(a.dueDate) - new Date() < 7 * 86400000).length
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {isAuthorOnly ? (
+      {isReviewerOnly ? (
+        <Card className="border-0 shadow-md overflow-hidden">
+          <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 p-6 text-white">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex-1 min-w-[280px]">
+                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Reviewer dashboard</div>
+                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
+                <p className="text-white/90 text-sm mt-2 max-w-2xl">Your peer-review queue — assess assigned abstracts and submit blind reviews for {confTitle}. Author identities remain hidden.</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button size="sm" onClick={() => setRoute({ name: 'reviews' })} className="bg-white text-purple-700 hover:bg-slate-100 shadow"><Award className="h-4 w-4 mr-1" />Open review workspace</Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      ) : isAuthorOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 p-6 text-white">
             <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1062,6 +1091,69 @@ function Dashboard({ setRoute, isAdmin, isEditor, user, featured }) {
           <h1 className="text-3xl font-bold tracking-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
           <p className="text-muted-foreground">Overview of your conference platform activity</p>
         </div>
+      )}
+
+      {/* Reviewer summary + assigned abstracts (shown ABOVE recent submissions if reviewer) */}
+      {isReviewer && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatBadge label="Pending invitations" value={pendingInv} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
+            <StatBadge label="In progress" value={inProgress} color="from-indigo-500 to-purple-600" icon={Clock} />
+            <StatBadge label="Due within 7 days" value={dueSoon} color="from-rose-500 to-red-600" icon={AlertCircle} attention />
+            <StatBadge label="Submitted" value={submitted} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
+          </div>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-3 bg-gradient-to-r from-purple-50 to-white flex flex-row items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Award className="h-5 w-5 text-purple-600" />
+                <div>
+                  <CardTitle className="text-lg">Assigned abstracts</CardTitle>
+                  <CardDescription>Your current review assignments — click any to open</CardDescription>
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'reviews' })}>View all →</Button>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {assignments.length === 0 ? (
+                <div className="text-center py-8">
+                  <Award className="h-10 w-10 mx-auto text-slate-300 mb-2" />
+                  <div className="text-sm font-medium text-slate-500">No review assignments yet</div>
+                  <div className="text-xs text-muted-foreground mt-1">Editors will invite you when a suitable abstract is submitted.</div>
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {assignments.slice(0, 5).map(a => {
+                    const isPending = a.invitationStatus === 'PENDING'
+                    const done = !!a.report
+                    return (
+                      <div key={a.id} className={`border rounded-lg p-3 flex items-center gap-3 hover:shadow-sm transition cursor-pointer ${isPending ? 'bg-amber-50/60 border-amber-200' : done ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`} onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>
+                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
+                          <Award className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs font-mono font-semibold text-slate-500">{a.abstract.submissionCode}</span>
+                            <Badge variant="outline" className="text-[10px]">{a.reviewType?.replace('_', ' ')}</Badge>
+                            {isPending ? <Badge className="bg-amber-500 text-white text-[10px]">INVITATION PENDING</Badge>
+                              : done ? <Badge className="bg-emerald-600 text-[10px]">SUBMITTED</Badge>
+                              : <Badge className="bg-purple-600 text-[10px]">ACCEPTED — REVIEW DUE</Badge>}
+                          </div>
+                          <div className="font-medium truncate">{a.abstract.title}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Invited {new Date(a.assignedAt).toLocaleDateString()}
+                            {a.dueDate && ` · Due ${new Date(a.dueDate).toLocaleDateString()}`}
+                            {a.completedAt && ` · Completed ${new Date(a.completedAt).toLocaleDateString()}`}
+                          </div>
+                        </div>
+                        <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {stats && (
@@ -2357,51 +2449,98 @@ function EditorialAbstractRow({ a, onOpen }) {
 function ReviewerWorkspace({ setRoute }) {
   const [assignments, setAssignments] = useState([])
   const [active, setActive] = useState(null)
+  const [filter, setFilter] = useState('all')
   const refresh = () => api('/reviewer/assignments').then(d => setAssignments(d.assignments || []))
   useEffect(() => { refresh() }, [])
+
+  const pendingInv = assignments.filter(a => a.invitationStatus === 'PENDING').length
+  const inProgress = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report).length
+  const submitted = assignments.filter(a => a.report).length
+  const dueSoon = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report && a.dueDate && new Date(a.dueDate) - new Date() < 7 * 86400000).length
+
+  const visible = assignments.filter(a => {
+    if (filter === 'all') return true
+    if (filter === 'pending') return a.invitationStatus === 'PENDING'
+    if (filter === 'progress') return a.invitationStatus === 'ACCEPTED' && !a.report
+    if (filter === 'submitted') return !!a.report
+    return true
+  })
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">Reviewer workspace</h1>
-        <p className="text-muted-foreground">Your review assignments</p>
+        <div className="flex items-baseline gap-3 mb-1">
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Award className="h-7 w-7 text-purple-600" /> My Reviews</h1>
+          <Badge className="bg-purple-100 text-purple-700 border-purple-200">{assignments.length} assignment{assignments.length !== 1 ? 's' : ''}</Badge>
+        </div>
+        <p className="text-muted-foreground text-sm">Your review assignments across all conferences. Double-blind: author identities are hidden.</p>
       </div>
-      {assignments.length === 0 ? <EmptyState label="No review assignments yet" /> : (
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <StatBadge label="Pending invitations" value={pendingInv} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
+        <StatBadge label="In progress" value={inProgress} color="from-indigo-500 to-purple-600" icon={Clock} />
+        <StatBadge label="Due within 7 days" value={dueSoon} color="from-rose-500 to-red-600" icon={AlertCircle} attention />
+        <StatBadge label="Submitted" value={submitted} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
+      </div>
+
+      <Card className="mb-4 border-0 shadow-sm">
+        <CardContent className="p-3 flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1">
+            {[['all', 'All'], ['pending', 'Pending'], ['progress', 'In progress'], ['submitted', 'Submitted']].map(([k, l]) => (
+              <Button key={k} size="sm" variant={filter === k ? 'default' : 'outline'} onClick={() => setFilter(k)} className={filter === k ? 'bg-purple-600 hover:bg-purple-700' : ''}>{l}</Button>
+            ))}
+          </div>
+          <div className="ml-auto text-xs text-muted-foreground">{visible.length} shown</div>
+        </CardContent>
+      </Card>
+
+      {visible.length === 0 ? <EmptyState label="No review assignments in this view" /> : (
         <div className="grid gap-3">
-          {assignments.map(a => (
-            <Card key={a.id}>
-              <CardContent className="p-5">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-mono text-muted-foreground">{a.abstract.submissionCode}</span>
-                      <Badge variant="outline" className="text-[10px]">{a.reviewType.replace('_',' ')}</Badge>
-                      <Badge className={`text-[10px] border ${STATE_COLORS[a.abstract.currentState]}`}>{stateLabel(a.abstract.currentState)}</Badge>
-                      <Badge variant={a.invitationStatus === 'ACCEPTED' ? 'default' : 'outline'} className="text-[10px]">{a.invitationStatus}</Badge>
+          {visible.map(a => {
+            const isPending = a.invitationStatus === 'PENDING'
+            const done = !!a.report
+            return (
+              <Card key={a.id} className={`overflow-hidden ${isPending ? 'ring-1 ring-amber-200' : done ? 'ring-1 ring-emerald-200' : ''}`}>
+                <CardContent className="p-5">
+                  <div className="flex justify-between items-start gap-3 flex-wrap">
+                    <div className="flex gap-3 flex-1 min-w-[300px]">
+                      <div className={`h-12 w-12 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
+                        <Award className="h-6 w-6" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-xs font-mono font-semibold text-slate-500">{a.abstract.submissionCode}</span>
+                          <Badge variant="outline" className="text-[10px]">{a.reviewType.replace('_', ' ')}</Badge>
+                          <Badge className={`text-[10px] border ${STATE_COLORS[a.abstract.currentState] || ''}`}>{stateLabel(a.abstract.currentState)}</Badge>
+                          {isPending ? <Badge className="bg-amber-500 text-white text-[10px]">INVITATION PENDING</Badge>
+                            : done ? <Badge className="bg-emerald-600 text-[10px]">SUBMITTED</Badge>
+                            : <Badge className="bg-purple-600 text-[10px]">ACCEPTED — REVIEW DUE</Badge>}
+                        </div>
+                        <div className="font-semibold text-lg">{a.abstract.title}</div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Invited {new Date(a.assignedAt).toLocaleDateString()}
+                          {a.dueDate && ` · Due ${new Date(a.dueDate).toLocaleDateString()}`}
+                          {a.completedAt && ` · Completed ${new Date(a.completedAt).toLocaleDateString()}`}
+                        </div>
+                      </div>
                     </div>
-                    <div className="font-semibold">{a.abstract.title}</div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Invited {new Date(a.assignedAt).toLocaleDateString()}
-                      {a.dueDate && ` · Due ${new Date(a.dueDate).toLocaleDateString()}`}
-                      {a.completedAt && ` · Completed`}
+                    <div className="flex gap-2 shrink-0">
+                      {isPending && (
+                        <>
+                          <Button size="sm" variant="outline" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'DECLINED' }) }); refresh() }}>Decline</Button>
+                          <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'ACCEPTED' }) }); refresh() }}>Accept</Button>
+                        </>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>Open abstract</Button>
+                      {a.invitationStatus === 'ACCEPTED' && !a.report && (
+                        <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setActive(a)}>Submit review</Button>
+                      )}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    {a.invitationStatus === 'PENDING' && (
-                      <>
-                        <Button size="sm" variant="outline" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'DECLINED' }) }); refresh() }}>Decline</Button>
-                        <Button size="sm" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'ACCEPTED' }) }); refresh() }}>Accept</Button>
-                      </>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>View</Button>
-                    {a.invitationStatus === 'ACCEPTED' && !a.report && (
-                      <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setActive(a)}>Submit review</Button>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
       {active && <ReviewForm assignment={active} onClose={() => setActive(null)} onDone={() => { setActive(null); refresh() }} />}
