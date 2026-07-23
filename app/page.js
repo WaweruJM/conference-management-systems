@@ -831,7 +831,8 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const [featured, setFeatured] = useState(null)
   const roles = user.roles.map(r => r.role)
   const isAdmin = roles.includes('SYSTEM_ADMIN')
-  const isEditor = roles.some(r => ['MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER'].includes(r))
+  const isEditor = roles.some(r => ['MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
+  const isChiefEditor = roles.includes('CHIEF_EDITOR')
   const isReviewer = roles.some(r => ['EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER'].includes(r))
 
   const refreshNotifs = () => api('/notifications').then(d => setNotifs(d.notifications || [])).catch(() => {})
@@ -874,12 +875,11 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const nav = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true, group: 'core' },
     // Reviewer-focused (appears near top for reviewers)
-    { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer, group: 'reviewer' },
+    { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
     // Editor-focused
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread, group: 'editorial' },
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
-    { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin, group: 'editorial' },
     // Author-focused
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
     { key: 'submit', label: 'Submit new abstract', icon: Plus, show: true, group: 'author' },
@@ -1039,13 +1039,45 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
   const [assignments, setAssignments] = useState([])
+  const [board, setBoard] = useState([])
   useEffect(() => {
     if (isAdmin || isEditor) api('/analytics/dashboard').then(d => setStats(d)).catch(() => {})
     api('/abstracts?scope=mine').then(d => setRecent((d.abstracts || []).slice(0, 5))).catch(() => {})
     if (isReviewer) api('/reviewer/assignments').then(d => setAssignments(d.assignments || [])).catch(() => {})
+    // Load editorial board members for editors / admin views (Chief Editor, Managing Editor, Committee Editors, Section Editors)
+    if (isEditor || isAdmin) {
+      Promise.all([
+        api('/users?role=CHIEF_EDITOR').catch(() => ({ users: [] })),
+        api('/users?role=MANAGING_EDITOR').catch(() => ({ users: [] })),
+        api('/users?role=COMMITTEE_EDITOR').catch(() => ({ users: [] })),
+        api('/users?role=COMMITTEE_MEMBER').catch(() => ({ users: [] })),
+        api('/users?role=SECTION_EDITOR').catch(() => ({ users: [] })),
+      ]).then(results => {
+        const map = {}
+        const labels = ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER', 'SECTION_EDITOR']
+        results.forEach((d, i) => {
+          for (const u of (d.users || [])) {
+            // Exclude system admins from the public editorial board list
+            const uRoles = (u.roles || []).map(r => r.role || r)
+            if (uRoles.includes('SYSTEM_ADMIN')) continue
+            if (!map[u.id]) map[u.id] = { ...u, boardRoles: new Set() }
+            map[u.id].boardRoles.add(labels[i])
+          }
+        })
+        // Order: chief first, then managing, then committee editors, then committee members, then section editors
+        const priority = { CHIEF_EDITOR: 0, MANAGING_EDITOR: 1, COMMITTEE_EDITOR: 2, COMMITTEE_MEMBER: 3, SECTION_EDITOR: 4 }
+        const ordered = Object.values(map).map(u => {
+          const rs = Array.from(u.boardRoles)
+          const primary = rs.slice().sort((a, b) => priority[a] - priority[b])[0]
+          return { ...u, primaryRole: primary, roles: rs }
+        }).sort((a, b) => (priority[a.primaryRole] ?? 99) - (priority[b.primaryRole] ?? 99))
+        setBoard(ordered)
+      })
+    }
   }, [])
   const isAuthorOnly = !isAdmin && !isEditor && !isReviewer
   const isReviewerOnly = isReviewer && !isAdmin && !isEditor
+  const isEditorView = (isEditor || isAdmin) && !isReviewerOnly && !isAuthorOnly
   const confTitle = featured?.name || 'the conference'
 
   // Reviewer stats
@@ -1053,6 +1085,16 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
   const inProgress = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report).length
   const submitted = assignments.filter(a => a.report).length
   const dueSoon = assignments.filter(a => a.invitationStatus === 'ACCEPTED' && !a.report && a.dueDate && new Date(a.dueDate) - new Date() < 7 * 86400000).length
+
+  // Nicely readable label for a board role
+  const roleLabel = (r) => ({
+    CHIEF_EDITOR: 'Chief Editor',
+    MANAGING_EDITOR: 'Managing Editor',
+    COMMITTEE_EDITOR: 'Committee Editor',
+    COMMITTEE_MEMBER: 'Committee Editor',
+    SECTION_EDITOR: 'Section Editor',
+  })[r] || r
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {isReviewerOnly ? (
@@ -1087,10 +1129,21 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
           </div>
         </Card>
       ) : (
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
-          <p className="text-muted-foreground">Overview of your conference platform activity</p>
-        </div>
+        <Card className="border-0 shadow-md overflow-hidden">
+          <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 p-6 text-white">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex-1 min-w-[280px]">
+                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><ClipboardCheck className="h-3 w-3" /> Editor dashboard</div>
+                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
+                <p className="text-white/90 text-sm mt-2 max-w-2xl">Editorial oversight for {confTitle}. Handle assignments, monitor peer review, and steward the editorial board.</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button size="sm" onClick={() => setRoute({ name: 'editorial' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><ClipboardCheck className="h-4 w-4 mr-1" />Open Editorial Office</Button>
+                <Button size="sm" onClick={() => setRoute({ name: 'workspace' })} className="bg-white/10 border border-white/40 text-white hover:bg-white/20"><Briefcase className="h-4 w-4 mr-1" />My workspace</Button>
+              </div>
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* Reviewer summary + assigned abstracts (shown ABOVE recent submissions if reviewer) */}
@@ -1156,7 +1209,18 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         </>
       )}
 
-      {stats && (
+      {/* Editor summary stat cards (mirrors Editorial Office header) */}
+      {isEditorView && stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatBadge label="Total papers" value={stats.totalAbstracts} color="from-slate-600 to-slate-700" icon={FileText} />
+          <StatBadge label="Total users" value={stats.totalUsers} color="from-indigo-500 to-fuchsia-500" icon={Users} />
+          <StatBadge label="Reviews" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="from-emerald-500 to-teal-600" icon={ClipboardCheck} />
+          <StatBadge label="Registrations" value={stats.totalRegs} color="from-amber-500 to-orange-600" icon={Calendar} />
+        </div>
+      )}
+
+      {/* Non-editor stat cards (kept as-is for admins) */}
+      {!isEditorView && stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard icon={Users} label="Total users" value={stats.totalUsers} color="text-indigo-600" />
           <StatCard icon={FileText} label="Total abstracts" value={stats.totalAbstracts} color="text-fuchsia-600" />
@@ -1165,36 +1229,83 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         </div>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader className="flex-row justify-between items-center">
-            <CardTitle>My recent submissions</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setRoute({ name: 'my-abstracts' })}>View all →</Button>
-          </CardHeader>
-          <CardContent>
-            {recent.length === 0 ? (
-              <div className="text-center py-8">
-                <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                <div className="text-sm text-muted-foreground mb-3">No submissions yet</div>
-                <Button size="sm" onClick={() => setRoute({ name: 'submit' })}>Create submission</Button>
+      {/* Editorial Board — visible on editor dashboard (excludes System Admin) */}
+      {isEditorView && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-indigo-50 to-white flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-indigo-600" />
+              <div>
+                <CardTitle className="text-lg">Editorial Board</CardTitle>
+                <CardDescription>Chief Editor, Committee Editors and other editorial roles</CardDescription>
               </div>
-            ) : recent.map(a => (
-              <button key={a.id} onClick={() => setRoute({ name: 'abstract', id: a.id })}
-                className="w-full text-left p-3 rounded-md hover:bg-slate-50 border mb-2">
-                <div className="flex justify-between items-start gap-2">
-                  <div>
-                    <div className="text-xs font-mono text-muted-foreground">{a.submissionCode}</div>
-                    <div className="font-medium text-sm">{a.title}</div>
-                  </div>
-                  <Badge className={`text-[10px] border ${STATE_COLORS[a.currentState]}`}>{stateLabel(a.currentState)}</Badge>
-                </div>
-              </button>
-            ))}
+            </div>
+            <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{board.length} member{board.length !== 1 ? 's' : ''}</Badge>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {board.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center">Editorial board is being populated.</div>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-2">
+                {board.map(m => {
+                  const rColor = m.primaryRole === 'CHIEF_EDITOR' ? 'bg-fuchsia-600'
+                    : m.primaryRole === 'MANAGING_EDITOR' ? 'bg-indigo-600'
+                    : m.primaryRole === 'COMMITTEE_EDITOR' || m.primaryRole === 'COMMITTEE_MEMBER' ? 'bg-teal-600'
+                    : 'bg-slate-600'
+                  return (
+                    <div key={m.id} className="flex items-center gap-3 border rounded-lg p-3 bg-white hover:shadow-sm transition">
+                      <div className={`h-10 w-10 rounded-full ${rColor} text-white flex items-center justify-center font-semibold shrink-0`}>
+                        {(m.firstName?.[0] || '').toUpperCase()}{(m.lastName?.[0] || '').toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">
+                          {m.title ? m.title + ' ' : ''}{m.firstName} {m.lastName}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">{m.institution?.name || m.affiliation || m.email}</div>
+                      </div>
+                      <Badge className={`${rColor} text-white text-[10px] shrink-0`}>{roleLabel(m.primaryRole)}</Badge>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* My recent submissions — hidden for editor view (author metrics live in "My Abstracts") */}
+        {!isEditorView && (
+          <Card>
+            <CardHeader className="flex-row justify-between items-center">
+              <CardTitle>My recent submissions</CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => setRoute({ name: 'my-abstracts' })}>View all →</Button>
+            </CardHeader>
+            <CardContent>
+              {recent.length === 0 ? (
+                <div className="text-center py-8">
+                  <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <div className="text-sm text-muted-foreground mb-3">No submissions yet</div>
+                  <Button size="sm" onClick={() => setRoute({ name: 'submit' })}>Create submission</Button>
+                </div>
+              ) : recent.map(a => (
+                <button key={a.id} onClick={() => setRoute({ name: 'abstract', id: a.id })}
+                  className="w-full text-left p-3 rounded-md hover:bg-slate-50 border mb-2">
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <div className="text-xs font-mono text-muted-foreground">{a.submissionCode}</div>
+                      <div className="font-medium text-sm">{a.title}</div>
+                    </div>
+                    <Badge className={`text-[10px] border ${STATE_COLORS[a.currentState]}`}>{stateLabel(a.currentState)}</Badge>
+                  </div>
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         {stats && (
-          <Card>
+          <Card className={isEditorView ? 'lg:col-span-2' : ''}>
             <CardHeader><CardTitle>Abstracts by state</CardTitle></CardHeader>
             <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -1783,7 +1894,7 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
           </Card>
 
           {(isEditor || isAdmin) && <TechnicalScoringPanel abstractId={id} user={user} />}
-          {(isEditor || isAdmin) && <EditorialPanel abs={abs} onRefresh={refresh} />}
+          {(isEditor || isAdmin) && <EditorialPanel abs={abs} onRefresh={refresh} user={user} />}
           {isOwner && ['MAJOR_REVISION', 'MINOR_REVISION', 'RETURNED_FOR_FORMATTING'].includes(abs.currentState) && (
             <RevisionUpload abs={abs} onDone={refresh} />
           )}
@@ -1868,7 +1979,7 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
 }
 
 // ============ EDITORIAL PANEL (editors/admins) ============
-function EditorialPanel({ abs, onRefresh }) {
+function EditorialPanel({ abs, onRefresh, user }) {
   const [reviewers, setReviewers] = useState([])
   const [editors, setEditors] = useState([])
   useEffect(() => {
@@ -1876,6 +1987,14 @@ function EditorialPanel({ abs, onRefresh }) {
     api('/users?role=COMMITTEE_MEMBER').then(d => setReviewers(prev => [...prev, ...(d.users || [])]))
     api('/users?role=SECTION_EDITOR').then(d => setEditors(d.users || []))
   }, [])
+
+  // Only the currently assigned Committee Editor and the Chief Editor may invite reviewers
+  // (Managing Editor / Chief Editor / System Admin retain oversight). Regular committee members
+  // must be the active editor on this specific abstract to see the invite panel.
+  const myRoles = (user?.roles || []).map(r => r.role || r)
+  const isChiefOrAdmin = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN', 'MANAGING_EDITOR'].includes(r))
+  const isAssignedEditor = (abs.editorAssignments || []).some(e => e.active && e.editorId === user?.id)
+  const canInviteReviewers = isChiefOrAdmin || isAssignedEditor
 
   const [transitionTarget, setTransitionTarget] = useState('')
   const [transitionComment, setTransitionComment] = useState('')
@@ -1932,24 +2051,34 @@ function EditorialPanel({ abs, onRefresh }) {
 
         <Separator />
 
-        <div>
-          <div className="text-sm font-semibold mb-2">Invite reviewer</div>
-          <div className="space-y-1 max-h-40 overflow-auto">
-            {reviewers.map(r => (
-              <div key={r.id} className="flex justify-between items-center py-1.5 px-2 rounded hover:bg-slate-50">
-                <div className="text-sm">
-                  <span className="font-medium">{r.firstName} {r.lastName}</span>
-                  <span className="text-xs text-muted-foreground ml-2">{r.institution?.name || r.affiliation}</span>
-                  {r.specialties?.length > 0 && <span className="text-xs text-muted-foreground ml-2">· {r.specialties.slice(0, 2).join(', ')}</span>}
+        {canInviteReviewers ? (
+          <div>
+            <div className="text-sm font-semibold mb-2">Invite reviewer</div>
+            <div className="space-y-1 max-h-40 overflow-auto">
+              {reviewers.map(r => (
+                <div key={r.id} className="flex justify-between items-center py-1.5 px-2 rounded hover:bg-slate-50">
+                  <div className="text-sm">
+                    <span className="font-medium">{r.firstName} {r.lastName}</span>
+                    <span className="text-xs text-muted-foreground ml-2">{r.institution?.name || r.affiliation}</span>
+                    {r.specialties?.length > 0 && <span className="text-xs text-muted-foreground ml-2">· {r.specialties.slice(0, 2).join(', ')}</span>}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'EXTERNAL_REVIEWER')}>External</Button>
+                    <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'COMMITTEE_MEMBER')}>Committee</Button>
+                  </div>
                 </div>
-                <div className="flex gap-1">
-                  <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'EXTERNAL_REVIEWER')}>External</Button>
-                  <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'COMMITTEE_MEMBER')}>Committee</Button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-slate-500 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-slate-700 mb-0.5">Reviewer invitations restricted</div>
+              Only the assigned Committee Editor and the Chief Editor can invite reviewers for this abstract. Assign a Committee Editor from the Editorial Office first.
+            </div>
+          </div>
+        )}
 
         <Separator />
 
@@ -2085,16 +2214,21 @@ function DocumentsTab({ abstractId, documents, onRefresh }) {
 // ============ REVIEWS TAB ============
 function ReviewsTab({ abs, isEditor, isAdmin }) {
   const assignments = abs.reviewAssignments || []
+  const isPrivileged = isEditor || isAdmin // author sees a blinded view — reviewer identities are hidden
   return (
     <Card>
-      <CardHeader><CardTitle>Peer reviews</CardTitle><CardDescription>Reviews submitted by assigned reviewers</CardDescription></CardHeader>
+      <CardHeader><CardTitle>Peer reviews</CardTitle><CardDescription>{isPrivileged ? 'Reviews submitted by assigned reviewers' : 'Blind reviewer feedback — reviewer identities are hidden to preserve double-blind integrity'}</CardDescription></CardHeader>
       <CardContent>
         {assignments.length === 0 ? <div className="text-sm text-muted-foreground py-4">No reviewers assigned yet</div>
-        : assignments.map(a => (
+        : assignments.map((a, idx) => (
           <div key={a.id} className="border rounded-md p-4 mb-3">
             <div className="flex justify-between items-start mb-2">
               <div>
-                <div className="font-medium">{a.reviewer.firstName} {a.reviewer.lastName}</div>
+                <div className="font-medium">
+                  {isPrivileged
+                    ? `${a.reviewer.firstName} ${a.reviewer.lastName}`
+                    : `Reviewer ${idx + 1}`}
+                </div>
                 <div className="text-xs text-muted-foreground">{a.reviewType.replace('_',' ')} · Invited {new Date(a.assignedAt).toLocaleDateString()}</div>
               </div>
               <Badge variant="outline">{a.invitationStatus}{a.report ? ' · Completed' : ''}</Badge>
@@ -2300,12 +2434,51 @@ function MessagesTab({ abstractId, user }) {
 // ============ EDITORIAL OFFICE ============
 function EditorialOffice({ setRoute }) {
   const [all, setAll] = useState([])
+  const [committeeEditors, setCommitteeEditors] = useState([])
+  const [me, setMe] = useState(null)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const [search, setSearch] = useState('')
-  useEffect(() => { api('/abstracts').then(d => setAll(d.abstracts || [])).finally(() => setLoading(false)) }, [])
+  const refresh = () => api('/abstracts').then(d => setAll(d.abstracts || [])).finally(() => setLoading(false))
+  useEffect(() => {
+    refresh()
+    // Fetch users eligible to serve as Committee Editors (COMMITTEE_MEMBER + COMMITTEE_EDITOR)
+    Promise.all([
+      api('/users?role=COMMITTEE_MEMBER').catch(() => ({ users: [] })),
+      api('/users?role=COMMITTEE_EDITOR').catch(() => ({ users: [] })),
+    ]).then(([a, b]) => {
+      const map = {}
+      ;[...(a.users || []), ...(b.users || [])].forEach(u => { map[u.id] = u })
+      setCommitteeEditors(Object.values(map))
+    })
+    api('/auth/me').then(d => setMe(d.user)).catch(() => {})
+  }, [])
   const q = search.trim().toLowerCase()
-  const visible = all.filter(a => (!filter || a.currentState === filter) && (!q || a.title?.toLowerCase().includes(q) || a.submissionCode?.toLowerCase().includes(q)))
+  const visible = all.filter(a => {
+    if (filter && a.currentState !== filter) return false
+    if (!q) return true
+    if (a.title?.toLowerCase().includes(q)) return true
+    if (a.submissionCode?.toLowerCase().includes(q)) return true
+    // Search across all author names (multi-author aware)
+    if ((a.authors || []).some(au => (au.fullName || '').toLowerCase().includes(q))) return true
+    if (a.submittedBy) {
+      const full = `${a.submittedBy.firstName || ''} ${a.submittedBy.lastName || ''}`.toLowerCase()
+      if (full.includes(q)) return true
+    }
+    return false
+  })
+
+  const myRoles = (me?.roles || []).map(r => r.role || r)
+  const canAssignEditor = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN', 'MANAGING_EDITOR'].includes(r))
+
+  const assignCommitteeEditor = async (abstractId, editorId) => {
+    if (!editorId) return
+    try {
+      await api(`/abstracts/${abstractId}/assign-editor`, { method: 'POST', body: JSON.stringify({ editorId, role: 'COMMITTEE_EDITOR' }) })
+      toast.success('Committee Editor assigned')
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
 
   // Compute stat summary
   const stats = {
@@ -2341,7 +2514,7 @@ function EditorialOffice({ setRoute }) {
         <CardContent className="p-3 flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[220px] relative">
             <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-slate-400" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by title or submission code" className="pl-8" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by title, submission code or author name" className="pl-8" />
           </div>
           <Select value={filter || 'ALL'} onValueChange={(v) => setFilter(v === 'ALL' ? '' : v)}>
             <SelectTrigger className="w-56"><SelectValue placeholder="Filter by state" /></SelectTrigger>
@@ -2358,7 +2531,16 @@ function EditorialOffice({ setRoute }) {
       {/* List */}
       {loading ? <div className="p-10 text-center"><Loader2 className="animate-spin inline" /></div>
       : visible.length === 0 ? <EmptyState label="No abstracts match filter" />
-      : <div className="grid gap-3">{visible.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}</div>}
+      : <div className="grid gap-3">{visible.map(a => (
+          <EditorialAbstractRow
+            key={a.id}
+            a={a}
+            onOpen={() => setRoute({ name: 'abstract', id: a.id })}
+            committeeEditors={committeeEditors}
+            canAssignEditor={canAssignEditor}
+            onAssignEditor={(editorId) => assignCommitteeEditor(a.id, editorId)}
+          />
+        ))}</div>}
     </div>
   )
 }
@@ -2375,9 +2557,16 @@ function StatBadge({ label, value, color, icon: Icon, attention }) {
   )
 }
 
-function EditorialAbstractRow({ a, onOpen }) {
+function EditorialAbstractRow({ a, onOpen, committeeEditors = [], canAssignEditor = false, onAssignEditor, inWorkspace }) {
   const assignedEditor = (a.editorAssignments || []).find(e => e.active) || (a.editorAssignments || [])[0]
   const reviewers = a.reviewAssignments || []
+  const techScore = a.technicalScoreAverage
+  const techScoreCount = a.technicalScoreCount || 0
+  const scoreColor = techScore == null ? 'bg-slate-400'
+    : techScore >= 8 ? 'bg-emerald-600'
+    : techScore >= 6 ? 'bg-lime-600'
+    : techScore >= 4 ? 'bg-amber-500'
+    : 'bg-rose-600'
   const stateColor = ({
     SUBMITTED: 'bg-slate-500', TECHNICAL_CHECK: 'bg-blue-500', EDITORIAL_ASSIGNMENT: 'bg-amber-500',
     COMMITTEE_REVIEW: 'bg-indigo-500', EXTERNAL_PEER_REVIEW: 'bg-fuchsia-500', REVIEWS_COMPLETED: 'bg-teal-500',
@@ -2385,9 +2574,9 @@ function EditorialAbstractRow({ a, onOpen }) {
     MINOR_REVISION: 'bg-amber-500', MAJOR_REVISION: 'bg-orange-500',
   })[a.currentState] || 'bg-slate-500'
   return (
-    <Card className="hover:shadow-md transition cursor-pointer" onClick={onOpen}>
+    <Card className="hover:shadow-md transition">
       <CardContent className="p-4">
-        <div className="flex items-start gap-4">
+        <div className="flex items-start gap-4 cursor-pointer" onClick={onOpen}>
           <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white font-bold text-xs flex items-center justify-center shrink-0">
             {a.submissionCode?.split('-').pop() || '?'}
           </div>
@@ -2397,6 +2586,16 @@ function EditorialAbstractRow({ a, onOpen }) {
               <Badge className={`${stateColor} text-white text-[10px]`}>{stateLabel(a.currentState)}</Badge>
               {a.theme?.name && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
               {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
+              {/* Technical score summary — helps editors prioritise */}
+              {techScore != null ? (
+                <span className={`inline-flex items-center gap-1 rounded-md ${scoreColor} text-white text-[10px] font-semibold px-2 py-0.5`} title={`Average of ${techScoreCount} committee score${techScoreCount !== 1 ? 's' : ''}`}>
+                  <ClipboardCheck className="h-3 w-3" /> Tech {techScore}/10
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5" title="No committee technical scores submitted yet">
+                  <ClipboardCheck className="h-3 w-3" /> Tech —
+                </span>
+              )}
             </div>
             <div className="font-semibold mb-2 truncate">{a.title}</div>
             <div className="grid md:grid-cols-2 gap-3 mt-2 text-xs">
@@ -2440,6 +2639,35 @@ function EditorialAbstractRow({ a, onOpen }) {
           </div>
           <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
         </div>
+
+        {/* Assign Committee Editor control — only for Chief Editor / Managing Editor / System Admin */}
+        {canAssignEditor && !inWorkspace && (
+          <div className="mt-3 pt-3 border-t border-slate-200 flex items-center gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-600 shrink-0">
+              {assignedEditor ? 'Reassign to' : 'Assign to'}
+            </span>
+            <Select value="" onValueChange={(v) => onAssignEditor && onAssignEditor(v)}>
+              <SelectTrigger className="w-64 h-8 text-xs bg-white">
+                <SelectValue placeholder={assignedEditor ? 'Select a different Committee Editor…' : 'Choose Committee Editor…'} />
+              </SelectTrigger>
+              <SelectContent>
+                {committeeEditors.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No committee editors available</div>}
+                {committeeEditors
+                  .filter(ce => !assignedEditor || ce.id !== assignedEditor.editorId)
+                  .map(ce => (
+                    <SelectItem key={ce.id} value={ce.id}>
+                      {ce.title ? `${ce.title} ` : ''}{ce.firstName} {ce.lastName}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {assignedEditor && (
+              <span className="text-[10px] text-muted-foreground">
+                Currently: {assignedEditor.editor?.firstName} {assignedEditor.editor?.lastName}
+              </span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -2470,7 +2698,7 @@ function ReviewerWorkspace({ setRoute }) {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Award className="h-7 w-7 text-purple-600" /> My Reviews</h1>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Award className="h-7 w-7 text-purple-600" /> My Review workspace</h1>
           <Badge className="bg-purple-100 text-purple-700 border-purple-200">{assignments.length} assignment{assignments.length !== 1 ? 's' : ''}</Badge>
         </div>
         <p className="text-muted-foreground text-sm">Your review assignments across all conferences. Double-blind: author identities are hidden.</p>

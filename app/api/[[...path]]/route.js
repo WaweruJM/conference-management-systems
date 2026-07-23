@@ -475,6 +475,7 @@ async function handleAbstracts(route, method, request) {
     const conferenceId = url.searchParams.get('conferenceId')
     const state = url.searchParams.get('state')
     const scope = url.searchParams.get('scope') // 'mine' | 'assigned' | 'all'
+    const q = (url.searchParams.get('q') || '').trim()
     const where = {}
     if (conferenceId) where.conferenceId = conferenceId
     if (state) {
@@ -486,13 +487,23 @@ async function handleAbstracts(route, method, request) {
       // editor or reviewer assignments
       if (hasRole(user, 'EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER')) {
         where.reviewAssignments = { some: { reviewerId: user.id } }
-      } else if (hasRole(user, 'SECTION_EDITOR', 'MANAGING_EDITOR')) {
+      } else if (hasRole(user, 'SECTION_EDITOR', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) {
         where.editorAssignments = { some: { editorId: user.id, active: true } }
       }
     }
     // authors see only their own by default
-    if (!scope && !hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'EXTERNAL_REVIEWER')) {
+    if (!scope && !hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'EXTERNAL_REVIEWER')) {
       where.submittedById = user.id
+    }
+    // Free-text search across title, submissionCode, and author names (case-insensitive)
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { submissionCode: { contains: q, mode: 'insensitive' } },
+        { authors: { some: { fullName: { contains: q, mode: 'insensitive' } } } },
+        { submittedBy: { firstName: { contains: q, mode: 'insensitive' } } },
+        { submittedBy: { lastName: { contains: q, mode: 'insensitive' } } },
+      ]
     }
     const list = await prisma.abstract.findMany({
       where,
@@ -508,6 +519,21 @@ async function handleAbstracts(route, method, request) {
       },
       orderBy: { createdAt: 'desc' },
     })
+    // Attach technical-score averages (committee reviewer scores) so the Editorial Office can prioritise
+    const ids = list.map(a => a.id)
+    if (ids.length) {
+      const scores = await prisma.technicalScore.findMany({ where: { abstractId: { in: ids } } })
+      const grouped = {}
+      for (const s of scores) {
+        if (!grouped[s.abstractId]) grouped[s.abstractId] = []
+        grouped[s.abstractId].push((s.originality + s.methodology + s.relevance + s.language + s.themeAlignment) / 5)
+      }
+      for (const a of list) {
+        const arr = grouped[a.id] || []
+        a.technicalScoreCount = arr.length
+        a.technicalScoreAverage = arr.length ? Math.round((arr.reduce((x, y) => x + y, 0) / arr.length) * 10) / 10 : null
+      }
+    }
     return ok({ abstracts: list })
   }
 
@@ -667,10 +693,16 @@ async function handleAbstracts(route, method, request) {
   // Assign editor
   const assignEdMatch = route.match(/^\/abstracts\/([^\/]+)\/assign-editor$/)
   if (assignEdMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
+    if (!body.editorId) return err('editorId required')
+    // Deactivate any prior active assignments so we support seamless reassignment
+    await prisma.editorAssignment.updateMany({
+      where: { abstractId: assignEdMatch[1], active: true },
+      data: { active: false },
+    })
     const assignment = await prisma.editorAssignment.create({
-      data: { abstractId: assignEdMatch[1], editorId: body.editorId, role: body.role || 'SECTION_EDITOR' },
+      data: { abstractId: assignEdMatch[1], editorId: body.editorId, role: body.role || 'COMMITTEE_EDITOR' },
     })
     const abs = await prisma.abstract.findUnique({ where: { id: assignEdMatch[1] }, include: { conference: true } })
     const { notifyUser } = await import('@/lib/workflow')

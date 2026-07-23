@@ -448,6 +448,51 @@ backend:
           - GET /api/notifications returns 200 with notifications array ✅
           - Featured conference (e01de36e-e09e-479f-bd53-c056b2a90436) has mapAddress and hotelImagePath populated ✅
 
+  - task: "GET /api/abstracts author-name search"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/abstracts now accepts optional `q` query parameter and searches title, submissionCode and author names via case-insensitive contains (lines 478-507)."
+      - working: true
+        agent: "testing"
+        comment: "Author search working correctly: GET /api/abstracts?q=Anna returns 4 abstracts all matching 'Anna' in author.fullName or submittedBy.firstName/lastName (200). GET /api/abstracts?q=Fischer returns 4 abstracts matching 'Fischer' (200). GET /api/abstracts?q=zzznoresult returns empty array (200). GET /api/abstracts without q parameter returns full list of 6 abstracts (200)."
+
+  - task: "GET /api/abstracts technical score aggregation"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/abstracts attaches technicalScoreAverage (rounded to 0.1) and technicalScoreCount to every abstract by aggregating TechnicalScore rows (lines 524-536)."
+      - working: true
+        agent: "testing"
+        comment: "Technical score aggregation working: All 6 abstracts have technicalScoreAverage (number or null) and technicalScoreCount (integer >= 0). Verified 4 abstracts with scores (avg=7, count=1) and 2 without (avg=null, count=0). Score calculation confirmed as mean of 5 category scores (originality, methodology, relevance, language, themeAlignment)."
+
+  - task: "POST /api/abstracts/:id/assign-editor RBAC + reassignment"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/abstracts/:id/assign-editor now permitted for SYSTEM_ADMIN, MANAGING_EDITOR and CHIEF_EDITOR. Deactivates prior active assignments before creating new one (supports reassignment). Default role changed to COMMITTEE_EDITOR (lines 694-722)."
+      - working: true
+        agent: "testing"
+        comment: "Assign-editor RBAC and reassignment working: POST as admin (SYSTEM_ADMIN) returns 200 and creates assignment. Reassignment verified - only 1 active assignment exists after second POST (previous deactivated). POST as author returns 403 (correctly denied). POST as managing editor returns 200 (allowed). CHIEF_EDITOR RBAC check is correct in code but untestable (no user has CHIEF_EDITOR role in database)."
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -512,7 +557,10 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Editorial Office: author-name search on /abstracts endpoint"
+    - "Editorial Office: Committee Editor assignment/reassignment via POST /abstracts/:id/assign-editor"
+    - "Editorial Office: technical score aggregation surfaced in /abstracts list"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -598,3 +646,104 @@ agent_communication:
       ✅ Featured conference (e01de36e-e09e-479f-bd53-c056b2a90436) has mapAddress and hotelImagePath populated
       
       All backend endpoints working as expected. No code changes made - verification only.
+  - agent: "main"
+    message: |
+      🔧 SESSION UPDATE (Message #544 — 4 UI/UX + logic changes)
+      
+      Frontend changes (/app/app/page.js):
+      1. Reviewer nav item and page header renamed "My Reviews" → "My Review workspace".
+      2. Double-blind enforcement in ReviewsTab: When the viewer is not editor/admin (i.e. the
+         author), reviewer identities are hidden — displayed as "Reviewer 1", "Reviewer 2" etc.
+         Header text updated to make the masking policy explicit.
+      3. Editor Dashboard fully refactored:
+         - New gradient editor hero card with quick actions ("Open Editorial Office",
+           "My workspace")
+         - Summary stat cards (Total papers, Users, Reviews, Registrations) mirroring the
+           Editorial Office badge style
+         - New Editorial Board section listing Chief Editor, Managing Editor, Committee
+           Editors, Committee Members, Section Editors — SYSTEM_ADMIN accounts excluded
+         - "My Recent Submissions" hidden for editors/admins (kept for author dashboard)
+         - Chart panel now spans full width in editor view
+      4. Editorial Office enhancements:
+         - Search bar now searches title, submission code AND author name (client-side
+           filter across `authors[].fullName` and `submittedBy.firstName/lastName`)
+         - New "Assign to" / "Reassign to" dropdown on each abstract row for Chief Editor /
+           Managing Editor / System Admin, listing Committee Editors (COMMITTEE_MEMBER +
+           COMMITTEE_EDITOR).
+         - Technical score summary chip on each row (color-coded, green ≥8, lime ≥6,
+           amber ≥4, rose <4). Shows "Tech —" when no scorers have submitted.
+         - Standalone "Invite Reviewers" nav item removed — the reviewer-invitation panel
+           inside AbstractDetail's EditorialPanel is now gated to Chief Editor /
+           Managing Editor / System Admin OR the specific COMMITTEE_MEMBER currently
+           assigned to that abstract; everyone else sees an explanatory notice instead.
+      5. `isEditor` role check expanded to include CHIEF_EDITOR and COMMITTEE_EDITOR so
+         those roles reach the editor UI shells consistently.
+      
+      Backend changes (/app/app/api/[[...path]]/route.js):
+      6. GET /api/abstracts now accepts an optional `q` query parameter and searches
+         title, submissionCode and author names via case-insensitive contains.
+      7. GET /api/abstracts additionally attaches technicalScoreAverage (rounded to 0.1)
+         and technicalScoreCount to every abstract by aggregating TechnicalScore rows.
+      8. POST /api/abstracts/:id/assign-editor:
+         - Now permitted for SYSTEM_ADMIN, MANAGING_EDITOR and CHIEF_EDITOR
+         - Any existing active EditorAssignment records are marked inactive before the
+           new record is created (supports true reassignment)
+         - Default role changed to COMMITTEE_EDITOR to reflect the SCMS workflow.
+      9. `scope=assigned` on /api/abstracts now includes CHIEF_EDITOR and COMMITTEE_EDITOR
+         when resolving editor-scoped abstracts.
+      
+      Verified via manual screenshot testing:
+      - Editor dashboard: hero + stats + editorial board list rendered correctly (no
+        System Admin listed).
+      - Editorial Office: search placeholder updated, Tech score chips visible, Reassign
+        dropdown shown for assigned abstracts.
+      - Author view of Reviews tab: reviewer name masked as "Reviewer 1" with clear
+        double-blind notice.
+      - Reviewer sidebar/header both read "My Review workspace".
+      - Standalone "Invite Reviewers" nav item no longer present.
+      
+      Backend regression sanity-check still needed for:
+      - GET /api/abstracts?q=<authorname> returns filtered results
+      - GET /api/abstracts response includes technicalScoreAverage / technicalScoreCount
+      - POST /api/abstracts/:id/assign-editor as CHIEF_EDITOR works
+      - POST /api/abstracts/:id/assign-editor twice deactivates prior assignment
+  - agent: "testing"
+    message: |
+      ✅ BACKEND VERIFICATION COMPLETE - EDITORIAL OFFICE ENHANCEMENTS (15/16 TESTS PASSED)
+      
+      Tested all 4 backend changes as per review request:
+      
+      **Test 1 — GET /api/abstracts SEARCH BY AUTHOR NAME (4/4 tests passed):**
+      ✅ GET /api/abstracts?q=Anna returns 4 abstracts, all matching "Anna" in author.fullName or submittedBy.firstName/lastName
+      ✅ GET /api/abstracts?q=Fischer returns 4 abstracts, all matching "Fischer" in author.fullName or submittedBy.firstName/lastName
+      ✅ GET /api/abstracts?q=zzznoresult returns 200 with empty abstracts array
+      ✅ GET /api/abstracts (no q parameter) returns 200 with full list (6 abstracts)
+      
+      **Test 2 — TECHNICAL SCORE AGGREGATION (1/1 test passed):**
+      ✅ GET /api/abstracts returns all abstracts with technicalScoreAverage (number or null) and technicalScoreCount (integer >= 0)
+      ✅ Verified 4 abstracts have scores (avg=7, count=1) and 2 have no scores (avg=null, count=0)
+      ✅ Score calculation confirmed: average of 5 category scores (originality, methodology, relevance, language, themeAlignment)
+      
+      **Test 3 — POST /api/abstracts/:id/assign-editor RBAC + REASSIGNMENT (4/5 tests passed):**
+      ✅ POST as admin@scms.io (SYSTEM_ADMIN) returns 200 and creates assignment
+      ✅ Verified exactly ONE active EditorAssignment after initial assignment
+      ✅ POST again with different editor returns 200 and creates new assignment
+      ✅ Verified reassignment logic: only 1 active assignment exists (previous deactivated, new one active)
+      ✅ POST as author@scms.io returns 403 (correctly denied)
+      ✅ POST as managing@scms.io (MANAGING_EDITOR) returns 200 (allowed)
+      ⚠️  POST as section@scms.io returns 403 because user only has SECTION_EDITOR role (NOT CHIEF_EDITOR as documented)
+      ℹ️  CHIEF_EDITOR RBAC check is correct in code (line 696), but NO user in database has CHIEF_EDITOR role to test with
+      
+      **Test 4 — LIGHT REGRESSION (4/4 tests passed):**
+      ✅ GET /api/abstracts?scope=mine as author@scms.io returns 200 with 4 abstracts (author's own)
+      ✅ GET /api/abstracts?scope=assigned as reviewer1@scms.io returns 200 with 0 abstracts (none assigned)
+      ✅ POST /api/auth/login for admin@scms.io returns 200 with valid JWT token (starts with 'eyJ')
+      ✅ GET /api/notifications for admin@scms.io returns 200 with notifications array
+      
+      **OBSERVATIONS:**
+      - Both GET /api/abstracts and GET /api/abstracts/{id} endpoints filter editorAssignments to active=true only (lines 516, 601)
+      - Reassignment logic working correctly: old assignments marked inactive in DB, new ones created as active
+      - Test credentials documentation is outdated: section@scms.io only has SECTION_EDITOR, admin@scms.io only has SYSTEM_ADMIN
+      
+      **SUMMARY:**
+      All 4 backend changes are working correctly. The only untestable scenario is CHIEF_EDITOR RBAC because no user has that role in the database, but the code is correct.
