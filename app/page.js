@@ -123,7 +123,7 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
 
   const navItems = [
     { key: 'home', label: 'Home' },
-    { key: 'guidelines', label: 'Abstract Submission Guidelines' },
+    { key: 'guidelines', label: 'Access submission guidelines' },
     { key: 'venue', label: 'Venue & Dates' },
     { key: 'themes', label: 'Themes' },
     { key: 'booths', label: 'Virtual Exhibition Booths' },
@@ -878,7 +878,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
-    { key: 'submit', label: 'New Submission', icon: Plus, show: true, group: 'author' },
+    { key: 'submit', label: 'Submit new abstract', icon: Plus, show: true, group: 'author' },
     { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer, group: 'reviewer' },
     { key: 'live', label: 'Live Conference', icon: Radio, show: true, group: 'general' },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: true, group: 'general' },
@@ -1003,8 +1003,8 @@ function NotificationsBell({ notifs, onOpen, onReadAll, unread }) {
 }
 
 // ============ VIEW ROUTER ============
-function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
-  if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} />
+function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isReviewer, featured }) {
+  if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} user={user} featured={featured} />
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
@@ -1030,19 +1030,39 @@ function ViewRouter({ route, setRoute, user, isAdmin, isEditor, isReviewer }) {
 }
 
 // ============ DASHBOARD ============
-function Dashboard({ setRoute, isAdmin, isEditor }) {
+function Dashboard({ setRoute, isAdmin, isEditor, user, featured }) {
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
   useEffect(() => {
     if (isAdmin || isEditor) api('/analytics/dashboard').then(d => setStats(d)).catch(() => {})
     api('/abstracts?scope=mine').then(d => setRecent((d.abstracts || []).slice(0, 5))).catch(() => {})
   }, [])
+  const isAuthorOnly = !isAdmin && !isEditor
+  const confTitle = featured?.name || 'the conference'
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Welcome back</h1>
-        <p className="text-muted-foreground">Overview of your conference platform activity</p>
-      </div>
+      {isAuthorOnly ? (
+        <Card className="border-0 shadow-md overflow-hidden">
+          <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 p-6 text-white">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex-1 min-w-[280px]">
+                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1">Author dashboard</div>
+                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Thank you for your submission to "{confTitle}"</h1>
+                <p className="text-white/90 text-sm mt-2 max-w-2xl">Track each abstract editorial process, submit a new abstract, and inbox the editor — all from this dashboard.</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button size="sm" onClick={() => setRoute({ name: 'my-abstracts' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><FileText className="h-4 w-4 mr-1" />Track my abstracts</Button>
+                <Button size="sm" onClick={() => setRoute({ name: 'submit' })} className="bg-white text-fuchsia-700 hover:bg-slate-100 shadow"><Plus className="h-4 w-4 mr-1" />Submit new abstract</Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
+          <p className="text-muted-foreground">Overview of your conference platform activity</p>
+        </div>
+      )}
 
       {stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1247,7 +1267,8 @@ function SubmitAbstract({ setRoute, user }) {
       if (a.isCorresponding && !a.phone?.trim()) issues.push(`Author #${i + 1} (corresponding): phone number is required.`)
       if (a.isCorresponding && !a.affiliation?.trim()) issues.push(`Author #${i + 1} (corresponding): affiliated institution is required.`)
     })
-    if (keywordList.length > 5) issues.push(`Too many keywords (${keywordList.length}). Maximum is 5.`)
+    if (keywordList.length < 3) issues.push(`Provide at least 3 keywords (currently ${keywordList.length}).`)
+    else if (keywordList.length > 5) issues.push(`Too many keywords (${keywordList.length}). Maximum is 5.`)
     if (docFile) {
       const err = validateDocFile(docFile)
       if (err) issues.push(err)
@@ -1317,16 +1338,22 @@ function SubmitAbstract({ setRoute, user }) {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6 flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">New abstract submission</h1>
-          <p className="text-muted-foreground">Submit an abstract for peer review</p>
+      {/* Hero header */}
+      <Card className="mb-5 border-0 shadow-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 via-fuchsia-600 to-rose-500 p-6 text-white">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex-1 min-w-[240px]">
+              <Badge className="bg-white/25 border-white/40 text-white backdrop-blur-sm mb-2"><FileUp className="h-3 w-3 mr-1" /> AUTHORS</Badge>
+              <h1 className="text-3xl font-bold tracking-tight">Submit new abstract</h1>
+              <p className="text-white/90 text-sm mt-1">All fields are required unless marked otherwise. Follow the guidelines below to maximise your chance of acceptance.</p>
+            </div>
+            <Button variant="outline" onClick={downloadGuidelines} className="bg-white text-indigo-700 hover:bg-slate-100 border-0 shadow"><Download className="h-4 w-4 mr-1" /> Access submission guidelines</Button>
+          </div>
         </div>
-        <Button variant="outline" onClick={downloadGuidelines}><Download className="h-4 w-4 mr-1" /> Guidelines</Button>
-      </div>
+      </Card>
 
       {/* Recommendations alert */}
-      <Card className="mb-4 border-amber-200 bg-amber-50">
+      <Card className="mb-4 border-amber-200 bg-amber-50/80">
         <CardContent className="p-4">
           <div className="flex gap-2 items-start">
             <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
@@ -1336,101 +1363,133 @@ function SubmitAbstract({ setRoute, user }) {
                 <li>Title: max <b>{TITLE_WORD_LIMIT} words</b> (capitalize each word), Times New Roman size 12.</li>
                 <li>Abstract body: max <b>{WORD_LIMIT} words</b>, no citations.</li>
                 <li>Uploaded Word document: <b>.doc / .docx only</b>, max <b>2 MB</b>. Must NOT include author names (double-blind).</li>
-                <li>Provide 5 keywords, disclosure statement (or "no conflict of interest to declare"), and one corresponding author (*).</li>
+                <li>Provide <b>3 – 5 keywords</b>, disclosure statement (or "no conflict of interest to declare"), and one corresponding author (*).</li>
               </ul>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="p-6 space-y-5">
-          {/* Conference + sub-theme + report type */}
-          <div className="grid md:grid-cols-3 gap-3">
-            <div>
-              <Label>Conference *</Label>
-              <Select value={conferenceId} onValueChange={setConferenceId}>
-                <SelectTrigger><SelectValue placeholder="Choose conference" /></SelectTrigger>
-                <SelectContent>{conferences.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
-              </Select>
+      <div className="space-y-5">
+        {/* Section 1: Conference details */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-indigo-50 to-white">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-md bg-indigo-600 text-white font-bold text-xs flex items-center justify-center">1</div>
+              <CardTitle className="text-lg">Conference & category</CardTitle>
             </div>
-            <div>
-              <Label>Sub-theme *</Label>
-              <Select value={themeId} onValueChange={setThemeId}>
-                <SelectTrigger><SelectValue placeholder="Choose sub-theme" /></SelectTrigger>
-                <SelectContent>{themes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
-              </Select>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <Label>Conference *</Label>
+                <Select value={conferenceId} onValueChange={setConferenceId}>
+                  <SelectTrigger><SelectValue placeholder="Choose conference" /></SelectTrigger>
+                  <SelectContent>{conferences.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Sub-theme *</Label>
+                <Select value={themeId} onValueChange={setThemeId}>
+                  <SelectTrigger><SelectValue placeholder="Choose sub-theme" /></SelectTrigger>
+                  <SelectContent>{themes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Report type</Label>
+                <Select value={reportType} onValueChange={setReportType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ORIGINAL_RESEARCH">Original research</SelectItem>
+                    <SelectItem value="CASE_REPORT">Case report</SelectItem>
+                    <SelectItem value="CASE_SERIES">Case series</SelectItem>
+                    <SelectItem value="REVIEW">Review</SelectItem>
+                    <SelectItem value="OTHER">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div>
-              <Label>Report type</Label>
-              <Select value={reportType} onValueChange={setReportType}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ORIGINAL_RESEARCH">Original research</SelectItem>
-                  <SelectItem value="CASE_REPORT">Case report</SelectItem>
-                  <SelectItem value="CASE_SERIES">Case series</SelectItem>
-                  <SelectItem value="REVIEW">Review</SelectItem>
-                  <SelectItem value="OTHER">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          {/* Title */}
-          <div>
-            <div className="flex justify-between items-center">
-              <Label>Title * (max {TITLE_WORD_LIMIT} words, Capitalize Each Word)</Label>
-              <span className={`text-xs ${titleValid ? 'text-muted-foreground' : 'text-red-600 font-semibold'}`}>{titleWordCount}/{TITLE_WORD_LIMIT} words</span>
+        {/* Section 2: Title */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-fuchsia-50 to-white">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-md bg-fuchsia-600 text-white font-bold text-xs flex items-center justify-center">2</div>
+                <CardTitle className="text-lg">Title</CardTitle>
+              </div>
+              <span className={`text-xs font-medium ${titleValid ? 'text-muted-foreground' : 'text-red-600'}`}>{titleWordCount}/{TITLE_WORD_LIMIT} words</span>
             </div>
+          </CardHeader>
+          <CardContent className="pt-4">
             <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Concise Statement Of The Main Topic" className={!titleValid ? 'border-red-400' : ''} />
-          </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Capitalize Each Word. Max {TITLE_WORD_LIMIT} words.</p>
+          </CardContent>
+        </Card>
 
-          {/* Authors */}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <Label>Author(s) * — mark one corresponding author with *</Label>
+        {/* Section 3: Authors */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-rose-50 to-white">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-md bg-rose-600 text-white font-bold text-xs flex items-center justify-center">3</div>
+                <CardTitle className="text-lg">Author(s)</CardTitle>
+                <Badge variant="outline" className="text-[10px]">{authors.length} listed</Badge>
+              </div>
               <Button size="sm" variant="outline" onClick={addAuthor}><Plus className="h-4 w-4 mr-1" /> Add author</Button>
             </div>
-            <div className="space-y-2">
-              {authors.map((a, i) => (
-                <div key={i} className="border rounded-md p-3 bg-slate-50/50">
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono px-2 py-0.5 bg-slate-200 rounded">#{i + 1}{i === 0 ? ' (principal)' : ''}</span>
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                        <input type="radio" name="corr" checked={a.isCorresponding} onChange={() => setCorresponding(i)} />
-                        Corresponding *
-                      </label>
-                    </div>
-                    {authors.length > 1 && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => removeAuthor(i)}>Remove</Button>}
+            <CardDescription>Mark one author as corresponding by selecting the radio button. Author details are hidden from reviewers (double-blind).</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-2">
+            {authors.map((a, i) => (
+              <div key={i} className={`border rounded-lg p-3 ${a.isCorresponding ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50/50'}`}>
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono px-2 py-0.5 bg-white rounded border">#{i + 1}{i === 0 ? ' · principal' : ''}</span>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer font-medium">
+                      <input type="radio" name="corr" checked={a.isCorresponding} onChange={() => setCorresponding(i)} />
+                      Corresponding *
+                    </label>
+                    {a.isCorresponding && <Badge className="bg-rose-600 text-[10px]">CORRESPONDING</Badge>}
                   </div>
-                  <div className="grid md:grid-cols-2 gap-2">
-                    <Input placeholder="Full name (e.g. Dr. Jane Doe)" value={a.fullName} onChange={e => updateAuthor(i, { fullName: e.target.value })} />
-                    <Input placeholder="Email *" type="email" value={a.email} onChange={e => updateAuthor(i, { email: e.target.value })} />
-                    <Input placeholder={a.isCorresponding ? 'Phone (required for corresponding)' : 'Phone (optional)'} value={a.phone} onChange={e => updateAuthor(i, { phone: e.target.value })} />
-                    <Input placeholder="Department (e.g. Cardiology)" value={a.department} onChange={e => updateAuthor(i, { department: e.target.value })} />
-                    <Input className="md:col-span-2" placeholder="Affiliated institution (Hospital / University)" value={a.affiliation} onChange={e => updateAuthor(i, { affiliation: e.target.value })} />
-                  </div>
+                  {authors.length > 1 && <Button size="sm" variant="ghost" className="text-red-600 h-7" onClick={() => removeAuthor(i)}><Trash2 className="h-3 w-3" /></Button>}
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="grid md:grid-cols-2 gap-2">
+                  <Input placeholder="Full name (e.g. Dr. Jane Doe)" value={a.fullName} onChange={e => updateAuthor(i, { fullName: e.target.value })} />
+                  <Input placeholder="Email *" type="email" value={a.email} onChange={e => updateAuthor(i, { email: e.target.value })} />
+                  <Input placeholder={a.isCorresponding ? 'Phone (required for corresponding)' : 'Phone (optional)'} value={a.phone} onChange={e => updateAuthor(i, { phone: e.target.value })} />
+                  <Input placeholder="Department (e.g. Cardiology)" value={a.department} onChange={e => updateAuthor(i, { department: e.target.value })} />
+                  <Input className="md:col-span-2" placeholder="Affiliated institution (Hospital / University)" value={a.affiliation} onChange={e => updateAuthor(i, { affiliation: e.target.value })} />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
 
-          {/* Abstract body input + doc upload */}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <Label>Abstract body — max {WORD_LIMIT} words, no citations</Label>
-              <span className={`text-xs ${bodyValid ? 'text-muted-foreground' : 'text-red-600 font-semibold'}`}>{bodyWordCount}/{WORD_LIMIT} words</span>
+        {/* Section 4: Abstract body */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-emerald-50 to-white">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-md bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">4</div>
+                <CardTitle className="text-lg">Abstract body</CardTitle>
+              </div>
+              <span className={`text-xs font-medium ${bodyValid ? 'text-muted-foreground' : 'text-red-600'}`}>{bodyWordCount}/{WORD_LIMIT} words</span>
             </div>
+            <CardDescription>Type your abstract directly OR upload a Word document. Recommended structure shown below.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-4">
             <div className="grid md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
                 <Textarea rows={12} value={body} onChange={e => setBody(e.target.value)}
                   className={!bodyValid ? 'border-red-400' : ''}
                   placeholder={`Structure your abstract with:\n\n${sectionHints.map(([h, hint]) => `${h}: ${hint}`).join('\n\n')}`} />
               </div>
-              <div className="border rounded-md p-3 bg-indigo-50/50 border-indigo-200">
+              <div className="border-2 border-dashed rounded-lg p-3 bg-indigo-50/50 border-indigo-300">
                 <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><FileUp className="h-4 w-4 text-indigo-600" /> Or upload Word document</div>
-                <div className="text-xs text-muted-foreground mb-2">
+                <div className="text-xs text-slate-600 mb-2">
                   <b>.doc / .docx</b> only<br />
                   Max size: <b>2 MB</b><br />
                   Must NOT contain author names (double-blind).
@@ -1438,54 +1497,81 @@ function SubmitAbstract({ setRoute, user }) {
                 <input type="file" accept=".doc,.docx" onChange={onDocChange} className="text-xs w-full" />
                 {docFile && (
                   <div className="mt-2 p-2 bg-white rounded border text-xs">
-                    <div className="font-medium">{docFile.name}</div>
+                    <div className="font-medium truncate">{docFile.name}</div>
                     <div className="text-muted-foreground">{(docFile.size / 1024).toFixed(1)} KB</div>
-                    <button className="text-red-600 mt-1" onClick={() => setDocFile(null)}>Remove</button>
+                    <button className="text-red-600 mt-1 text-[11px]" onClick={() => setDocFile(null)}>Remove</button>
                   </div>
                 )}
               </div>
             </div>
-            {/* Section hints */}
-            <div className="mt-2 flex flex-wrap gap-1">
-              {sectionHints.map(([h]) => <Badge key={h} variant="outline" className="text-[10px]">{h}</Badge>)}
+            <div className="mt-3 flex flex-wrap gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-1">Recommended sections:</span>
+              {sectionHints.map(([h]) => <Badge key={h} variant="outline" className="text-[10px] bg-white">{h}</Badge>)}
             </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          {/* Keywords */}
-          <div>
-            <Label>Key words (5, comma separated)</Label>
-            <Input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="e.g. diabetes, prevalence, primary care, adherence, kenya" />
-            <div className="text-xs text-muted-foreground mt-1">{keywordList.length}/5 keywords</div>
-          </div>
-
-          {/* Disclosure */}
-          <div>
-            <Label>Disclosure statement (funding sources / conflicts of interest)</Label>
-            <Textarea rows={3} value={disclosureStatement} onChange={e => setDisclosureStatement(e.target.value)}
-              placeholder='If none, state: "No conflict of interest to declare."' />
-          </div>
-
-          <div>
-            <Label>Cover letter (optional)</Label>
-            <Textarea rows={3} value={coverLetter} onChange={e => setCoverLetter(e.target.value)} placeholder="Optional message to the editors" />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => submit(true)} disabled={loading}>Save as draft</Button>
-            <Button onClick={() => submit(false)} disabled={loading || !titleValid || !bodyValid} className="bg-indigo-600 hover:bg-indigo-700">
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Submit for review
-            </Button>
-          </div>
-          {submitError && (
-            <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm whitespace-pre-line">
-              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              <div className="flex-1"><b>Cannot submit: </b>{submitError}</div>
-              <button type="button" onClick={() => setSubmitError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>
+        {/* Section 5: Keywords + Disclosure */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-amber-50 to-white">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-md bg-amber-600 text-white font-bold text-xs flex items-center justify-center">5</div>
+              <CardTitle className="text-lg">Keywords & disclosure</CardTitle>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-4">
+            <div>
+              <div className="flex justify-between items-center">
+                <Label>Keywords <span className="text-slate-500 font-normal text-xs">(3 – 5, comma separated)</span></Label>
+                <span className={`text-xs font-medium ${keywordList.length >= 3 && keywordList.length <= 5 ? 'text-emerald-600' : 'text-red-600'}`}>{keywordList.length}/5 keywords</span>
+              </div>
+              <Input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="e.g. diabetes, prevalence, primary care, adherence, kenya" />
+              {keywordList.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {keywordList.map((k, i) => <Badge key={i} variant="secondary" className="text-[11px]">{k}</Badge>)}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground mt-1">Enter between 3 and 5 keywords, separated by commas.</p>
+            </div>
+            <div>
+              <Label>Disclosure statement</Label>
+              <Textarea rows={3} value={disclosureStatement} onChange={e => setDisclosureStatement(e.target.value)}
+                placeholder='If none, state: "No conflict of interest to declare."' />
+              <p className="text-[11px] text-muted-foreground mt-1">Funding sources and any conflicts of interest.</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Section 6: Cover letter + submit */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-slate-50 to-white">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-md bg-slate-600 text-white font-bold text-xs flex items-center justify-center">6</div>
+              <CardTitle className="text-lg">Cover letter & submit</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-4">
+            <div>
+              <Label>Cover letter <span className="text-slate-500 font-normal text-xs">(optional)</span></Label>
+              <Textarea rows={3} value={coverLetter} onChange={e => setCoverLetter(e.target.value)} placeholder="Optional message to the editors — highlight why this work is important, novel, and appropriate for the conference." />
+            </div>
+            {submitError && (
+              <div role="alert" className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-300 text-red-800 text-sm whitespace-pre-line">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <div className="flex-1"><b>Cannot submit: </b>{submitError}</div>
+                <button type="button" onClick={() => setSubmitError('')} className="text-red-500 hover:text-red-700 text-xs shrink-0">✕</button>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" onClick={() => submit(true)} disabled={loading}>Save as draft</Button>
+              <Button onClick={() => submit(false)} disabled={loading || !titleValid || !bodyValid} className="bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:from-indigo-700 hover:to-fuchsia-700 shadow-md">
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Submit abstract for review
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
@@ -3711,13 +3797,24 @@ function ResetPasswordPage({ token, onDone }) {
 function ExhibitionBoothsPublic({ conf }) {
   const [booths, setBooths] = useState([])
   const [idx, setIdx] = useState(0)
+  const [prevIdx, setPrevIdx] = useState(0)
+  const [transitioning, setTransitioning] = useState(false)
   const [paused, setPaused] = useState(false)
   useEffect(() => { if (conf?.id) fetch(`/api/conferences/${conf.id}/booths`).then(r => r.json()).then(d => setBooths(d.booths || [])) }, [conf?.id])
+
+  const goTo = (nextIdx) => {
+    if (nextIdx === idx) return
+    setPrevIdx(idx)
+    setTransitioning(true)
+    setIdx(nextIdx)
+    setTimeout(() => setTransitioning(false), 700)
+  }
+
   useEffect(() => {
     if (booths.length < 2 || paused) return
-    const t = setInterval(() => setIdx(v => (v + 1) % booths.length), 15000)
+    const t = setInterval(() => goTo((idx + 1) % booths.length), 8000)
     return () => clearInterval(t)
-  }, [booths.length, paused])
+  }, [booths.length, paused, idx])
 
   if (booths.length === 0) return (
     <div className="container mx-auto px-6 py-16 text-center">
@@ -3739,7 +3836,7 @@ function ExhibitionBoothsPublic({ conf }) {
 
         {/* Main rotating card */}
         <div className="relative" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-          <Card className="overflow-hidden shadow-2xl border-0 ring-1 ring-slate-200">
+          <Card key={idx} className="overflow-hidden shadow-2xl border-0 ring-1 ring-slate-200 animate-in fade-in slide-in-from-right-6 duration-700">
             <div className="relative">
               {b.bannerPath ? (
                 <div className="w-full h-80 bg-slate-100 relative overflow-hidden">
@@ -3829,10 +3926,10 @@ function ExhibitionBoothsPublic({ conf }) {
           {/* Nav arrows */}
           {booths.length > 1 && (
             <>
-              <button onClick={() => setIdx((idx - 1 + booths.length) % booths.length)} className="absolute -left-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border">
+              <button onClick={() => goTo((idx - 1 + booths.length) % booths.length)} className="absolute -left-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border transition hover:scale-110">
                 <ChevronRight className="h-5 w-5 rotate-180" />
               </button>
-              <button onClick={() => setIdx((idx + 1) % booths.length)} className="absolute -right-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border">
+              <button onClick={() => goTo((idx + 1) % booths.length)} className="absolute -right-4 top-1/2 -translate-y-1/2 h-10 w-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-50 border transition hover:scale-110">
                 <ChevronRight className="h-5 w-5" />
               </button>
             </>
@@ -3841,18 +3938,30 @@ function ExhibitionBoothsPublic({ conf }) {
 
         {/* Progress + thumbs */}
         <div className="mt-8">
+          {/* Auto-advance timer bar */}
+          {booths.length > 1 && !paused && (
+            <div className="h-1 rounded-full bg-slate-200 overflow-hidden mb-3 max-w-xs mx-auto">
+              <div key={idx} className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 animate-[shrink_8s_linear_forwards]" style={{ width: '100%', animation: 'boothProgress 8s linear forwards' }} />
+            </div>
+          )}
           <div className="text-center text-xs text-muted-foreground mb-3">
-            Booth {idx + 1} of {booths.length} · {paused ? 'Paused (hovering)' : 'Auto-rotates every 15 seconds'}
+            Booth {idx + 1} of {booths.length} · {paused ? 'Paused (hovering)' : 'Auto-rotates every 8 seconds'}
           </div>
           <div className="flex justify-center gap-2 flex-wrap">
             {booths.map((booth, i) => (
-              <button key={i} onClick={() => setIdx(i)} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition ${i === idx ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'}`}>
+              <button key={i} onClick={() => goTo(i)} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition ${i === idx ? 'bg-indigo-600 text-white border-indigo-600 shadow-md scale-105' : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'}`}>
                 <div className={`h-1.5 w-1.5 rounded-full ${i === idx ? 'bg-white' : 'bg-slate-400'}`} />
                 <span className="font-medium">{booth.sponsorName}</span>
               </button>
             ))}
           </div>
         </div>
+        <style jsx>{`
+          @keyframes boothProgress {
+            from { width: 0%; }
+            to { width: 100%; }
+          }
+        `}</style>
       </div>
     </div>
   )
