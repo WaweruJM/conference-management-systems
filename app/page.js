@@ -872,27 +872,27 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const confTheme = featured?.theme || featured?.subtitle || featured?.description || 'Advancing Science Through Rigorous Peer Review'
 
   const nav = [
-    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
-    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true },
-    { key: 'submit', label: 'New Submission', icon: Plus, show: true },
-    { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin },
-    { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin },
-    { key: 'live', label: 'Live Conference', icon: Radio, show: true },
-    { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread },
-    { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin },
-    { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer },
-    { key: 'conferences', label: 'Conferences', icon: Calendar, show: true },
-    { key: 'templates', label: 'Templates', icon: FileText, show: true },
-    { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin },
-    { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor },
-    { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor },
-    { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor },
-    { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor },
-    { key: 'programme', label: 'Programme', icon: GraduationCap, show: true },
-    { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin },
-    { key: 'users', label: 'User Management', icon: Users, show: isAdmin },
-    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor },
-    { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin },
+    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true, group: 'core' },
+    { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin, group: 'editorial' },
+    { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread, group: 'editorial' },
+    { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
+    { key: 'invite-reviewers', label: 'Invite Reviewers', icon: Send, show: isEditor || isAdmin, group: 'editorial' },
+    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
+    { key: 'submit', label: 'New Submission', icon: Plus, show: true, group: 'author' },
+    { key: 'reviews', label: 'My Reviews', icon: Award, show: isReviewer, group: 'reviewer' },
+    { key: 'live', label: 'Live Conference', icon: Radio, show: true, group: 'general' },
+    { key: 'programme', label: 'Programme', icon: GraduationCap, show: true, group: 'general' },
+    { key: 'templates', label: 'Templates', icon: FileText, show: true, group: 'general' },
+    { key: 'conferences', label: 'Conferences', icon: Calendar, show: isAdmin, group: 'admin' },
+    { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin, group: 'admin' },
+    { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin, group: 'admin' },
+    { key: 'users', label: 'User Management', icon: Users, show: isAdmin, group: 'admin' },
+    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin, group: 'admin' },
   ]
 
   return (
@@ -1518,22 +1518,54 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
         </div>
       </div>
 
-      {/* Timeline */}
-      <Card className="mb-6">
-        <CardContent className="p-6">
-          <div className="text-sm font-semibold mb-4">Submission timeline</div>
+      {/* Editorial Process Tracker */}
+      <Card className="mb-6 overflow-hidden border-0 shadow-md">
+        <CardContent className="p-6 bg-gradient-to-br from-white via-indigo-50/40 to-fuchsia-50/40">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-md bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center">
+                <ClipboardCheck className="h-4 w-4 text-white" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-slate-800">Editorial Process Tracker</div>
+                <div className="text-[11px] text-muted-foreground">Real-time visibility of your abstract's journey</div>
+              </div>
+            </div>
+            {(() => {
+              const currentIdx = TIMELINE_STAGES.findIndex(s => abs.currentState === s.key || s.altKeys?.includes(abs.currentState))
+              const pct = currentIdx < 0 ? 0 : Math.round(((currentIdx + 1) / TIMELINE_STAGES.length) * 100)
+              return (
+                <div className="text-right">
+                  <div className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-fuchsia-600 bg-clip-text text-transparent">{pct}%</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">completed</div>
+                </div>
+              )
+            })()}
+          </div>
+          {/* Visual progress bar */}
+          {(() => {
+            const currentIdx = TIMELINE_STAGES.findIndex(s => abs.currentState === s.key || s.altKeys?.includes(abs.currentState))
+            const pct = currentIdx < 0 ? 0 : Math.round(((currentIdx + 1) / TIMELINE_STAGES.length) * 100)
+            const failed = ['REJECTED', 'WITHDRAWN'].includes(abs.currentState)
+            return (
+              <div className="mb-4 h-2 rounded-full bg-slate-200 overflow-hidden relative">
+                <div className={`h-full transition-all duration-700 ${failed ? 'bg-gradient-to-r from-red-500 to-rose-600' : 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-emerald-500'}`} style={{ width: pct + '%' }} />
+              </div>
+            )
+          })()}
+          {/* Stage chips */}
           <div className="flex flex-wrap gap-1">
             {TIMELINE_STAGES.map((s, i) => {
               const passed = abs.stateHistory?.some(h => h.newState === s.key || s.altKeys?.includes(h.newState))
               const current = abs.currentState === s.key || s.altKeys?.includes(abs.currentState)
               return (
                 <div key={s.key} className="flex items-center">
-                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium ${current ? 'bg-indigo-600 text-white' : passed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition ${current ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200' : passed ? 'bg-emerald-100 text-emerald-800' : 'bg-white text-slate-500 border border-slate-200'}`}>
                     {passed && !current && <CheckCircle2 className="h-3 w-3" />}
-                    {current && <Clock className="h-3 w-3" />}
+                    {current && <Clock className="h-3 w-3 animate-pulse" />}
                     {s.label}
                   </div>
-                  {i < TIMELINE_STAGES.length - 1 && <div className="h-px w-3 bg-slate-300" />}
+                  {i < TIMELINE_STAGES.length - 1 && <div className={`h-px w-3 ${passed ? 'bg-emerald-300' : 'bg-slate-300'}`} />}
                 </div>
               )
             })}
@@ -1763,12 +1795,12 @@ function EditorialPanel({ abs, onRefresh }) {
             <Select value={decision} onValueChange={setDecision}>
               <SelectTrigger><SelectValue placeholder="Decision" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ACCEPT">Accept</SelectItem>
                 <SelectItem value="MINOR_REVISION">Minor revision</SelectItem>
                 <SelectItem value="MAJOR_REVISION">Major revision</SelectItem>
-                <SelectItem value="REJECT">Reject</SelectItem>
                 <SelectItem value="TRANSFER">Transfer</SelectItem>
                 <SelectItem value="WITHDRAW">Withdraw</SelectItem>
+                <SelectItem value="ACCEPT">Accept</SelectItem>
+                <SelectItem value="REJECT">Reject</SelectItem>
               </SelectContent>
             </Select>
             {decision === 'ACCEPT' && (
@@ -2090,31 +2122,78 @@ function MessagesTab({ abstractId, user }) {
 // ============ EDITORIAL OFFICE ============
 function EditorialOffice({ setRoute }) {
   const [all, setAll] = useState([])
+  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
-  useEffect(() => { api('/abstracts').then(d => setAll(d.abstracts || [])) }, [])
-  const visible = filter ? all.filter(a => a.currentState === filter) : all
+  const [search, setSearch] = useState('')
+  useEffect(() => { api('/abstracts').then(d => setAll(d.abstracts || [])).finally(() => setLoading(false)) }, [])
+  const q = search.trim().toLowerCase()
+  const visible = all.filter(a => (!filter || a.currentState === filter) && (!q || a.title?.toLowerCase().includes(q) || a.submissionCode?.toLowerCase().includes(q)))
+
+  // Compute stat summary
+  const stats = {
+    total: all.length,
+    awaitingAssignment: all.filter(a => !(a.editorAssignments || []).some(e => e.active) && !['ACCEPTED', 'REJECTED', 'WITHDRAWN', 'PUBLISHED'].includes(a.currentState)).length,
+    inReview: all.filter(a => ['COMMITTEE_REVIEW', 'EXTERNAL_PEER_REVIEW', 'REVIEWS_COMPLETED', 'EDITORIAL_DECISION'].includes(a.currentState)).length,
+    accepted: all.filter(a => ['ACCEPTED', 'ORAL', 'POSTER', 'FINAL_ACCEPTANCE', 'PROGRAMME_SCHEDULING', 'PUBLISHED'].includes(a.currentState)).length,
+    rejected: all.filter(a => a.currentState === 'REJECTED').length,
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Editorial office</h1>
-          <p className="text-muted-foreground">All submissions across the platform. Author correspondence is handled inside each assigned editor's workspace.</p>
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex items-baseline gap-3 mb-1">
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><ClipboardCheck className="h-7 w-7 text-indigo-600" /> Editorial Office</h1>
+          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">Central overview</Badge>
         </div>
-        <Select value={filter || 'ALL'} onValueChange={(v) => setFilter(v === 'ALL' ? '' : v)}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Filter by state" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All states</SelectItem>
-            {['SUBMITTED','TECHNICAL_CHECK','EDITORIAL_ASSIGNMENT','COMMITTEE_REVIEW','EXTERNAL_PEER_REVIEW','REVIEWS_COMPLETED','EDITORIAL_DECISION','ACCEPTED','REJECTED']
-              .map(s => <SelectItem key={s} value={s}>{stateLabel(s)}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <p className="text-muted-foreground text-sm">All submissions across the platform. Author correspondence is handled inside each assigned editor's workspace.</p>
       </div>
-      <div className="grid gap-3">
-        {visible.length === 0 ? <EmptyState label="No abstracts match filter" />
-        : visible.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}
+
+      {/* Stat summary */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <StatBadge label="Total papers" value={stats.total} color="from-slate-600 to-slate-700" icon={FileText} />
+        <StatBadge label="Awaiting editor" value={stats.awaitingAssignment} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
+        <StatBadge label="In review" value={stats.inReview} color="from-indigo-500 to-fuchsia-500" icon={Clock} />
+        <StatBadge label="Accepted" value={stats.accepted} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
+        <StatBadge label="Rejected" value={stats.rejected} color="from-rose-500 to-red-600" icon={XCircle} />
       </div>
+
+      {/* Filter bar */}
+      <Card className="mb-4 border-0 shadow-sm">
+        <CardContent className="p-3 flex items-center gap-3 flex-wrap">
+          <div className="flex-1 min-w-[220px] relative">
+            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-slate-400" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by title or submission code" className="pl-8" />
+          </div>
+          <Select value={filter || 'ALL'} onValueChange={(v) => setFilter(v === 'ALL' ? '' : v)}>
+            <SelectTrigger className="w-56"><SelectValue placeholder="Filter by state" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All states ({all.length})</SelectItem>
+              {['SUBMITTED','TECHNICAL_CHECK','EDITORIAL_ASSIGNMENT','COMMITTEE_REVIEW','EXTERNAL_PEER_REVIEW','REVIEWS_COMPLETED','EDITORIAL_DECISION','MINOR_REVISION','MAJOR_REVISION','ACCEPTED','REJECTED']
+                .map(s => <SelectItem key={s} value={s}>{stateLabel(s)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="text-xs text-muted-foreground shrink-0">{visible.length} paper{visible.length !== 1 ? 's' : ''}</div>
+        </CardContent>
+      </Card>
+
+      {/* List */}
+      {loading ? <div className="p-10 text-center"><Loader2 className="animate-spin inline" /></div>
+      : visible.length === 0 ? <EmptyState label="No abstracts match filter" />
+      : <div className="grid gap-3">{visible.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}</div>}
     </div>
+  )
+}
+
+function StatBadge({ label, value, color, icon: Icon, attention }) {
+  return (
+    <Card className={`overflow-hidden border-0 shadow-md ${attention && value > 0 ? 'ring-2 ring-amber-300' : ''}`}>
+      <div className={`bg-gradient-to-br ${color} p-3 text-white flex items-center justify-between`}>
+        <Icon className="h-5 w-5 opacity-90" />
+        <div className="text-3xl font-bold">{value}</div>
+      </div>
+      <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-600 bg-white">{label}</div>
+    </Card>
   )
 }
 
@@ -2312,11 +2391,11 @@ function ReviewForm({ assignment, onClose, onDone }) {
             <Select value={recommendation} onValueChange={setRecommendation}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ACCEPT">Accept</SelectItem>
                 <SelectItem value="MINOR_REVISION">Minor revision</SelectItem>
                 <SelectItem value="MAJOR_REVISION">Major revision</SelectItem>
-                <SelectItem value="REJECT">Reject</SelectItem>
                 <SelectItem value="TRANSFER">Transfer</SelectItem>
+                <SelectItem value="ACCEPT">Accept</SelectItem>
+                <SelectItem value="REJECT">Reject</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -3319,7 +3398,7 @@ function TemplatesPage({ user, isAdmin, isEditor }) {
       )}
 
       <div className="grid gap-2">
-        {templates.length === 0 ? <EmptyState label="No templates uploaded for this conference." />
+        {templates.length === 0 ? <EmptyState label="PowerPoint and poster templates will be available for download once your abstract is accepted for presentation in the conference." />
         : templates.map(t => (
           <Card key={t.id}>
             <CardContent className="p-4 flex justify-between items-center">
@@ -4691,45 +4770,73 @@ function EditorWorkspace({ setRoute, user }) {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('active')
+  const [search, setSearch] = useState('')
   useEffect(() => {
     api('/abstracts?scope=assigned').then(d => setList(d.abstracts || [])).catch(e => toast.error(e.message)).finally(() => setLoading(false))
   }, [])
 
-  const activeStates = ['UNDER_REVIEW', 'PEER_REVIEW', 'EDITORIAL_DECISION', 'AWAITING_DECISION', 'ASSIGNED', 'REVIEW_IN_PROGRESS', 'MINOR_REVISION', 'MAJOR_REVISION', 'AWAITING_REVISION', 'RESUBMITTED', 'PROGRAMME_SCHEDULING']
+  const activeStates = ['UNDER_REVIEW', 'PEER_REVIEW', 'EDITORIAL_DECISION', 'AWAITING_DECISION', 'ASSIGNED', 'REVIEW_IN_PROGRESS', 'MINOR_REVISION', 'MAJOR_REVISION', 'AWAITING_REVISION', 'RESUBMITTED', 'PROGRAMME_SCHEDULING', 'COMMITTEE_REVIEW', 'EXTERNAL_PEER_REVIEW', 'REVIEWS_COMPLETED', 'EDITORIAL_ASSIGNMENT', 'TECHNICAL_CHECK', 'SUBMITTED']
   const doneStates = ['ACCEPTED', 'FINAL_ACCEPTANCE', 'ORAL', 'POSTER', 'REJECTED', 'PUBLISHED', 'WITHDRAWN']
-  const visible = list.filter(a => filter === 'all' || (filter === 'active' && activeStates.includes(a.currentState)) || (filter === 'done' && doneStates.includes(a.currentState)))
-  const counts = { active: list.filter(a => activeStates.includes(a.currentState)).length, done: list.filter(a => doneStates.includes(a.currentState)).length, all: list.length }
+  const q = search.trim().toLowerCase()
+  const visible = list.filter(a => {
+    if (q && !a.title?.toLowerCase().includes(q) && !a.submissionCode?.toLowerCase().includes(q)) return false
+    if (filter === 'all') return true
+    if (filter === 'active') return activeStates.includes(a.currentState)
+    if (filter === 'done') return doneStates.includes(a.currentState)
+    return true
+  })
+  const counts = {
+    active: list.filter(a => activeStates.includes(a.currentState)).length,
+    done: list.filter(a => doneStates.includes(a.currentState)).length,
+    all: list.length,
+    urgent: list.filter(a => (a.reviewAssignments || []).length === 0 && activeStates.includes(a.currentState)).length,
+  }
 
   const groups = { }
   visible.forEach(a => { const s = a.currentState; if (!groups[s]) groups[s] = []; groups[s].push(a) })
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold flex items-center gap-2"><Briefcase className="h-7 w-7 text-indigo-600" /> My Editor Workspace</h1>
-        <p className="text-muted-foreground">All abstracts assigned to you — {list.length} paper{list.length !== 1 ? 's' : ''} total. Click any card to open the per-abstract workspace with review, reviewer, correspondence and document tabs.</p>
+        <div className="flex items-baseline gap-3 mb-1">
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Briefcase className="h-7 w-7 text-indigo-600" /> My Editor Workspace</h1>
+          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{list.length} paper{list.length !== 1 ? 's' : ''} in my queue</Badge>
+        </div>
+        <p className="text-muted-foreground text-sm">Handle editor review, reviewer assignment, correspondence with authors and decisions from one place. Click any card to open its full workspace.</p>
       </div>
 
-      <div className="mb-4 flex items-center gap-2">
-        <Button variant={filter === 'active' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('active')} className={filter === 'active' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
-          Active <Badge variant="secondary" className="ml-1">{counts.active}</Badge>
-        </Button>
-        <Button variant={filter === 'done' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('done')} className={filter === 'done' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
-          Decided <Badge variant="secondary" className="ml-1">{counts.done}</Badge>
-        </Button>
-        <Button variant={filter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('all')} className={filter === 'all' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>
-          All <Badge variant="secondary" className="ml-1">{counts.all}</Badge>
-        </Button>
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <StatBadge label="Active" value={counts.active} color="from-indigo-500 to-fuchsia-500" icon={Clock} />
+        <StatBadge label="Needs reviewers" value={counts.urgent} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
+        <StatBadge label="Decided" value={counts.done} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
+        <StatBadge label="All time" value={counts.all} color="from-slate-600 to-slate-700" icon={FileText} />
       </div>
 
-      {loading ? <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> : (
+      {/* Filter bar */}
+      <Card className="mb-4 border-0 shadow-sm">
+        <CardContent className="p-3 flex items-center gap-3 flex-wrap">
+          <div className="flex-1 min-w-[220px] relative">
+            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-slate-400" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search my papers" className="pl-8" />
+          </div>
+          <div className="flex gap-1">
+            <Button variant={filter === 'active' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('active')} className={filter === 'active' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>Active</Button>
+            <Button variant={filter === 'done' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('done')} className={filter === 'done' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>Decided</Button>
+            <Button variant={filter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setFilter('all')} className={filter === 'all' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}>All</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? <div className="p-10 text-center"><Loader2 className="animate-spin inline" /></div> : (
         list.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="p-10 text-center">
               <Briefcase className="h-12 w-12 mx-auto text-slate-300 mb-3" />
               <div className="text-lg font-semibold text-slate-500">No abstracts assigned yet</div>
               <div className="text-sm text-muted-foreground mt-1">The Managing Editor will assign abstracts to your queue. Once assigned, they appear here for full editorial handling.</div>
-              <Button className="mt-4" variant="outline" onClick={() => setRoute({ name: 'editorial' })}>View Editorial Office</Button>
+              <Button className="mt-4" variant="outline" onClick={() => setRoute({ name: 'editorial' })}>Browse Editorial Office</Button>
             </CardContent>
           </Card>
         ) : (
@@ -4741,27 +4848,7 @@ function EditorWorkspace({ setRoute, user }) {
                   <span className="text-xs text-muted-foreground">{abs.length} paper{abs.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="grid gap-3">
-                  {abs.map(a => (
-                    <Card key={a.id} className="hover:shadow-md hover:border-indigo-300 transition cursor-pointer" onClick={() => setRoute({ name: 'abstract', id: a.id })}>
-                      <CardContent className="p-4 flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                          {a.submissionCode?.split('-').pop() || '?'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-semibold text-indigo-600">{a.submissionCode}</div>
-                          <div className="font-semibold truncate">{a.title}</div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
-                            {a.theme?.name && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
-                            {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
-                            <span>Reviewers: {a.reviewAssignments?.length || 0}</span>
-                            <span>·</span>
-                            <span>Submitted {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : 'draft'}</span>
-                          </div>
-                        </div>
-                        <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {abs.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} inWorkspace />)}
                 </div>
               </div>
             ))}
