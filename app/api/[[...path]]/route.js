@@ -747,7 +747,14 @@ async function handleAbstracts(route, method, request) {
   // Transition state
   const transMatch = route.match(/^\/abstracts\/([^\/]+)\/transition$/)
   if (transMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    // Chief Editor / Admin / Managing Editor can transition any abstract; committee
+    // editors and committee members can transition only abstracts assigned to them.
+    let allowed = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    if (!allowed) {
+      const assn = await prisma.editorAssignment.findFirst({ where: { abstractId: transMatch[1], editorId: user.id, active: true } })
+      if (assn) allowed = true
+    }
+    if (!allowed) return err('Forbidden — you may only edit abstracts assigned to you.', 403)
     const body = await request.json()
     const updated = await transitionState(transMatch[1], body.newState, user.id, body.comment)
     // Notify author
@@ -790,7 +797,14 @@ async function handleAbstracts(route, method, request) {
   // Assign reviewer
   const assignRvMatch = route.match(/^\/abstracts\/([^\/]+)\/assign-reviewer$/)
   if (assignRvMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    // Chief Editor / Admin / Managing Editor can invite reviewers to any abstract.
+    // Everyone else must be the currently-assigned editor for THIS abstract.
+    let allowed = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    if (!allowed) {
+      const assn = await prisma.editorAssignment.findFirst({ where: { abstractId: assignRvMatch[1], editorId: user.id, active: true } })
+      if (assn) allowed = true
+    }
+    if (!allowed) return err('Forbidden — you may only invite reviewers for abstracts assigned to you.', 403)
     const body = await request.json()
     const assignment = await prisma.reviewAssignment.create({
       data: {
@@ -825,7 +839,14 @@ async function handleAbstracts(route, method, request) {
   // Decision
   const decMatch = route.match(/^\/abstracts\/([^\/]+)\/decision$/)
   if (decMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    // Chief Editor / Admin / Managing Editor can decide any abstract; committee
+    // editors can decide only those assigned to them.
+    let allowed = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    if (!allowed) {
+      const assn = await prisma.editorAssignment.findFirst({ where: { abstractId: decMatch[1], editorId: user.id, active: true } })
+      if (assn) allowed = true
+    }
+    if (!allowed) return err('Forbidden — you may only decide abstracts assigned to you.', 403)
     const body = await request.json()
     const decision = await prisma.editorialDecision.create({
       data: {
@@ -1537,14 +1558,28 @@ async function handleAnnouncements(route, method, request) {
 async function handleReviewerInvitations(route, method, request) {
   if (route === '/reviewer-invitations' && method === 'POST') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
-    const body = await request.json()
+    const body = await request.json().catch(() => ({}))
+    // Chief Editor / Admin / Managing Editor can invite reviewers to any abstract.
+    // Everyone else (including COMMITTEE_EDITOR, COMMITTEE_MEMBER) must be the currently-assigned editor for THIS abstract.
+    let allowed = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    if (!allowed && body.abstractId) {
+      const assn = await prisma.editorAssignment.findFirst({
+        where: { abstractId: body.abstractId, editorId: user.id, active: true },
+      })
+      if (assn) allowed = true
+    }
+    if (!allowed) return err('Forbidden — you may only invite reviewers for abstracts assigned to you.', 403)
     if (!body.email) return err('Email required')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) return err('Enter a valid email address', 400)
     const token = crypto.randomBytes(24).toString('hex')
     const inv = await prisma.reviewerInvitation.create({
       data: {
-        email: body.email, fullName: body.fullName || null, specialty: body.specialty || null,
-        message: body.message || null, invitedById: user.id, token,
+        email: body.email.trim().toLowerCase(),
+        fullName: body.fullName || null,
+        specialty: body.specialty || null,
+        message: body.message || null,
+        invitedById: user.id,
+        token,
       },
     })
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
@@ -1572,13 +1607,28 @@ With warm regards,
 ${user.firstName} ${user.lastName}
 ${confName} Editorial Committee`
     const html = renderEmailHtml({ subject, body: inviteBody, conferenceName: confName })
-    await sendEmail({ to: body.email, subject, text: inviteBody, html })
-    return ok({ invitation: inv, registerUrl })
+    // Send the invitation email and PROPAGATE the delivery result to the client.
+    // Previously we ignored the return value and always reported success even when
+    // Resend/SendGrid rejected the send.
+    let emailResult = { sent: false, reason: 'not-attempted' }
+    try {
+      emailResult = await sendEmail({ to: body.email, subject, text: inviteBody, html })
+    } catch (e) {
+      emailResult = { sent: false, error: e.message }
+    }
+    if (!emailResult.sent) {
+      console.error('[reviewer-invitations] email delivery failed:', emailResult)
+      return err(
+        `Invitation record was created but the email could not be delivered: ${emailResult.error || emailResult.reason || 'unknown error'}. Please check the email service configuration (EMAIL_PROVIDER / RESEND_API_KEY / verified sending domain).`,
+        502,
+      )
+    }
+    return ok({ invitation: inv, registerUrl, delivery: emailResult })
   }
 
   if (route === '/reviewer-invitations' && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Forbidden', 403)
     const list = await prisma.reviewerInvitation.findMany({ orderBy: { createdAt: 'desc' }, take: 200 })
     return ok({ invitations: list })
   }

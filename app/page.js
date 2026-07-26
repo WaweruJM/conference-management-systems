@@ -1923,8 +1923,41 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
             </CardContent>
           </Card>
 
-          {(isEditor || isAdmin) && <TechnicalScoringPanel abstractId={id} user={user} />}
-          {(isEditor || isAdmin) && <EditorialPanel abs={abs} onRefresh={refresh} user={user} />}
+          {(() => {
+            const myRoles = (user?.roles || []).map(r => r.role || r)
+            const isChiefOrAdmin = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN'].includes(r))
+            const isAssignedEditor = (abs.editorAssignments || []).some(e => e.active && e.editorId === user?.id)
+            // Committee editors may only edit the abstracts assigned to them; the Chief
+            // Editor and Admin retain edit access to all abstracts. Everyone else sees
+            // no editorial actions on this abstract.
+            const canEditorEdit = isChiefOrAdmin || isAssignedEditor
+            if (!canEditorEdit) {
+              // If the viewer is any kind of editor but not assigned, show a friendly note
+              if (isEditor || isAdmin) {
+                return (
+                  <Card className="border-dashed">
+                    <CardContent className="p-4 flex items-start gap-3 text-sm text-slate-600">
+                      <AlertCircle className="h-5 w-5 text-slate-500 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-semibold text-slate-700 mb-0.5">Read-only view</div>
+                        You are viewing this abstract's summary from the Editorial Office. Only the
+                        assigned Committee Editor, the Chief Editor and the System Admin can edit
+                        it here. Open <span className="font-medium">My Editor Workspace</span> to
+                        manage abstracts assigned to you.
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              }
+              return null
+            }
+            return (
+              <>
+                <TechnicalScoringPanel abstractId={id} user={user} />
+                <EditorialPanel abs={abs} onRefresh={refresh} user={user} />
+              </>
+            )
+          })()}}
           {isOwner && ['MAJOR_REVISION', 'MINOR_REVISION', 'RETURNED_FOR_FORMATTING'].includes(abs.currentState) && (
             <RevisionUpload abs={abs} onDone={refresh} />
           )}
