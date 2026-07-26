@@ -715,6 +715,78 @@ agent_communication:
       - GET /api/abstracts response includes technicalScoreAverage / technicalScoreCount
       - POST /api/abstracts/:id/assign-editor as CHIEF_EDITOR works
       - POST /api/abstracts/:id/assign-editor twice deactivates prior assignment
+  - agent: "main"
+    message: |
+      🚀 SESSION UPDATE (Message #563 — 7-task batch: UX polish, logistics committee, sponsor flow)
+
+      Schema additions (Prisma db push complete):
+        - Role enum: added CHIEF_LOGISTICS, COMMITTEE_LOGISTICS
+        - Conference: added attendeeRegistrationOpen Boolean @default(false)
+        - EditorAnnouncement: added `channel` String @default('EDITORIAL') + index
+        - NEW model SponsorshipRequest (with tier, booth flags, status, review notes)
+
+      Seed updated & re-run:
+        - Added chief@scms.io (CHIEF_EDITOR), chief.logistics@scms.io, logistics1@scms.io,
+          logistics2@scms.io, committee2@scms.io, sponsor@scms.io
+        - Every editorial/logistics user also carries the AUTHOR role now (they can submit)
+
+      Backend endpoints (new / modified):
+        1. POST /api/auth/register now returns `welcome` msg and persists a "Welcome to <conf>"
+           notification for first-time registrants (bug fixed by testing agent — enum GENERIC, not GENERAL).
+        2. POST /api/abstracts/:id/scores auto-transitions SUBMITTED/TECHNICAL_CHECK → EDITORIAL_ASSIGNMENT.
+        3. POST /api/abstracts/:id/assign-editor tightened to SYSTEM_ADMIN + CHIEF_EDITOR only.
+        4. GET/POST /api/announcements?channel=EDITORIAL|LOGISTICS with dedicated RBAC per channel.
+        5. NEW /api/logistics/members (Chief first, then Committee Logistics).
+        6. NEW /api/sponsorship-tiers (public list of 4 tiers with pricing + benefits).
+        7. NEW /api/sponsorship-requests (POST any auth, GET filtered per role, PUT for logistics/admin decisions).
+        8. NEW PUT /api/conferences/:id/attendee-registration (SYSTEM_ADMIN + Chief roles). Toggling
+           ON broadcasts a Notification (and best-effort email) to every user.
+        9. POST /api/conferences/:id/register now rejects ATTENDEE registrations with 409 when
+           attendeeRegistrationOpen=false, providing a friendly date hint.
+       10. POST /users/:id/roles idempotent + new DELETE /users/:id/roles/:role.
+       11. Name-tag PDF prints "Scientific Committee Editor" for editorial and "Scientific
+           Committee Logistics" for logistics roles.
+
+      Frontend (page.js):
+        1. Landing hero: centered layout, scaled roughly 1.5× (h1: text-4xl→text-6xl → lg:8xl,
+           subtitle text-xl→2xl → lg:4xl, description text-lg→2xl, CTAs and meta centred).
+        2. Registration success toast now shows the personalised welcome message.
+        3. Committee Editor assign dropdown is now visible ONLY to CHIEF_EDITOR + SYSTEM_ADMIN
+           (Managing Editor dropped from the whitelist).
+        4. New sidebar links: "Logistics Boardroom" (for CHIEF_LOGISTICS, COMMITTEE_LOGISTICS,
+           SYSTEM_ADMIN) with unread-message badge, and "Sponsors" (public).
+        5. NEW component `LogisticsBoardroom` — hero, members list (Chief Logistics tagged in
+           orange), sponsorship requests panel (Approve/Decline + review notes), embedded chat
+           channel (channel=LOGISTICS).
+        6. NEW component `SponsorsPage` — sponsorship tier grid, "Request sponsorship" CTA,
+           and list of the sponsor's own requests with status.
+        7. NEW `SponsorshipRequestDialog` — mirrors exhibition-booth fields (company info,
+           products, tier picker, virtual/physical booth flags, message to Chief Logistics).
+        8. Announcements board reused for both channels via a `channel` prop.
+        9. Conference Admin: new "🎟 Attendee registration" toggle per conference row (with
+           broadcast confirmation prompt).
+       10. Registration dialog: attendee section shows an alert when the toggle is off.
+       11. User Management: NEW "Manage roles" dialog per row grouping editorial/logistics/
+           reviewer/admin roles for the SYSTEM_ADMIN to assign & revoke.
+       12. ROLE_LABELS updated with Chief/Committee Logistics + more accurate Editor labels.
+       13. Demo-accounts hint on login page updated to the new set of test emails.
+      
+      Verification:
+       - Backend testing agent: 10/10 test groups passed (welcome msg, auto-tick,
+         RBAC on assign-editor, channel RBAC, logistics members, sponsorship CRUD,
+         attendee toggle broadcast, attendee 409 gate, role add/remove idempotent,
+         plus regression suite).
+       - Screenshot verification: landing hero centered + upsized ✓, Logistics
+         Boardroom fully rendered with members list & requests panel ✓, Sponsors
+         page with 4-tier pricing card grid ✓, Request Sponsorship dialog with
+         booth-style fields ✓, Registration dialog renders ✓.
+
+      Bug fixed by testing agent (already merged):
+       - NotificationType enum is GENERIC (not GENERAL) — fixed in 4 locations
+         inside /app/app/api/[[...path]]/route.js. Do NOT re-fix.
+
+      Note: This is preview only. User must click "Redeploy" to promote to
+      production (https://scms-platform-1.emergent.host).
   - agent: "testing"
     message: |
       ✅ BACKEND VERIFICATION COMPLETE - EDITORIAL OFFICE ENHANCEMENTS (15/16 TESTS PASSED)
