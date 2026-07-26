@@ -18,6 +18,8 @@ enum Role {
   COMMITTEE_MEMBER
   CHIEF_EDITOR
   COMMITTEE_EDITOR
+  CHIEF_LOGISTICS
+  COMMITTEE_LOGISTICS
   EXTERNAL_REVIEWER
   AUTHOR
   ATTENDEE
@@ -113,6 +115,7 @@ model Conference {
   submissionClose  DateTime?
   registrationOpen DateTime?
   registrationClose DateTime?
+  attendeeRegistrationOpen Boolean @default(false)  // Admin toggle — opens ~1 month before conference
   doubleBlind      Boolean  @default(true)
   status           ConferenceStatus @default(DRAFT)
   websiteBanner    String?
@@ -600,8 +603,10 @@ model EditorAnnouncement {
   id        String   @id @default(uuid())
   authorId  String
   body      String   @db.Text
+  channel   String   @default("EDITORIAL")  // EDITORIAL or LOGISTICS
   createdAt DateTime @default(now())
   @@index([createdAt])
+  @@index([channel])
 }
 
 model ReviewerInvitation {
@@ -637,6 +642,35 @@ model ExhibitionBooth {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   @@index([conferenceId])
+}
+
+// ============ SPONSORSHIP REQUESTS ============
+model SponsorshipRequest {
+  id             String   @id @default(uuid())
+  conferenceId   String
+  requesterId    String                     // Registered sponsor user
+  companyName    String
+  companyType    String?
+  industry       String?
+  companyAddress String?
+  websiteUrl     String?
+  contactEmail   String?
+  contactPhone   String?
+  logoPath       String?
+  bannerPath     String?
+  products       String?  @db.Text
+  sponsorTier    String?                    // BRONZE / SILVER / GOLD / PLATINUM
+  virtualBoothRequested  Boolean @default(false)
+  physicalBoothRequested Boolean @default(false)
+  message        String?  @db.Text
+  status         String   @default("PENDING") // PENDING / APPROVED / DECLINED
+  reviewedById   String?
+  reviewNotes    String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([conferenceId])
+  @@index([requesterId])
+  @@index([status])
 }
 
 // ============ CONFERENCE BOOK ============

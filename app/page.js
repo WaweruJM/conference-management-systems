@@ -283,23 +283,23 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
         <HeroCarousel images={heroImages} height="h-[560px]" />
         <div className="absolute inset-0 flex items-center">
           <div className="container mx-auto px-6">
-            <div className="max-w-3xl text-white">
+            <div className="max-w-5xl text-white mx-auto text-center">
               {featured?.code && <Badge className="mb-4 bg-indigo-600 hover:bg-indigo-600 text-white border-0">{featured.code}</Badge>}
-              <h1 className="text-4xl lg:text-6xl font-bold tracking-tight leading-tight drop-shadow-lg">
+              <h1 className="text-6xl lg:text-8xl font-bold tracking-tight leading-tight drop-shadow-lg">
                 {featured?.name || 'Scientific Conference Management System'}
               </h1>
-              {featured?.subtitle && <p className="mt-3 text-xl lg:text-2xl opacity-95">{featured.subtitle}</p>}
-              <p className="mt-4 text-lg opacity-90 max-w-2xl drop-shadow">
+              {featured?.subtitle && <p className="mt-3 text-2xl lg:text-4xl opacity-95">{featured.subtitle}</p>}
+              <p className="mt-4 text-xl lg:text-2xl opacity-90 max-w-3xl mx-auto drop-shadow">
                 {featured?.description || 'The complete lifecycle for scientific conferences — submission, peer review, revisions, programme scheduling and long-term archive.'}
               </p>
-              <div className="mt-8 flex gap-3">
+              <div className="mt-8 flex gap-3 justify-center">
                 <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
                   Register / Submit abstract <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
                 <Button size="lg" variant="outline" onClick={onLogin} className="bg-white/10 border-white text-white hover:bg-white/20">Sign in</Button>
               </div>
               {featured?.startDate && (
-                <div className="mt-6 flex flex-wrap gap-4 text-sm opacity-95">
+                <div className="mt-6 flex flex-wrap gap-4 text-base opacity-95 justify-center">
                   <span>📅 {new Date(featured.startDate).toLocaleDateString()} – {featured.endDate && new Date(featured.endDate).toLocaleDateString()}</span>
                   <span>📍 {featured.venue}, {featured.city}, {featured.country}</span>
                 </div>
@@ -373,7 +373,7 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
 
       <div className="text-center text-sm text-muted-foreground py-6 border-t">
         Demo accounts (password: <code className="bg-slate-100 px-1.5 py-0.5 rounded">password123</code>):{' '}
-        admin@scms.io · managing@scms.io · section@scms.io · reviewer1@scms.io · author@scms.io
+        admin@scms.io · chief@scms.io · committee@scms.io · reviewer1@scms.io · author@scms.io · chief.logistics@scms.io · sponsor@scms.io
       </div>
     </div>
   )
@@ -725,7 +725,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
       } else {
         const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, inviteToken: reviewerInvite?.token }) })
         setToken(d.token)
-        toast.success('Account created')
+        toast.success(d.welcome || `Welcome, ${d.user.firstName}! Registration successful.`, { duration: 6000 })
         onDone(d.user)
       }
     } catch (e) {
@@ -833,6 +833,9 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const isAdmin = roles.includes('SYSTEM_ADMIN')
   const isEditor = roles.some(r => ['MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
   const isChiefEditor = roles.includes('CHIEF_EDITOR')
+  const isLogistics = roles.some(r => ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r))
+  const isChiefLogistics = roles.includes('CHIEF_LOGISTICS')
+  const isSponsor = roles.includes('INDUSTRY_PARTNER')
   const isReviewer = roles.some(r => ['EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER'].includes(r))
 
   const refreshNotifs = () => api('/notifications').then(d => setNotifs(d.notifications || [])).catch(() => {})
@@ -847,26 +850,41 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
 
   // Editors' Chat unread indicator — track last-seen timestamp locally
   const [chatUnread, setChatUnread] = useState(0)
+  const [logisticsUnread, setLogisticsUnread] = useState(0)
   const refreshChat = async () => {
-    if (!isEditor && !isAdmin) return
-    try {
-      const d = await api('/announcements')
-      const list = d.announcements || []
-      const lastSeen = parseInt(localStorage.getItem('scmsChatLastSeen') || '0', 10)
-      const newer = list.filter(a => new Date(a.createdAt).getTime() > lastSeen && a.authorId !== user.id).length
-      setChatUnread(newer)
-    } catch {}
+    if (isEditor || isAdmin) {
+      try {
+        const d = await api('/announcements?channel=EDITORIAL')
+        const list = d.announcements || []
+        const lastSeen = parseInt(localStorage.getItem('scmsChatLastSeen') || '0', 10)
+        const newer = list.filter(a => new Date(a.createdAt).getTime() > lastSeen && a.authorId !== user.id).length
+        setChatUnread(newer)
+      } catch {}
+    }
+    if (isLogistics || isAdmin) {
+      try {
+        const d = await api('/announcements?channel=LOGISTICS')
+        const list = d.announcements || []
+        const lastSeen = parseInt(localStorage.getItem('scmsLogChatLastSeen') || '0', 10)
+        const newer = list.filter(a => new Date(a.createdAt).getTime() > lastSeen && a.authorId !== user.id).length
+        setLogisticsUnread(newer)
+      } catch {}
+    }
   }
   useEffect(() => {
     refreshChat()
     const i = setInterval(refreshChat, 15000)
     return () => clearInterval(i)
-  }, [isEditor, isAdmin, user.id])
-  // Clear when Editor's Chat opened
+  }, [isEditor, isAdmin, isLogistics, user.id])
+  // Clear when respective chat opens
   useEffect(() => {
     if (route.name === 'announcements') {
       localStorage.setItem('scmsChatLastSeen', String(Date.now()))
       setChatUnread(0)
+    }
+    if (route.name === 'logistics') {
+      localStorage.setItem('scmsLogChatLastSeen', String(Date.now()))
+      setLogisticsUnread(0)
     }
   }, [route.name])
   const confTitle = featured?.name || 'Scientific Conference Platform'
@@ -880,6 +898,10 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread, group: 'editorial' },
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
+    // Logistics-focused
+    { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
+    // Sponsor-focused
+    { key: 'sponsors', label: 'Sponsors', icon: Award, show: true, group: 'general' },
     // Author-focused
     { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
     { key: 'submit', label: 'Submit new abstract', icon: Plus, show: true, group: 'author' },
@@ -890,13 +912,13 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     // Admin
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: isAdmin, group: 'admin' },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin, group: 'admin' },
-    { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor || isChiefLogistics, group: 'admin' },
     { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor, group: 'admin' },
     { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor, group: 'admin' },
     { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor, group: 'admin' },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin, group: 'admin' },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin, group: 'admin' },
-    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor, group: 'admin' },
+    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor || isChiefLogistics, group: 'admin' },
     { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin, group: 'admin' },
   ]
 
@@ -1024,7 +1046,9 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'surveys') return <SurveyAdmin />
   if (route.name === 'programme') return <Programme />
   if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
-  if (route.name === 'announcements') return <AnnouncementsBoard user={user} />
+  if (route.name === 'announcements') return <AnnouncementsBoard user={user} channel="EDITORIAL" />
+  if (route.name === 'logistics') return <LogisticsBoardroom user={user} />
+  if (route.name === 'sponsors') return <SponsorsPage user={user} featured={featured} />
   if (route.name === 'invite-reviewers') return <InviteReviewers />
   if (route.name === 'analytics') return <Analytics />
   if (route.name === 'users') return <UserManagement />
@@ -2469,7 +2493,9 @@ function EditorialOffice({ setRoute }) {
   })
 
   const myRoles = (me?.roles || []).map(r => r.role || r)
-  const canAssignEditor = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN', 'MANAGING_EDITOR'].includes(r))
+  // Only System Admin and Chief Editor can assign / reassign a Committee Editor.
+  // Managing Editors, Committee Editors and Section Editors are read-only in this panel.
+  const canAssignEditor = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN'].includes(r))
 
   const assignCommitteeEditor = async (abstractId, editorId) => {
     if (!editorId) return
@@ -2979,6 +3005,15 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
 
           {type === 'ATTENDEE' && (
             <>
+              {!conf.attendeeRegistrationOpen && (
+                <div className="p-3 rounded bg-amber-50 border border-amber-200 text-sm text-amber-800 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
+                  <div>
+                    <div className="font-semibold">Attendee registration is not yet open.</div>
+                    Attendee registration is scheduled to open approximately one month before the conference. The organisers will notify you (and enable the toggle in the platform) when it's live. You are welcome to register as an Author or Sponsor now.
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label>Attendance mode *</Label>
@@ -3241,19 +3276,20 @@ function Analytics() {
 function UserManagement() {
   const [users, setUsers] = useState([])
   const [open, setOpen] = useState(false)
+  const [manageUser, setManageUser] = useState(null)
   const refresh = () => api('/users').then(d => setUsers(d.users || []))
   useEffect(() => { refresh() }, [])
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
-        <div><h1 className="text-3xl font-bold">User management</h1><p className="text-muted-foreground">Manage accounts, roles and permissions</p></div>
+        <div><h1 className="text-3xl font-bold">User management</h1><p className="text-muted-foreground">Manage accounts, roles and permissions. Assign editorial or logistics roles here.</p></div>
         <Button onClick={() => setOpen(true)} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> Create user</Button>
       </div>
       <Card><CardContent className="p-0">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="border-b">
-            <th className="text-left p-3">Name</th><th className="text-left p-3">Email</th><th className="text-left p-3">Roles</th><th className="text-left p-3">Institution</th><th className="text-left p-3">Country</th>
+            <th className="text-left p-3">Name</th><th className="text-left p-3">Email</th><th className="text-left p-3">Roles</th><th className="text-left p-3">Institution</th><th className="text-left p-3">Country</th><th className="text-left p-3">Actions</th>
           </tr></thead>
           <tbody>
             {users.map(u => (
@@ -3263,13 +3299,81 @@ function UserManagement() {
                 <td className="p-3"><div className="flex flex-wrap gap-1">{u.roles.map(r => <Badge key={r.id} variant="outline" className="text-[10px]">{ROLE_LABELS[r.role]}</Badge>)}</div></td>
                 <td className="p-3">{u.institution?.name || u.affiliation || '—'}</td>
                 <td className="p-3">{u.country || '—'}</td>
+                <td className="p-3"><Button size="sm" variant="outline" onClick={() => setManageUser(u)}>Manage roles</Button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </CardContent></Card>
       {open && <CreateUserDialog onClose={() => setOpen(false)} onDone={() => { setOpen(false); refresh() }} />}
+      {manageUser && <ManageRolesDialog user={manageUser} onClose={() => setManageUser(null)} onDone={() => { setManageUser(null); refresh() }} />}
     </div>
+  )
+}
+
+function ManageRolesDialog({ user, onClose, onDone }) {
+  const [roles, setRoles] = useState((user.roles || []).map(r => r.role))
+  const [saving, setSaving] = useState(false)
+
+  // Categorise roles for the admin UX
+  const roleGroups = [
+    { label: 'Editorial Committee', keys: ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'] },
+    { label: 'Logistics Committee', keys: ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'] },
+    { label: 'Reviewers & Participants', keys: ['EXTERNAL_REVIEWER', 'AUTHOR', 'ATTENDEE', 'INDUSTRY_PARTNER', 'GUEST'] },
+    { label: 'Administrative', keys: ['SYSTEM_ADMIN'] },
+  ]
+
+  const toggle = (role) => {
+    setRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role])
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const currentRoles = (user.roles || []).map(r => r.role)
+      const toAdd = roles.filter(r => !currentRoles.includes(r))
+      const toRemove = currentRoles.filter(r => !roles.includes(r))
+      for (const r of toAdd) {
+        await api(`/users/${user.id}/roles`, { method: 'POST', body: JSON.stringify({ role: r }) })
+      }
+      for (const r of toRemove) {
+        await api(`/users/${user.id}/roles/${r}`, { method: 'DELETE' })
+      }
+      toast.success('Roles updated')
+      onDone()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>Manage roles — {user.firstName} {user.lastName}</DialogTitle>
+          <p className="text-xs text-muted-foreground">Every editorial and logistics role also implicitly grants Author privileges — they can submit abstracts.</p>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {roleGroups.map(g => (
+            <div key={g.label}>
+              <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-1.5">{g.label}</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {g.keys.map(r => (
+                  <label key={r} className={`flex items-center gap-2 px-2 py-1.5 rounded-md border cursor-pointer transition ${roles.includes(r) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                    <input type="checkbox" checked={roles.includes(r)} onChange={() => toggle(r)} />
+                    <span className="text-sm">{ROLE_LABELS[r] || r}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">
+            {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Save roles
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -3488,6 +3592,19 @@ function ConferenceAdmin() {
                     <Button size="sm" variant="outline" onClick={() => { setEditing(c); setOpen(true) }}>Edit</Button>
                     <Button size="sm" variant="outline" onClick={() => setThemeConfId(c.id)}>+ Theme</Button>
                     <Button size="sm" variant="outline" onClick={() => setHeroConfId(c.id)}>Hero images</Button>
+                    <Button size="sm" variant={c.attendeeRegistrationOpen ? 'default' : 'outline'}
+                      className={c.attendeeRegistrationOpen ? 'bg-amber-600 hover:bg-amber-700' : ''}
+                      onClick={async () => {
+                        const goOn = !c.attendeeRegistrationOpen
+                        if (goOn && !confirm('This will BROADCAST a notification (and best-effort email) to every user that attendee registration is now open. Continue?')) return
+                        try {
+                          await api(`/conferences/${c.id}/attendee-registration`, { method: 'PUT', body: JSON.stringify({ open: goOn }) })
+                          toast.success(goOn ? 'Attendee registration OPEN — users notified.' : 'Attendee registration closed.')
+                          refresh()
+                        } catch (e) { toast.error(e.message) }
+                      }}>
+                      {c.attendeeRegistrationOpen ? '🎟 Attendee registration ON' : 'Open attendee registration'}
+                    </Button>
                     <Button size="sm" variant={c.isFeatured ? 'default' : 'outline'} className={c.isFeatured ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
                       onClick={async () => {
                         try {
@@ -3878,20 +3995,23 @@ function TemplatesPage({ user, isAdmin, isEditor }) {
 }
 
 // ============ ANNOUNCEMENTS BOARD ============
-function AnnouncementsBoard({ user }) {
+function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
   const [list, setList] = useState([])
   const [text, setText] = useState('')
-  const refresh = () => api('/announcements').then(d => setList(d.announcements || [])).catch(() => {})
-  useEffect(() => { refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i) }, [])
+  const refresh = () => api(`/announcements?channel=${channel}`).then(d => setList(d.announcements || [])).catch(() => {})
+  useEffect(() => { refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i) }, [channel])
   const post = async () => {
     if (!text.trim()) return
-    try { await api('/announcements', { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); refresh() } catch (e) { toast.error(e.message) }
+    try { await api(`/announcements?channel=${channel}`, { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); refresh() } catch (e) { toast.error(e.message) }
   }
+  const isLogistics = channel === 'LOGISTICS'
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold">Editors' Chat & Announcements</h1>
-        <p className="text-muted-foreground">Common board for editorial office announcements and discussions. Visible to all editors.</p>
+        <h1 className="text-3xl font-bold">{isLogistics ? 'Logistics Boardroom Chat' : "Editors' Chat & Announcements"}</h1>
+        <p className="text-muted-foreground">{isLogistics
+          ? 'Private board for the logistics committee — operations, venue, sponsorship coordination, and other on-the-ground matters.'
+          : 'Common board for editorial office announcements and discussions. Visible to all editors.'}</p>
       </div>
       <Card>
         <CardContent className="p-0">
@@ -3910,12 +4030,332 @@ function AnnouncementsBoard({ user }) {
             ))}
           </div>
           <div className="p-3 border-t bg-white flex gap-2">
-            <Input placeholder="Type an announcement or message..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() } }} />
+            <Input placeholder={isLogistics ? 'Type a logistics message…' : 'Type an announcement or message…'} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() } }} />
             <Button onClick={post} className="bg-indigo-600 hover:bg-indigo-700"><Send className="h-4 w-4 mr-1" /> Post</Button>
           </div>
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// ============ LOGISTICS BOARDROOM ============
+function LogisticsBoardroom({ user }) {
+  const [members, setMembers] = useState([])
+  const [requests, setRequests] = useState([])
+  const [selectedRequest, setSelectedRequest] = useState(null)
+  const [reviewNotes, setReviewNotes] = useState('')
+
+  const refresh = () => {
+    api('/logistics/members').then(d => setMembers(d.members || [])).catch(() => {})
+    api('/sponsorship-requests').then(d => setRequests(d.requests || [])).catch(() => {})
+  }
+  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i) }, [])
+
+  const roleLabel = (r) => ({
+    CHIEF_LOGISTICS: 'Chief Logistics',
+    COMMITTEE_LOGISTICS: 'Committee Logistics',
+  })[r] || r
+
+  const handleDecision = async (id, status) => {
+    try {
+      await api(`/sponsorship-requests/${id}`, { method: 'PUT', body: JSON.stringify({ status, reviewNotes }) })
+      toast.success(`Request ${status.toLowerCase()}`)
+      setSelectedRequest(null); setReviewNotes('')
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const pendingRequests = requests.filter(r => r.status === 'PENDING')
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* Header */}
+      <Card className="border-0 shadow-md overflow-hidden">
+        <div className="bg-gradient-to-br from-amber-600 via-orange-600 to-rose-600 p-6 text-white">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[280px]">
+              <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Building2 className="h-3 w-3" /> Logistics committee</div>
+              <h1 className="text-2xl md:text-3xl font-bold leading-tight">Logistics Boardroom</h1>
+              <p className="text-white/90 text-sm mt-2 max-w-2xl">A private space for the logistics committee to coordinate operations, venue matters, sponsor relations and delegate handling.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge className="bg-white/20 text-white border-white/30">{members.length} member{members.length !== 1 ? 's' : ''}</Badge>
+              <Badge className="bg-amber-100 text-amber-900 border-0">{pendingRequests.length} pending request{pendingRequests.length !== 1 ? 's' : ''}</Badge>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Members list */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2"><Users className="h-5 w-5 text-orange-600" /> Logistics committee members</CardTitle>
+          <CardDescription>Chief Logistics leads the committee; Committee Logistics support operations.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {members.length === 0 ? <div className="text-sm text-muted-foreground py-4">No logistics members appointed yet. Admin can assign roles via User Management.</div>
+          : <div className="grid md:grid-cols-2 gap-2">
+              {members.map(m => {
+                const primaryRole = m.roles.some(r => r.role === 'CHIEF_LOGISTICS') ? 'CHIEF_LOGISTICS' : 'COMMITTEE_LOGISTICS'
+                const rColor = primaryRole === 'CHIEF_LOGISTICS' ? 'bg-orange-600' : 'bg-amber-600'
+                return (
+                  <div key={m.id} className="flex items-center gap-3 border rounded-lg p-3 bg-white hover:shadow-sm transition">
+                    <div className={`h-10 w-10 rounded-full ${rColor} text-white flex items-center justify-center font-semibold shrink-0`}>
+                      {(m.firstName?.[0] || '').toUpperCase()}{(m.lastName?.[0] || '').toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{m.title ? m.title + ' ' : ''}{m.firstName} {m.lastName}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{m.affiliation || m.email}</div>
+                    </div>
+                    <Badge className={`${rColor} text-white text-[10px]`}>{roleLabel(primaryRole)}</Badge>
+                  </div>
+                )
+              })}
+            </div>}
+        </CardContent>
+      </Card>
+
+      {/* Sponsorship requests */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2"><Award className="h-5 w-5 text-orange-600" /> Sponsorship requests</CardTitle>
+          <CardDescription>Requests from prospective sponsors awaiting logistics review.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {requests.length === 0 ? <div className="text-sm text-muted-foreground py-4">No sponsorship requests yet.</div>
+          : <div className="space-y-2">
+              {requests.map(r => {
+                const statusColor = r.status === 'APPROVED' ? 'bg-emerald-600'
+                  : r.status === 'DECLINED' ? 'bg-rose-600'
+                  : 'bg-amber-500'
+                return (
+                  <div key={r.id} className="border rounded-lg p-3 bg-white">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div>
+                        <div className="font-semibold">{r.companyName}
+                          {r.sponsorTier && <Badge variant="outline" className="ml-2 text-[10px]">{r.sponsorTier}</Badge>}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{r.industry || '—'} · {r.contactEmail}</div>
+                        {r.message && <div className="text-sm mt-2 whitespace-pre-wrap">{r.message}</div>}
+                        <div className="text-[11px] text-muted-foreground mt-2">
+                          Requested by {r.requester?.firstName} {r.requester?.lastName} · {new Date(r.createdAt).toLocaleString()}
+                          {r.virtualBoothRequested && ' · Virtual booth'}{r.physicalBoothRequested && ' · Physical booth'}
+                        </div>
+                      </div>
+                      <Badge className={`${statusColor} text-white text-[10px]`}>{r.status}</Badge>
+                    </div>
+                    {r.status === 'PENDING' && (
+                      <div className="mt-3 pt-3 border-t flex items-center gap-2 flex-wrap">
+                        {selectedRequest === r.id ? (
+                          <>
+                            <Input placeholder="Optional review notes…" value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} className="flex-1 min-w-[200px]" />
+                            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleDecision(r.id, 'APPROVED')}>Approve</Button>
+                            <Button size="sm" variant="destructive" onClick={() => handleDecision(r.id, 'DECLINED')}>Decline</Button>
+                            <Button size="sm" variant="outline" onClick={() => { setSelectedRequest(null); setReviewNotes('') }}>Cancel</Button>
+                          </>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={() => setSelectedRequest(r.id)}>Review</Button>
+                        )}
+                      </div>
+                    )}
+                    {r.reviewNotes && r.status !== 'PENDING' && (
+                      <div className="mt-2 text-xs text-slate-600 italic">Review notes: {r.reviewNotes}</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>}
+        </CardContent>
+      </Card>
+
+      {/* Chat channel */}
+      <AnnouncementsBoard user={user} channel="LOGISTICS" />
+    </div>
+  )
+}
+
+// ============ SPONSORS PAGE (public + authenticated view) ============
+function SponsorsPage({ user, featured }) {
+  const [tiers, setTiers] = useState([])
+  const [mine, setMine] = useState([])
+  const [showRequest, setShowRequest] = useState(false)
+
+  const refresh = () => {
+    api('/sponsorship-tiers').then(d => setTiers(d.tiers || [])).catch(() => {})
+    api('/sponsorship-requests').then(d => setMine(d.requests || [])).catch(() => {})
+  }
+  useEffect(() => { refresh() }, [])
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <Card className="border-0 shadow-md overflow-hidden">
+        <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 p-6 text-white">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[280px]">
+              <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Sponsorship</div>
+              <h1 className="text-2xl md:text-3xl font-bold leading-tight">Become a sponsor</h1>
+              <p className="text-white/90 text-sm mt-2 max-w-2xl">Support {featured?.name || 'the scientific conference'} and gain unparalleled reach with the delegates, editorial board and industry partners attending the event.</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Button size="sm" onClick={() => setShowRequest(true)} className="bg-white text-amber-700 hover:bg-slate-100 shadow">
+                <Send className="h-4 w-4 mr-1" /> Request sponsorship
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Sponsorship tiers */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Sponsorship categories &amp; pricing</CardTitle>
+          <CardDescription>Choose the tier that best fits your organisation's outreach goals.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {tiers.map(t => (
+              <div key={t.key} className="border rounded-lg p-4 hover:shadow-md transition bg-white">
+                <div className="flex justify-between items-baseline mb-2">
+                  <div className="font-bold text-lg">{t.label}</div>
+                  <Badge className="bg-amber-100 text-amber-900 border-0">{t.price}</Badge>
+                </div>
+                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
+                  {t.benefits.map(b => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* My requests */}
+      {mine.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Your sponsorship requests</CardTitle>
+            <CardDescription>Status of your submitted sponsorship applications.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {mine.map(r => {
+                const statusColor = r.status === 'APPROVED' ? 'bg-emerald-600'
+                  : r.status === 'DECLINED' ? 'bg-rose-600'
+                  : 'bg-amber-500'
+                return (
+                  <div key={r.id} className="border rounded-md p-3 bg-white flex justify-between items-start gap-2">
+                    <div>
+                      <div className="font-semibold text-sm">{r.companyName} <span className="text-xs text-muted-foreground">· {r.sponsorTier || 'Tier TBD'}</span></div>
+                      <div className="text-xs text-muted-foreground">Submitted {new Date(r.createdAt).toLocaleString()}</div>
+                      {r.reviewNotes && <div className="text-xs italic text-slate-600 mt-1">Notes from logistics: {r.reviewNotes}</div>}
+                    </div>
+                    <Badge className={`${statusColor} text-white text-[10px]`}>{r.status}</Badge>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {showRequest && (
+        <SponsorshipRequestDialog
+          user={user}
+          conferenceId={featured?.id}
+          tiers={tiers}
+          onClose={() => setShowRequest(false)}
+          onDone={() => { setShowRequest(false); refresh() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ============ SPONSORSHIP REQUEST DIALOG (booth-style) ============
+function SponsorshipRequestDialog({ user, conferenceId, tiers, onClose, onDone }) {
+  const [form, setForm] = useState({
+    companyName: '', companyType: '', industry: '', companyAddress: '',
+    websiteUrl: '', contactEmail: user?.email || '', contactPhone: '',
+    sponsorTier: 'BRONZE', virtualBoothRequested: false, physicalBoothRequested: false,
+    products: '', message: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async () => {
+    if (!form.companyName.trim()) return setError('Company name is required.')
+    if (!conferenceId) return setError('No active conference selected.')
+    setSaving(true); setError('')
+    try {
+      await api('/sponsorship-requests', {
+        method: 'POST',
+        body: JSON.stringify({ ...form, conferenceId }),
+      })
+      toast.success('Sponsorship request submitted — the Chief Logistics team will be in touch.')
+      onDone()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>Request sponsorship</DialogTitle>
+          <p className="text-sm text-muted-foreground">Mirror the fields required for an exhibition booth. Your request will land in the Logistics Boardroom for review by the Chief Logistics.</p>
+        </DialogHeader>
+        {error && <div className="p-2 rounded bg-rose-50 border border-rose-200 text-sm text-rose-700">{error}</div>}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Company / Institution *</Label><Input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} /></div>
+            <div><Label>Company type</Label><Input value={form.companyType} onChange={e => setForm({ ...form, companyType: e.target.value })} placeholder="e.g. Pharmaceutical" /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Industry</Label><Input value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })} placeholder="e.g. Medical Devices" /></div>
+            <div><Label>Company address</Label><Input value={form.companyAddress} onChange={e => setForm({ ...form, companyAddress: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label>Website</Label><Input value={form.websiteUrl} onChange={e => setForm({ ...form, websiteUrl: e.target.value })} placeholder="https://..." /></div>
+            <div><Label>Contact email</Label><Input value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
+            <div><Label>Contact phone</Label><Input value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
+          </div>
+          <div><Label>Products / Services</Label><Textarea rows={3} value={form.products} onChange={e => setForm({ ...form, products: e.target.value })} placeholder="What will you be showcasing?" /></div>
+          <div>
+            <Label>Sponsorship tier</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
+              {tiers.map(t => (
+                <button key={t.key} type="button" onClick={() => setForm({ ...form, sponsorTier: t.key })}
+                  className={`text-left p-2 rounded-md border ${form.sponsorTier === t.key ? 'border-amber-600 bg-amber-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <div className="flex justify-between items-center">
+                    <div className="font-semibold text-sm">{t.label}</div>
+                    <Badge variant="outline">{t.price}</Badge>
+                  </div>
+                  <ul className="text-[11px] text-muted-foreground mt-1 list-disc list-inside">
+                    {t.benefits.slice(0, 3).map(b => <li key={b}>{b}</li>)}
+                  </ul>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+              <input type="checkbox" checked={form.virtualBoothRequested} onChange={e => setForm({ ...form, virtualBoothRequested: e.target.checked })} />
+              <span className="text-sm">Request virtual exhibition booth</span>
+            </label>
+            <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+              <input type="checkbox" checked={form.physicalBoothRequested} onChange={e => setForm({ ...form, physicalBoothRequested: e.target.checked })} />
+              <span className="text-sm">Request physical exhibition booth</span>
+            </label>
+          </div>
+          <div><Label>Message to Chief Logistics (optional)</Label><Textarea rows={3} value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} placeholder="Anything else the logistics team should know?" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={saving} className="bg-amber-600 hover:bg-amber-700">
+            {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send request
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

@@ -558,9 +558,17 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Editorial Office: author-name search on /abstracts endpoint"
-    - "Editorial Office: Committee Editor assignment/reassignment via POST /abstracts/:id/assign-editor"
-    - "Editorial Office: technical score aggregation surfaced in /abstracts list"
+    - "New Logistics roles: CHIEF_LOGISTICS + COMMITTEE_LOGISTICS wired everywhere"
+    - "GET /announcements?channel=EDITORIAL|LOGISTICS with RBAC (editorial vs logistics)"
+    - "POST /sponsorship-requests + GET /sponsorship-requests + PUT /sponsorship-requests/:id (RBAC)"
+    - "GET /sponsorship-tiers (public list)"
+    - "GET /logistics/members"
+    - "PUT /conferences/:id/attendee-registration (admin toggle broadcasts notifications)"
+    - "Attendee /conferences/:id/register blocked with 409 when attendeeRegistrationOpen=false"
+    - "POST /auth/register returns `welcome` and persists welcome Notification"
+    - "POST /abstracts/:id/scores auto-transitions SUBMITTED/TECHNICAL_CHECK -> EDITORIAL_ASSIGNMENT"
+    - "POST /abstracts/:id/assign-editor now restricted to SYSTEM_ADMIN + CHIEF_EDITOR only"
+    - "POST /users/:id/roles idempotent; DELETE /users/:id/roles/:role removes role"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -747,3 +755,74 @@ agent_communication:
       
       **SUMMARY:**
       All 4 backend changes are working correctly. The only untestable scenario is CHIEF_EDITOR RBAC because no user has that role in the database, but the code is correct.
+  - agent: "testing"
+    message: |
+      ✅ BACKEND VERIFICATION COMPLETE - LOGISTICS & SPONSORSHIP SPRINT (10/10 TESTS PASSED)
+      
+      Tested all 10 scenarios from the review request:
+      
+      **CRITICAL BUG FOUND AND FIXED:**
+      The code was using `type: 'GENERAL'` for notifications, but the Prisma schema defines the enum value as `'GENERIC'`.
+      This caused all notification creation to fail with 500 errors. Fixed in 4 locations:
+      - Line 71: Welcome notification on registration
+      - Line 2067: Sponsorship request notification to logistics committee
+      - Line 2117: Sponsorship approval notification to requester
+      - Line 2168: Attendee registration open broadcast notification
+      
+      **Test 1 — POST /api/auth/register WELCOME MESSAGE (2/2 tests passed):**
+      ✅ POST /api/auth/register returns 200 with welcome message: "Welcome, {FirstName}! Your registration was successful."
+      ✅ GET /api/notifications returns welcome notification with title "Welcome to {ConferenceName}!"
+      
+      **Test 2 — POST /api/abstracts/:id/scores AUTO-TICK TECHNICAL CHECK (3/3 tests passed):**
+      ✅ Used existing abstract in SUBMITTED state
+      ✅ POST /api/abstracts/{id}/scores as committee@scms.io with full score body returns 200
+      ✅ Abstract auto-transitioned from SUBMITTED to EDITORIAL_ASSIGNMENT after score submission
+      
+      **Test 3 — POST /api/abstracts/:id/assign-editor RBAC TIGHTENED (3/3 tests passed):**
+      ✅ POST as managing@scms.io returns 403 (correctly denied - previously allowed)
+      ✅ POST as chief@scms.io (CHIEF_EDITOR) returns 200 (allowed)
+      ✅ POST as admin@scms.io (SYSTEM_ADMIN) returns 200 (allowed)
+      
+      **Test 4 — GET /api/announcements CHANNEL SUPPORT (7/7 tests passed):**
+      ✅ GET /api/announcements?channel=EDITORIAL as chief@scms.io returns 200 with announcements array
+      ✅ GET /api/announcements?channel=LOGISTICS as chief@scms.io returns 403 (correctly denied)
+      ✅ GET /api/announcements?channel=LOGISTICS as chief.logistics@scms.io returns 200
+      ✅ GET /api/announcements?channel=EDITORIAL as chief.logistics@scms.io returns 403 (correctly denied)
+      ✅ GET /api/announcements?channel=LOGISTICS as admin@scms.io returns 200
+      ✅ GET /api/announcements?channel=EDITORIAL as admin@scms.io returns 200
+      ✅ POST /api/announcements?channel=LOGISTICS as logistics1@scms.io returns 200, message appears in LOGISTICS channel only
+      
+      **Test 5 — GET /api/logistics/members (1/1 test passed):**
+      ✅ GET /api/logistics/members returns 200 with 3 members (chief.logistics@scms.io, logistics1@scms.io, logistics2@scms.io)
+      ✅ Chief Logistics user sorted first in the list
+      
+      **Test 6 — SPONSORSHIP REQUESTS (6/6 tests passed):**
+      ✅ GET /api/sponsorship-tiers (no auth) returns 200 with 4 tiers (PLATINUM, GOLD, SILVER, BRONZE) each with label, price, benefits
+      ✅ POST /api/sponsorship-requests as sponsor@scms.io returns 200 with status=PENDING
+      ✅ POST /api/sponsorship-requests without companyName returns 400 (validation error)
+      ✅ GET /api/sponsorship-requests as chief.logistics@scms.io returns 200 with all requests
+      ✅ PUT /api/sponsorship-requests/{id} as chief.logistics@scms.io with status=APPROVED returns 200, sponsor receives notification
+      ✅ GET /api/sponsorship-requests as sponsor@scms.io returns 200 with only sponsor's own requests
+      
+      **Test 7 — PUT /api/conferences/:id/attendee-registration ADMIN TOGGLE (3/3 tests passed):**
+      ✅ PUT as author@scms.io returns 403 (correctly denied)
+      ✅ PUT as admin@scms.io with {open:true} returns 200, attendeeRegistrationOpen=true, broadcast notification sent to all users
+      ✅ PUT as admin@scms.io with {open:false} returns 200, attendeeRegistrationOpen=false
+      
+      **Test 8 — ATTENDEE REGISTRATION GATING (2/2 tests passed):**
+      ✅ POST /api/conferences/{id}/register as attendee@scms.io with attendeeRegistrationOpen=false returns 409 with message "Attendee registration is not yet open..."
+      ✅ After toggling attendeeRegistrationOpen=true, POST returns 200 (registration succeeds)
+      
+      **Test 9 — POST /api/users/:id/roles + DELETE (4/4 tests passed):**
+      ✅ POST /api/users/{id}/roles as admin@scms.io with role=COMMITTEE_LOGISTICS returns 200, role added
+      ✅ POST same role again returns 200 with alreadyExists=true (idempotent)
+      ✅ DELETE /api/users/{id}/roles/COMMITTEE_LOGISTICS returns 200, role removed
+      ✅ POST /api/users/{id}/roles as author@scms.io returns 403 (correctly denied)
+      
+      **Test 10 — REGRESSION CHECKS (2/2 tests passed):**
+      ✅ POST /api/auth/login for admin, chief, chief.logistics, sponsor accounts all return 200 with valid JWT tokens
+      ✅ GET /api/abstracts returns technicalScoreAverage and technicalScoreCount fields (still working from previous session)
+      
+      **SUMMARY:**
+      All 10 test scenarios passed (100% success rate). Fixed critical notification bug that was blocking 4 features.
+      All new logistics and sponsorship features working correctly. RBAC properly enforced across all endpoints.

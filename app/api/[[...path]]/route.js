@@ -60,10 +60,24 @@ async function handleAuth(route, method, request) {
         data: { respondedAt: new Date(), registeredUserId: user.id },
       })
     }
+    // Send a persistent welcome notification for this first-time registration
+    try {
+      const conf = await prisma.conference.findFirst({ where: { isFeatured: true } })
+        || await prisma.conference.findFirst({ orderBy: { createdAt: 'desc' } })
+      const confName = conf?.name || 'the Scientific Conference'
+      await prisma.notification.create({
+        data: {
+          userId: user.id,
+          type: 'GENERIC',
+          title: `Welcome to ${confName}!`,
+          body: `Your registration was successful — thank you for joining ${confName}. Log in to continue with your role as ${actualRole.replace(/_/g, ' ').toLowerCase()}.`,
+        },
+      })
+    } catch (e) { /* non-fatal */ }
     const token = signToken({ userId: user.id })
     const c = await cookies(); c.set('scms_token', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60*60*24*30 })
     await logAudit({ actorId: user.id, action: 'REGISTER', entityType: 'User', entityId: user.id })
-    return ok({ user: sanitizeUser(user), token })
+    return ok({ user: sanitizeUser(user), token, welcome: `Welcome, ${user.firstName}! Your registration was successful.` })
   }
 
   if (route === '/auth/login' && method === 'POST') {
@@ -200,13 +214,26 @@ async function handleConferences(route, method, request) {
     const now = new Date()
     // Timing rules:
     // AUTHOR: registration open while submission window is open
-    // ATTENDEE: opens 1 month before conference start
+    // ATTENDEE: opens 1 month before conference start AND requires admin's attendeeRegistrationOpen toggle
     // SPONSOR: always open until conference end
     const regType = body.type || 'ATTENDEE'
-    if (regType === 'ATTENDEE' && conf.startDate) {
-      const oneMonthBefore = new Date(conf.startDate); oneMonthBefore.setMonth(oneMonthBefore.getMonth() - 1)
-      if (now < oneMonthBefore) return err(`Attendee registration opens on ${oneMonthBefore.toDateString()}.`)
-      if (conf.endDate && now > conf.endDate) return err('Attendee registration is closed.')
+    if (regType === 'ATTENDEE') {
+      if (!conf.attendeeRegistrationOpen) {
+        const dateHint = conf.startDate
+          ? (() => { const d = new Date(conf.startDate); d.setMonth(d.getMonth() - 1); return d.toDateString() })()
+          : null
+        return err(
+          dateHint
+            ? `Attendee registration is not yet open. It will be opened by the organisers around ${dateHint} (one month before the conference).`
+            : 'Attendee registration is not yet open. Please check back closer to the conference date.',
+          409,
+        )
+      }
+      if (conf.startDate) {
+        const oneMonthBefore = new Date(conf.startDate); oneMonthBefore.setMonth(oneMonthBefore.getMonth() - 1)
+        if (now < oneMonthBefore) return err(`Attendee registration opens on ${oneMonthBefore.toDateString()}.`)
+        if (conf.endDate && now > conf.endDate) return err('Attendee registration is closed.')
+      }
     }
     if (regType === 'AUTHOR' && conf.submissionClose && now > conf.submissionClose) return err('Author registration closed (submission window ended).')
     const reg = await prisma.registration.upsert({
@@ -248,14 +275,31 @@ async function handleConferences(route, method, request) {
     })
     const editors = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','SECTION_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
-      select: { firstName: true, lastName: true, title: true, affiliation: true },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
     })
+    const logistics = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS','COMMITTEE_LOGISTICS'] } } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
+    })
+    const seen = new Set()
     const delegates = [
       ...regs.map(r => ({
         prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
         rank: r.rank || (r.type === 'SPONSOR' ? 'Sponsor' : ''), affiliation: r.affiliation || r.companyName || r.user.affiliation,
       })),
-      ...editors.map(e => ({ prefix: e.title || '', fullName: `${e.firstName} ${e.lastName}`, rank: 'Editorial Board', affiliation: e.affiliation || '' })),
+      ...editors.filter(e => {
+        // If a user is both editorial and logistics, prefer their editorial tag (they'll be added once here)
+        const key = `${e.firstName}|${e.lastName}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).map(e => ({ prefix: e.title || '', fullName: `${e.firstName} ${e.lastName}`, rank: 'Scientific Committee Editor', affiliation: e.affiliation || '' })),
+      ...logistics.filter(l => {
+        const key = `${l.firstName}|${l.lastName}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).map(l => ({ prefix: l.title || '', fullName: `${l.firstName} ${l.lastName}`, rank: 'Scientific Committee Logistics', affiliation: l.affiliation || '' })),
     ]
     const { generateNameTagsPDF } = await import('@/lib/pdf')
     const buf = await generateNameTagsPDF(delegates, conf)
@@ -693,7 +737,7 @@ async function handleAbstracts(route, method, request) {
   // Assign editor
   const assignEdMatch = route.match(/^\/abstracts\/([^\/]+)\/assign-editor$/)
   if (assignEdMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     if (!body.editorId) return err('editorId required')
     // Deactivate any prior active assignments so we support seamless reassignment
@@ -1032,8 +1076,17 @@ async function handleUsers(route, method, request) {
   if (roleMatch && method === 'POST') {
     if (!hasRole(user, 'SYSTEM_ADMIN')) return err('Forbidden', 403)
     const body = await request.json()
+    // Prevent duplicate
+    const exists = await prisma.userRole.findFirst({ where: { userId: roleMatch[1], role: body.role, conferenceId: null } })
+    if (exists) return ok({ role: exists, alreadyExists: true })
     const r = await prisma.userRole.create({ data: { userId: roleMatch[1], role: body.role } }).catch(() => null)
     return ok({ role: r })
+  }
+  const roleDelMatch = route.match(/^\/users\/([^\/]+)\/roles\/([^\/]+)$/)
+  if (roleDelMatch && method === 'DELETE') {
+    if (!hasRole(user, 'SYSTEM_ADMIN')) return err('Forbidden', 403)
+    await prisma.userRole.deleteMany({ where: { userId: roleDelMatch[1], role: roleDelMatch[2], conferenceId: null } })
+    return ok({ ok: true })
   }
 
   return null
@@ -1408,20 +1461,39 @@ async function handleTechnicalScore(route, method, request) {
         language: body.language, themeAlignment: body.themeAlignment, comments: body.comments || null,
       },
     })
+    // Auto-tick "Technical Check" — once any committee/editor saves a technical score
+    // the abstract is deemed to have passed the technical review stage.
+    try {
+      const abs = await prisma.abstract.findUnique({ where: { id: listMatch[1] }, select: { currentState: true } })
+      if (abs && (abs.currentState === 'SUBMITTED' || abs.currentState === 'TECHNICAL_CHECK')) {
+        await transitionState(listMatch[1], 'EDITORIAL_ASSIGNMENT', user.id, 'Technical check auto-completed on score save')
+      }
+    } catch (e) { /* non-fatal */ }
     return ok({ score })
   }
   return null
 }
 
-// ============ EDITORS' ANNOUNCEMENT BOARD ============
+// ============ EDITORS' / LOGISTICS ANNOUNCEMENT BOARD ============
 async function handleAnnouncements(route, method, request) {
   if (route !== '/announcements') return null
   const user = await getCurrentUser(request)
   if (!user) return err('Unauthenticated', 401)
-  if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Editors only', 403)
+
+  // Channel is chosen via ?channel= (defaults to EDITORIAL)
+  const url = new URL(request.url)
+  const channel = (url.searchParams.get('channel') || 'EDITORIAL').toUpperCase()
+  const validChannels = ['EDITORIAL', 'LOGISTICS']
+  if (!validChannels.includes(channel)) return err('Invalid channel', 400)
+
+  const editorialRoles = ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER']
+  const logisticsRoles = ['SYSTEM_ADMIN', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS']
+  const allowedRoles = channel === 'LOGISTICS' ? logisticsRoles : editorialRoles
+  if (!hasRole(user, ...allowedRoles)) return err(`Only ${channel === 'LOGISTICS' ? 'logistics committee' : 'editors'} may access this channel`, 403)
 
   if (route === '/announcements' && method === 'GET') {
     const list = await prisma.editorAnnouncement.findMany({
+      where: { channel },
       orderBy: { createdAt: 'asc' },
       take: 200,
     })
@@ -1431,9 +1503,9 @@ async function handleAnnouncements(route, method, request) {
     return ok({ announcements: list.map(a => ({ ...a, author: map[a.authorId] })) })
   }
   if (route === '/announcements' && method === 'POST') {
-    const { body } = await request.json()
-    if (!body || !body.trim()) return err('Body required')
-    const a = await prisma.editorAnnouncement.create({ data: { authorId: user.id, body: body.trim() } })
+    const { body: msgBody } = await request.json()
+    if (!msgBody || !msgBody.trim()) return err('Body required')
+    const a = await prisma.editorAnnouncement.create({ data: { authorId: user.id, body: msgBody.trim(), channel } })
     return ok({ announcement: a })
   }
   return null
@@ -1943,6 +2015,178 @@ async function handleBooths(route, method, request) {
   return null
 }
 
+// ============ SPONSORSHIP REQUESTS ============
+// Sponsors submit sponsorship requests; Chief Logistics (and Admin) review them.
+async function handleSponsorshipRequests(route, method, request) {
+  // Public sponsorship tiers & pricing
+  if (route === '/sponsorship-tiers' && method === 'GET') {
+    return ok({
+      tiers: [
+        { key: 'PLATINUM', label: 'Platinum Sponsor', price: 'USD 20,000', benefits: ['Primary logo on stage & website', 'Keynote slot (30 min)', 'Premium booth (5x3m)', '10 delegate passes', 'Full-page ad in book'] },
+        { key: 'GOLD',     label: 'Gold Sponsor',     price: 'USD 12,000', benefits: ['Logo on stage & website', 'Speaking slot (15 min)', 'Standard booth (3x3m)', '6 delegate passes', 'Half-page ad in book'] },
+        { key: 'SILVER',   label: 'Silver Sponsor',   price: 'USD 6,000',  benefits: ['Logo on website & book', 'Shared booth (2x2m)', '3 delegate passes', 'Quarter-page ad'] },
+        { key: 'BRONZE',   label: 'Bronze Sponsor',   price: 'USD 2,500',  benefits: ['Logo on website', '1 delegate pass', 'Listing in the book'] },
+      ],
+    })
+  }
+
+  const listMatch = route.match(/^\/sponsorship-requests$/)
+  if (listMatch && method === 'POST') {
+    // Anyone authenticated can submit a sponsorship request (typically INDUSTRY_PARTNER)
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const body = await request.json()
+    if (!body.conferenceId) return err('conferenceId required')
+    if (!body.companyName) return err('Company name required')
+    const created = await prisma.sponsorshipRequest.create({
+      data: {
+        conferenceId: body.conferenceId,
+        requesterId: user.id,
+        companyName: body.companyName,
+        companyType: body.companyType || null,
+        industry: body.industry || null,
+        companyAddress: body.companyAddress || null,
+        websiteUrl: body.websiteUrl || null,
+        contactEmail: body.contactEmail || user.email,
+        contactPhone: body.contactPhone || null,
+        products: body.products || null,
+        sponsorTier: body.sponsorTier || null,
+        virtualBoothRequested: !!body.virtualBoothRequested,
+        physicalBoothRequested: !!body.physicalBoothRequested,
+        message: body.message || null,
+      },
+    })
+    // Notify all Chief Logistics + Admin about the new sponsorship request
+    const logisticsChiefs = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS', 'SYSTEM_ADMIN'] } } } },
+      select: { id: true },
+    })
+    for (const c of logisticsChiefs) {
+      await prisma.notification.create({
+        data: {
+          userId: c.id, type: 'GENERIC',
+          title: `New sponsorship request from ${body.companyName}`,
+          body: `${user.firstName} ${user.lastName} has requested to sponsor the conference (${body.sponsorTier || 'unspecified tier'}).`,
+          link: '/logistics',
+        },
+      })
+    }
+    return ok({ request: created })
+  }
+
+  if (listMatch && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const isLogistics = hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS')
+    const url = new URL(request.url)
+    const conferenceId = url.searchParams.get('conferenceId')
+    const where = {}
+    if (conferenceId) where.conferenceId = conferenceId
+    if (!isLogistics) where.requesterId = user.id
+    const list = await prisma.sponsorshipRequest.findMany({
+      where, orderBy: { createdAt: 'desc' }, take: 200,
+    })
+    const requesterIds = [...new Set(list.map(r => r.requesterId))]
+    const requesters = await prisma.user.findMany({
+      where: { id: { in: requesterIds } },
+      select: { id: true, firstName: true, lastName: true, email: true, affiliation: true },
+    })
+    const map = Object.fromEntries(requesters.map(u => [u.id, u]))
+    return ok({ requests: list.map(r => ({ ...r, requester: map[r.requesterId] })) })
+  }
+
+  const oneMatch = route.match(/^\/sponsorship-requests\/([^\/]+)$/)
+  if (oneMatch && method === 'PUT') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS')) return err('Forbidden', 403)
+    const body = await request.json()
+    const req = await prisma.sponsorshipRequest.findUnique({ where: { id: oneMatch[1] } })
+    if (!req) return err('Not found', 404)
+    const updated = await prisma.sponsorshipRequest.update({
+      where: { id: oneMatch[1] },
+      data: {
+        status: body.status || req.status,
+        reviewNotes: body.reviewNotes ?? req.reviewNotes,
+        reviewedById: user.id,
+      },
+    })
+    // Notify requester about decision
+    if (body.status && body.status !== req.status) {
+      await prisma.notification.create({
+        data: {
+          userId: req.requesterId, type: 'GENERIC',
+          title: `Sponsorship request ${body.status.toLowerCase()}`,
+          body: `Your sponsorship request for ${req.companyName} has been ${body.status.toLowerCase()}${body.reviewNotes ? ': ' + body.reviewNotes : '.'}`,
+        },
+      })
+    }
+    return ok({ request: updated })
+  }
+
+  return null
+}
+
+// ============ LOGISTICS COMMITTEE ============
+async function handleLogistics(route, method, request) {
+  if (route === '/logistics/members' && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const members = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'] } } } },
+      select: { id: true, firstName: true, lastName: true, email: true, title: true, affiliation: true, country: true, roles: { select: { role: true } } },
+      orderBy: [{ lastName: 'asc' }],
+    })
+    // Sort so Chief Logistics comes first
+    members.sort((a, b) => {
+      const aChief = a.roles.some(r => r.role === 'CHIEF_LOGISTICS') ? 0 : 1
+      const bChief = b.roles.some(r => r.role === 'CHIEF_LOGISTICS') ? 0 : 1
+      return aChief - bChief
+    })
+    return ok({ members })
+  }
+  return null
+}
+
+// ============ ATTENDEE REGISTRATION TOGGLE ============
+async function handleAttendeeRegistrationToggle(route, method, request) {
+  const m = route.match(/^\/conferences\/([^\/]+)\/attendee-registration$/)
+  if (!m || method !== 'PUT') return null
+  const user = await getCurrentUser(request)
+  if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'CHIEF_LOGISTICS')) return err('Forbidden', 403)
+  const body = await request.json()
+  const newVal = !!body.open
+  const conf = await prisma.conference.update({
+    where: { id: m[1] },
+    data: { attendeeRegistrationOpen: newVal },
+  })
+  // Broadcast on toggle ON: notify every user (except the actor) that attendee registration is open
+  if (newVal) {
+    const allUsers = await prisma.user.findMany({ select: { id: true, email: true, firstName: true } })
+    for (const u of allUsers) {
+      await prisma.notification.create({
+        data: {
+          userId: u.id, type: 'GENERIC',
+          title: `Attendee registration is now open for ${conf.name}`,
+          body: `Attendee registration for ${conf.name} is now open. Log in to register your attendance (in-person or virtual).`,
+          link: '/conferences',
+        },
+      })
+    }
+    // Optional email broadcast (best-effort, non-blocking)
+    try {
+      const { sendEmail } = await import('@/lib/email')
+      const { renderEmailHtml } = await import('@/lib/email-templates')
+      const subject = `Attendee registration open — ${conf.name}`
+      const bodyText = `Attendee registration for ${conf.name} is now open. Please log in to complete your registration.`
+      const html = renderEmailHtml({ subject, body: bodyText, conferenceName: conf.name })
+      for (const u of allUsers) {
+        if (u.email) sendEmail({ to: u.email, subject, html, text: bodyText }).catch(() => {})
+      }
+    } catch (e) { /* non-fatal */ }
+  }
+  return ok({ conference: conf })
+}
+
 async function router(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
@@ -1965,6 +2209,9 @@ async function router(request, { params }) {
     r = await handleAnnouncements(route, method, request); if (r) return r
     r = await handleReviewerInvitations(route, method, request); if (r) return r
     r = await handleBooths(route, method, request); if (r) return r
+    r = await handleSponsorshipRequests(route, method, request); if (r) return r
+    r = await handleLogistics(route, method, request); if (r) return r
+    r = await handleAttendeeRegistrationToggle(route, method, request); if (r) return r
     r = await handleReviewer(route, method, request); if (r) return r
     r = await handleUsers(route, method, request); if (r) return r
     r = await handleNotifications(route, method, request); if (r) return r
