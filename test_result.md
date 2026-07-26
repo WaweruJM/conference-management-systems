@@ -963,6 +963,60 @@ agent_communication:
           "📅 18th March 2027 – 19th March 2027" and info-strip shows
           "1st January 2027" for the submission deadline.
         - No backend contract changes; existing test coverage unaffected.
+  - agent: "main"
+    message: |
+      🐞 SESSION UPDATE (Message #590 — 2 tasks: committee-editor edit lock &
+      reviewer-invite email delivery)
+
+      Task 1 — Committee editors edit only assigned abstracts:
+        Backend (/app/app/api/[[...path]]/route.js):
+          - POST /abstracts/:id/transition — Chief/Admin/Managing always allowed;
+            anyone else must have an active EditorAssignment for that abstract
+            (403 otherwise).
+          - POST /abstracts/:id/decision — same assigned-only rule.
+          - POST /abstracts/:id/assign-reviewer — same assigned-only rule.
+          - POST /abstracts/:id/assign-editor already restricted to Chief + Admin.
+        Frontend (/app/app/page.js):
+          - AbstractDetail's editorial actions section (TechnicalScoringPanel +
+            EditorialPanel) is now rendered ONLY for Chief Editor / Admin OR the
+            currently-assigned Committee Editor.
+          - Other editor roles (e.g. an unassigned Committee Editor arriving from
+            the Editorial Office) see a "Read-only view" note pointing them to
+            "My Editor Workspace".
+
+      Task 2 — Reviewer invitation email:
+        Backend:
+          - POST /reviewer-invitations previously returned 200 even when the
+            outbound email failed. Now:
+             * malformed email → 400
+             * unauthenticated / unauthorised (not privileged AND not assigned to
+               the abstract passed in) → 403
+             * email API failure → 502 with detailed error message so the client
+               can present a real diagnostic instead of a false success toast
+             * happy path → 200 with `delivery.sent:true` in the response
+          - Assigned committee editor (COMMITTEE_MEMBER / COMMITTEE_EDITOR
+            without any privileged role) can invite reviewers ONLY when the
+            request carries the abstractId they are assigned to.
+        The endpoint now sanitises and lower-cases the email before storing it.
+
+      Testing agent additionally identified and fixed one further RBAC gap:
+        - Committee editors were able to invite reviewers to ANY abstract simply
+          because they held the role. That role-based bypass is removed;
+          COMMITTEE_MEMBER / COMMITTEE_EDITOR no longer receive automatic
+          reviewer-invitation privileges — they must be assigned to the abstract.
+
+      Test result: backend testing agent 16/16 tests passed:
+        - Reviewer invitation email happy path & 502 diagnostic branch verified
+        - Malformed email rejected 400
+        - Author without abstractId rejected 403
+        - Assigned committee editor allowed for their abstract 200
+        - Unassigned committee editor rejected 403
+        - Committee editor transition/decision/assign-reviewer allowed on
+          assigned abstracts, rejected on others
+        - Chief Editor retains full access; Managing Editor blocked from
+          assign-editor (regression preserved).
+
+      Note: Still on preview only — production redeploy needed by user.
   - agent: "testing"
     message: |
       ✅ BACKEND VERIFICATION COMPLETE - EDITORIAL OFFICE ENHANCEMENTS (15/16 TESTS PASSED)
