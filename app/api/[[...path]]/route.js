@@ -230,10 +230,19 @@ async function handleConferences(route, method, request) {
     // ATTENDEE: opens 1 month before conference start AND requires admin's attendeeRegistrationOpen toggle
     // SPONSOR: always open until conference end
     const regType = body.type || 'ATTENDEE'
+    // Reuse the same ordinal-day format the front-end uses
+    const fmtOrdinal = (d) => {
+      const day = d.getDate()
+      const month = d.toLocaleString('en-GB', { month: 'long' })
+      const year = d.getFullYear()
+      const j = day % 10, k = day % 100
+      const suffix = (k >= 11 && k <= 13) ? 'th' : j === 1 ? 'st' : j === 2 ? 'nd' : j === 3 ? 'rd' : 'th'
+      return `${day}${suffix} ${month} ${year}`
+    }
     if (regType === 'ATTENDEE') {
       if (!conf.attendeeRegistrationOpen) {
         const dateHint = conf.startDate
-          ? (() => { const d = new Date(conf.startDate); d.setMonth(d.getMonth() - 1); return d.toDateString() })()
+          ? (() => { const d = new Date(conf.startDate); d.setMonth(d.getMonth() - 1); return fmtOrdinal(d) })()
           : null
         return err(
           dateHint
@@ -244,7 +253,7 @@ async function handleConferences(route, method, request) {
       }
       if (conf.startDate) {
         const oneMonthBefore = new Date(conf.startDate); oneMonthBefore.setMonth(oneMonthBefore.getMonth() - 1)
-        if (now < oneMonthBefore) return err(`Attendee registration opens on ${oneMonthBefore.toDateString()}.`)
+        if (now < oneMonthBefore) return err(`Attendee registration opens on ${fmtOrdinal(oneMonthBefore)}.`)
         if (conf.endDate && now > conf.endDate) return err('Attendee registration is closed.')
       }
     }

@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { toast } from 'sonner'
-import { ROLE_LABELS, STATE_COLORS, stateLabel, TIMELINE_STAGES } from '@/lib/scms-utils'
+import { ROLE_LABELS, STATE_COLORS, stateLabel, TIMELINE_STAGES, formatDate, formatDateRange } from '@/lib/scms-utils'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts'
@@ -300,7 +300,7 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
               </div>
               {featured?.startDate && (
                 <div className="mt-5 flex flex-wrap gap-4 text-sm opacity-95 justify-center">
-                  <span>📅 {new Date(featured.startDate).toLocaleDateString()} – {featured.endDate && new Date(featured.endDate).toLocaleDateString()}</span>
+                  <span>📅 {formatDateRange(featured.startDate, featured.endDate)}</span>
                   <span>📍 {featured.venue}, {featured.city}, {featured.country}</span>
                 </div>
               )}
@@ -322,7 +322,7 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
           )}
           <div className="container mx-auto px-6 py-6 grid md:grid-cols-4 gap-4 text-center">
             <div><div className="text-2xl font-bold text-indigo-600">{featured.themes?.length || 0}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Sub-themes</div></div>
-            <div><div className="text-2xl font-bold text-indigo-600">{featured.submissionClose ? new Date(featured.submissionClose).toLocaleDateString() : '—'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Submission Deadline</div></div>
+            <div><div className="text-2xl font-bold text-indigo-600">{featured.submissionClose ? formatDate(featured.submissionClose) : '—'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Submission Deadline</div></div>
             <div><div className="text-2xl font-bold text-indigo-600">{featured.doubleBlind ? 'Yes' : 'Optional'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Double-blind Review</div></div>
             <div><div className="text-2xl font-bold text-indigo-600">{stateLabel(featured.status)}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Status</div></div>
           </div>
@@ -370,7 +370,7 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
                   <CardDescription>{c.venue}{c.city && `, ${c.city}`}{c.country && `, ${c.country}`}</CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm text-muted-foreground space-y-1">
-                  <div>{c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</div>
+                  <div>{formatDateRange(c.startDate, c.endDate)}</div>
                   <div>{c._count?.abstracts || 0} submissions · {c.themes?.length || 0} themes</div>
                 </CardContent>
               </Card>
@@ -513,7 +513,7 @@ function PublicVenue({ conf }) {
     </div>
   )
   const mapEmbed = conf.mapUrl || (conf.mapAddress ? `https://www.google.com/maps?q=${encodeURIComponent(conf.mapAddress)}&output=embed` : (conf.venue ? `https://www.google.com/maps?q=${encodeURIComponent([conf.venue, conf.city, conf.country].filter(Boolean).join(', '))}&output=embed` : null))
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'
+  const fmtDate = (d) => formatDate(d, '—')
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-white">
@@ -1223,9 +1223,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
                           </div>
                           <div className="font-medium truncate">{a.abstract.title}</div>
                           <div className="text-[11px] text-muted-foreground">
-                            Invited {new Date(a.assignedAt).toLocaleDateString()}
-                            {a.dueDate && ` · Due ${new Date(a.dueDate).toLocaleDateString()}`}
-                            {a.completedAt && ` · Completed ${new Date(a.completedAt).toLocaleDateString()}`}
+                            Invited {formatDate(a.assignedAt)}
+                            {a.dueDate && ` · Due ${formatDate(a.dueDate)}`}
+                            {a.completedAt && ` · Completed ${formatDate(a.completedAt)}`}
                           </div>
                         </div>
                         <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
@@ -2336,7 +2336,7 @@ function DocumentsTab({ abstractId, documents, onRefresh }) {
                 <Badge variant="outline" className="text-[10px]">{d.category.replace(/_/g, ' ')}</Badge>
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
-                {(d.sizeBytes / 1024).toFixed(1)} KB · Uploaded by {d.uploadedBy?.firstName} {d.uploadedBy?.lastName} · {new Date(d.createdAt).toLocaleDateString()}
+                {(d.sizeBytes / 1024).toFixed(1)} KB · Uploaded by {d.uploadedBy?.firstName} {d.uploadedBy?.lastName} · {formatDate(d.createdAt)}
               </div>
             </div>
             <a href={`/api/documents/${d.id}/download`} target="_blank" rel="noreferrer">
@@ -2367,7 +2367,7 @@ function ReviewsTab({ abs, isEditor, isAdmin }) {
                     ? `${a.reviewer.firstName} ${a.reviewer.lastName}`
                     : `Reviewer ${idx + 1}`}
                 </div>
-                <div className="text-xs text-muted-foreground">{a.reviewType.replace('_',' ')} · Invited {new Date(a.assignedAt).toLocaleDateString()}</div>
+                <div className="text-xs text-muted-foreground">{a.reviewType.replace('_',' ')} · Invited {formatDate(a.assignedAt)}</div>
               </div>
               <Badge variant="outline">{a.invitationStatus}{a.report ? ' · Completed' : ''}</Badge>
             </div>
@@ -2773,7 +2773,7 @@ function EditorialAbstractRow({ a, onOpen, committeeEditors = [], canAssignEdito
               </div>
             </div>
             <div className="mt-2 text-[10px] text-muted-foreground flex items-center gap-2">
-              <Clock className="h-3 w-3" /> Submitted {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : '—'}
+              <Clock className="h-3 w-3" /> Submitted {a.submittedAt ? formatDate(a.submittedAt) : '—'}
               {assignedEditor && <span>· Author correspondence handled in editor's workspace</span>}
             </div>
           </div>
@@ -2886,9 +2886,9 @@ function ReviewerWorkspace({ setRoute }) {
                         </div>
                         <div className="font-semibold text-lg">{a.abstract.title}</div>
                         <div className="text-xs text-muted-foreground mt-1">
-                          Invited {new Date(a.assignedAt).toLocaleDateString()}
-                          {a.dueDate && ` · Due ${new Date(a.dueDate).toLocaleDateString()}`}
-                          {a.completedAt && ` · Completed ${new Date(a.completedAt).toLocaleDateString()}`}
+                          Invited {formatDate(a.assignedAt)}
+                          {a.dueDate && ` · Due ${formatDate(a.dueDate)}`}
+                          {a.completedAt && ` · Completed ${formatDate(a.completedAt)}`}
                         </div>
                       </div>
                     </div>
@@ -3049,8 +3049,8 @@ function Conferences() {
             </CardHeader>
             <CardContent className="text-sm space-y-1">
               <div>📍 {c.venue}, {c.city}, {c.country}</div>
-              <div>📅 {c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</div>
-              <div>📝 Submissions until {c.submissionClose && new Date(c.submissionClose).toLocaleDateString()}</div>
+              <div>📅 {formatDateRange(c.startDate, c.endDate)}</div>
+              <div>📝 Submissions until {formatDate(c.submissionClose)}</div>
               <div className="flex flex-wrap gap-1 mt-2">{c.themes?.map(t => <Badge key={t.id} variant="outline" className="text-[10px]">{t.name}</Badge>)}</div>
               <div className="pt-3 flex gap-2">
                 <Button size="sm" onClick={() => setRegFor({ conf: c, type: 'ATTENDEE' })}>Register as Attendee</Button>
@@ -3162,7 +3162,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
           {type === 'AUTHOR' && (
             <>
               <div className="p-3 rounded bg-indigo-50 border border-indigo-200 text-sm">
-                Authors submit abstracts through the platform. Registration is open until abstract submission closes ({conf.submissionClose && new Date(conf.submissionClose).toLocaleDateString()}).
+                Authors submit abstracts through the platform. Registration is open until abstract submission closes ({formatDate(conf.submissionClose)}).
                 After submission you'll receive updates via email and can track your submission from the "My Abstracts" page.
               </div>
               <div><Label>Full name</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} /></div>
@@ -3694,7 +3694,7 @@ function ConferenceAdmin() {
                     <div className="text-sm text-muted-foreground mt-1">{c.description}</div>
                     <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-4 gap-y-1">
                       <span>📍 {c.venue}, {c.city}, {c.country}</span>
-                      <span>📅 {c.startDate && new Date(c.startDate).toLocaleDateString()} – {c.endDate && new Date(c.endDate).toLocaleDateString()}</span>
+                      <span>📅 {formatDateRange(c.startDate, c.endDate)}</span>
                       <span>📝 {c._count?.abstracts || 0} submissions</span>
                       <span>👥 {c._count?.registrations || 0} registrations</span>
                     </div>
@@ -4152,7 +4152,7 @@ function TemplatesPage({ user, isAdmin, isEditor }) {
                 <FileText className="h-6 w-6 text-indigo-600" />
                 <div>
                   <div className="font-medium">{t.fileName}</div>
-                  <div className="text-xs text-muted-foreground">{t.type} · {(t.sizeBytes / 1024).toFixed(1)} KB · Uploaded {new Date(t.createdAt).toLocaleDateString()}</div>
+                  <div className="text-xs text-muted-foreground">{t.type} · {(t.sizeBytes / 1024).toFixed(1)} KB · Uploaded {formatDate(t.createdAt)}</div>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -4612,7 +4612,7 @@ function InviteReviewers() {
                   <div className="text-sm font-medium">{i.fullName || i.email}</div>
                   <Badge variant={i.registeredUserId ? 'default' : 'outline'} className="text-[10px]">{i.registeredUserId ? 'Registered' : 'Pending'}</Badge>
                 </div>
-                <div className="text-xs text-muted-foreground">{i.email} · {i.specialty} · Invited {new Date(i.createdAt).toLocaleDateString()}</div>
+                <div className="text-xs text-muted-foreground">{i.email} · {i.specialty} · Invited {formatDate(i.createdAt)}</div>
               </div>
             ))}
           </CardContent>
@@ -5286,7 +5286,7 @@ function SurveyAdmin() {
                 </div>
                 {s.description && <p className="text-sm text-muted-foreground line-clamp-1">{s.description}</p>}
                 <div className="text-xs text-muted-foreground mt-1">
-                  {s.questions?.length || 0} questions · {s.submittedCount || 0} responses received{s.sentAt ? ` · Last sent ${new Date(s.sentAt).toLocaleDateString()}` : ''}
+                  {s.questions?.length || 0} questions · {s.submittedCount || 0} responses received{s.sentAt ? ` · Last sent ${formatDate(s.sentAt)}` : ''}
                 </div>
               </div>
               <div className="flex flex-col gap-1 w-40">

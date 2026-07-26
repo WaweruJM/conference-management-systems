@@ -928,6 +928,35 @@ agent_communication:
           email…" at the bottom ✓.
 
       Note: Still on preview only — production redeploy needed by user.
+  - agent: "main"
+    message: |
+      🗓️ SESSION UPDATE (Message #582 — 1 task: ordinal date formatting)
+
+      Frontend-only change (with a matching backend string tweak):
+        - NEW helpers in /app/lib/scms-utils.js:
+            formatDate(dateOrString)              → "18th March 2027"
+            formatDateRange(start, end)           → "18th March 2027 – 19th March 2027"
+          (handles st/nd/rd/th, uses en-GB month names, safe on null/invalid)
+        - /app/app/page.js switched over all calendar-facing date renders:
+            landing hero range, info-strip submission deadline, upcoming
+            conferences card range, authed conferences list card range +
+            submission deadline, registration hint deadline, editorial
+            abstract row "Submitted", reviewer invitation-list Invited/Due/
+            Completed (both reviewer-workspace and dashboard variants), main
+            abstract review-tab invited date, document upload date, template
+            upload date, survey "Last sent" date, feedback survey list.
+        - Backend attendee-registration error messages now emit the same
+          ordinal format (`18th March 2027`) instead of `Thu Mar 18 2027`.
+
+      Deliberately left as timestamps (they are moment-in-time indicators, not
+      calendar dates): chat/announcement message times, notification createdAt,
+      revision-history entries.
+
+      Verification:
+        - Screenshot of home page confirms hero shows
+          "📅 18th March 2027 – 19th March 2027" and info-strip shows
+          "1st January 2027" for the submission deadline.
+        - No backend contract changes; existing test coverage unaffected.
   - agent: "testing"
     message: |
       ✅ BACKEND VERIFICATION COMPLETE - EDITORIAL OFFICE ENHANCEMENTS (15/16 TESTS PASSED)
