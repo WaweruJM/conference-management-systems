@@ -866,6 +866,68 @@ agent_communication:
 
       Note: This is preview only. User must click "Redeploy" to promote to
       production (https://scms-platform-1.emergent.host).
+  - agent: "main"
+    message: |
+      ✨ SESSION UPDATE (Message #576 — 4 tasks: hero sizing, main/sub themes,
+      committee-editor assignment redesign, reviewer-invite dropdown+email)
+
+      Schema:
+        - Conference: new `mainTheme String?` for the overarching main theme
+          (existing `Theme[]` becomes the sub-themes, capped at 5)
+
+      Backend:
+        1. POST /api/conferences/:id/themes → enforces max 5 sub-themes (400 if
+           limit reached), still restricted to SYSTEM_ADMIN + MANAGING_EDITOR +
+           CHIEF_EDITOR.
+        2. NEW DELETE /api/themes/:id → nullifies any abstract.themeId that
+           referenced the theme, then removes the theme.
+        3. PUT /api/conferences/:id → now round-trips `mainTheme` cleanly.
+        4. GET /api/abstracts/:id RBAC → now grants full read to CHIEF_EDITOR and
+           COMMITTEE_EDITOR (previous privileged list missed them, causing 403 in
+           the redesigned editorial-actions panel).
+        5. Legacy SECTION_EDITOR string removed from every RBAC array across
+           /api/[[...path]]/route.js (sed replace). Enum kept in Prisma for data
+           safety; no more UI/behaviour ties to it.
+
+      Frontend (/app/app/page.js):
+        1. Landing hero shrunk back to a comfortable size: h1
+           text-3xl/md:4xl/lg:5xl (from text-6xl/lg:8xl), subtitle text-lg/xl,
+           description text-base/lg. Everything still centred; buttons + meta
+           block don't push out of viewport any more.
+        2. Public conference page now displays the Main Theme in a dedicated
+           gradient callout above the sub-theme count strip.
+        3. Conference form: new "Main theme" input right below the display
+           theme/tagline.
+        4. NEW ThemeDialog UX: shows current sub-themes with per-item delete,
+           slot counter "3/5", grays out "Add sub-theme" when limit reached.
+        5. EditorialPanel entirely rebuilt:
+           - "Committee editor" section at the top — current assignment shown in
+             an indigo card; the assignment dropdown lists all committee editors
+             + the Chief Editor themselves (`(me)` suffix). Non-privileged users
+             see a read-only note explaining who may assign.
+           - "Invite external reviewer" section — a single dropdown listing all
+             registered external reviewers (assigned reviewers filtered out),
+             plus a "✉️ Invite external reviewer by email…" option pinned at the
+             bottom. Choosing it reveals an inline form (email, name, specialty,
+             personal note) and POSTs to /reviewer-invitations to send the
+             registration-link email.
+        6. isEditor now excludes SECTION_EDITOR; ManageRolesDialog role groups no
+           longer show SECTION_EDITOR; Dashboard's board list & role labels no
+           longer reference SECTION_EDITOR. ROLE_LABELS in scms-utils.js pruned.
+        7. Seed reassigns section@scms.io to COMMITTEE_EDITOR.
+
+      Verification:
+        - Backend testing agent: 5/5 focused checks passed (max-5 sub-themes,
+          mainTheme round-trip, reviewer-invitations with abstractId, GET
+          /abstracts/:id for CHIEF/COMMITTEE editors, tightened assign-editor
+          RBAC including self-assignment for Chief Editor).
+        - Screenshot verification: landing at readable size ✓, Editorial Actions
+          panel with committee-editor dropdown showing "Reassign to another
+          committee editor…" + assigned Carla Rossi card ✓, reviewer dropdown
+          revealing 2 registered externals + "✉️ Invite external reviewer by
+          email…" at the bottom ✓.
+
+      Note: Still on preview only — production redeploy needed by user.
   - agent: "testing"
     message: |
       ✅ BACKEND VERIFICATION COMPLETE - EDITORIAL OFFICE ENHANCEMENTS (15/16 TESTS PASSED)
