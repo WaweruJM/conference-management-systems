@@ -106,6 +106,7 @@ model Conference {
   subtitle         String?
   description      String?
   theme            String?  // Main conference theme/tagline
+  mainTheme        String?  // Overarching main theme; sub-themes live in Theme[] (max 5)
   venue            String?
   city             String?
   country          String?

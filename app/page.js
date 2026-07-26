@@ -283,23 +283,23 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
         <HeroCarousel images={heroImages} height="h-[560px]" />
         <div className="absolute inset-0 flex items-center">
           <div className="container mx-auto px-6">
-            <div className="max-w-5xl text-white mx-auto text-center">
-              {featured?.code && <Badge className="mb-4 bg-indigo-600 hover:bg-indigo-600 text-white border-0">{featured.code}</Badge>}
-              <h1 className="text-6xl lg:text-8xl font-bold tracking-tight leading-tight drop-shadow-lg">
+            <div className="max-w-4xl text-white mx-auto text-center">
+              {featured?.code && <Badge className="mb-3 bg-indigo-600 hover:bg-indigo-600 text-white border-0">{featured.code}</Badge>}
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-tight drop-shadow-lg">
                 {featured?.name || 'Scientific Conference Management System'}
               </h1>
-              {featured?.subtitle && <p className="mt-3 text-2xl lg:text-4xl opacity-95">{featured.subtitle}</p>}
-              <p className="mt-4 text-xl lg:text-2xl opacity-90 max-w-3xl mx-auto drop-shadow">
+              {featured?.subtitle && <p className="mt-2 text-lg md:text-xl opacity-95">{featured.subtitle}</p>}
+              <p className="mt-3 text-base md:text-lg opacity-90 max-w-2xl mx-auto drop-shadow">
                 {featured?.description || 'The complete lifecycle for scientific conferences — submission, peer review, revisions, programme scheduling and long-term archive.'}
               </p>
-              <div className="mt-8 flex gap-3 justify-center">
+              <div className="mt-6 flex gap-3 justify-center">
                 <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
                   Register / Submit abstract <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
                 <Button size="lg" variant="outline" onClick={onLogin} className="bg-white/10 border-white text-white hover:bg-white/20">Sign in</Button>
               </div>
               {featured?.startDate && (
-                <div className="mt-6 flex flex-wrap gap-4 text-base opacity-95 justify-center">
+                <div className="mt-5 flex flex-wrap gap-4 text-sm opacity-95 justify-center">
                   <span>📅 {new Date(featured.startDate).toLocaleDateString()} – {featured.endDate && new Date(featured.endDate).toLocaleDateString()}</span>
                   <span>📍 {featured.venue}, {featured.city}, {featured.country}</span>
                 </div>
@@ -312,6 +312,14 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
       {/* Info strip */}
       {featured && (
         <section className="bg-white border-b">
+          {featured.mainTheme && (
+            <div className="container mx-auto px-6 pt-6">
+              <div className="rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-fuchsia-50 p-4 text-center">
+                <div className="text-[10px] uppercase tracking-widest font-semibold text-indigo-600 mb-1">Main scientific theme</div>
+                <div className="text-lg md:text-xl font-bold text-slate-800">{featured.mainTheme}</div>
+              </div>
+            </div>
+          )}
           <div className="container mx-auto px-6 py-6 grid md:grid-cols-4 gap-4 text-center">
             <div><div className="text-2xl font-bold text-indigo-600">{featured.themes?.length || 0}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Sub-themes</div></div>
             <div><div className="text-2xl font-bold text-indigo-600">{featured.submissionClose ? new Date(featured.submissionClose).toLocaleDateString() : '—'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Submission Deadline</div></div>
@@ -831,7 +839,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const [featured, setFeatured] = useState(null)
   const roles = user.roles.map(r => r.role)
   const isAdmin = roles.includes('SYSTEM_ADMIN')
-  const isEditor = roles.some(r => ['MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
+  const isEditor = roles.some(r => ['MANAGING_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
   const isChiefEditor = roles.includes('CHIEF_EDITOR')
   const isLogistics = roles.some(r => ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r))
   const isChiefLogistics = roles.includes('CHIEF_LOGISTICS')
@@ -1075,10 +1083,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         api('/users?role=MANAGING_EDITOR').catch(() => ({ users: [] })),
         api('/users?role=COMMITTEE_EDITOR').catch(() => ({ users: [] })),
         api('/users?role=COMMITTEE_MEMBER').catch(() => ({ users: [] })),
-        api('/users?role=SECTION_EDITOR').catch(() => ({ users: [] })),
       ]).then(results => {
         const map = {}
-        const labels = ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER', 'SECTION_EDITOR']
+        const labels = ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER']
         results.forEach((d, i) => {
           for (const u of (d.users || [])) {
             // Exclude system admins from the public editorial board list
@@ -1089,7 +1096,7 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
           }
         })
         // Order: chief first, then managing, then committee editors, then committee members, then section editors
-        const priority = { CHIEF_EDITOR: 0, MANAGING_EDITOR: 1, COMMITTEE_EDITOR: 2, COMMITTEE_MEMBER: 3, SECTION_EDITOR: 4 }
+        const priority = { CHIEF_EDITOR: 0, MANAGING_EDITOR: 1, COMMITTEE_EDITOR: 2, COMMITTEE_MEMBER: 3 }
         const ordered = Object.values(map).map(u => {
           const rs = Array.from(u.boardRoles)
           const primary = rs.slice().sort((a, b) => priority[a] - priority[b])[0]
@@ -1116,7 +1123,6 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
     MANAGING_EDITOR: 'Managing Editor',
     COMMITTEE_EDITOR: 'Committee Editor',
     COMMITTEE_MEMBER: 'Committee Editor',
-    SECTION_EDITOR: 'Section Editor',
   })[r] || r
 
   return (
@@ -2005,20 +2011,33 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
 // ============ EDITORIAL PANEL (editors/admins) ============
 function EditorialPanel({ abs, onRefresh, user }) {
   const [reviewers, setReviewers] = useState([])
-  const [editors, setEditors] = useState([])
+  const [committeeEditors, setCommitteeEditors] = useState([])
   useEffect(() => {
-    api('/users?role=EXTERNAL_REVIEWER').then(d => setReviewers(prev => [...(d.users || [])]))
-    api('/users?role=COMMITTEE_MEMBER').then(d => setReviewers(prev => [...prev, ...(d.users || [])]))
-    api('/users?role=SECTION_EDITOR').then(d => setEditors(d.users || []))
+    // Only registered external reviewers appear in the dropdown; the "invite by email"
+    // input at the bottom covers reviewers who haven't registered yet.
+    api('/users?role=EXTERNAL_REVIEWER').then(d => setReviewers(d.users || []))
+    // Committee editors: COMMITTEE_EDITOR + legacy COMMITTEE_MEMBER + CHIEF_EDITOR
+    Promise.all([
+      api('/users?role=COMMITTEE_EDITOR').catch(() => ({ users: [] })),
+      api('/users?role=COMMITTEE_MEMBER').catch(() => ({ users: [] })),
+      api('/users?role=CHIEF_EDITOR').catch(() => ({ users: [] })),
+    ]).then(([a, b, c]) => {
+      const map = {}
+      ;[...(a.users || []), ...(b.users || []), ...(c.users || [])].forEach(u => { map[u.id] = u })
+      setCommitteeEditors(Object.values(map))
+    })
   }, [])
 
-  // Only the currently assigned Committee Editor and the Chief Editor may invite reviewers
-  // (Managing Editor / Chief Editor / System Admin retain oversight). Regular committee members
-  // must be the active editor on this specific abstract to see the invite panel.
   const myRoles = (user?.roles || []).map(r => r.role || r)
-  const isChiefOrAdmin = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN', 'MANAGING_EDITOR'].includes(r))
+  // Only System Admin and Chief Editor can assign a committee editor. The Chief Editor
+  // may also assign themselves.
+  const isChiefOrAdmin = myRoles.some(r => ['CHIEF_EDITOR', 'SYSTEM_ADMIN'].includes(r))
+  const canAssignEditor = isChiefOrAdmin
+  // Reviewer invitations remain in the assigned committee editor's workspace, or with
+  // the Chief Editor / Admin as an oversight fallback.
   const isAssignedEditor = (abs.editorAssignments || []).some(e => e.active && e.editorId === user?.id)
   const canInviteReviewers = isChiefOrAdmin || isAssignedEditor
+  const assignedEditor = (abs.editorAssignments || []).find(e => e.active)
 
   const [transitionTarget, setTransitionTarget] = useState('')
   const [transitionComment, setTransitionComment] = useState('')
@@ -2041,16 +2060,48 @@ function EditorialPanel({ abs, onRefresh, user }) {
     setDecision(''); setDecisionLetter(''); onRefresh()
   }
 
-  const assignEditor = async (editorId) => {
-    await api(`/abstracts/${abs.id}/assign-editor`, { method: 'POST', body: JSON.stringify({ editorId, role: 'SECTION_EDITOR' }) })
-    toast.success('Editor assigned'); onRefresh()
+  const assignCommitteeEditor = async (editorId) => {
+    if (!editorId) return
+    try {
+      await api(`/abstracts/${abs.id}/assign-editor`, { method: 'POST', body: JSON.stringify({ editorId, role: 'COMMITTEE_EDITOR' }) })
+      toast.success(assignedEditor ? 'Committee editor reassigned' : 'Committee editor assigned')
+      onRefresh()
+    } catch (e) { toast.error(e.message) }
   }
   const assignReviewer = async (reviewerId, reviewType) => {
     await api(`/abstracts/${abs.id}/assign-reviewer`, { method: 'POST', body: JSON.stringify({ reviewerId, reviewType }) })
-    toast.success('Reviewer invited'); onRefresh()
+    toast.success('Reviewer assigned'); onRefresh()
+  }
+
+  // Invite an external reviewer by email (unregistered) — sends registration link email
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteName, setInviteName] = useState('')
+  const [inviteSpecialty, setInviteSpecialty] = useState('')
+  const [inviteMsg, setInviteMsg] = useState('')
+  const [showEmailInvite, setShowEmailInvite] = useState(false)
+  const [inviting, setInviting] = useState(false)
+
+  const sendEmailInvite = async () => {
+    if (!inviteEmail.trim() || !inviteEmail.includes('@')) return toast.error('Enter a valid email address')
+    setInviting(true)
+    try {
+      await api('/reviewer-invitations', { method: 'POST', body: JSON.stringify({
+        email: inviteEmail.trim(),
+        fullName: inviteName.trim() || null,
+        specialty: inviteSpecialty.trim() || null,
+        message: inviteMsg.trim() || null,
+        abstractId: abs.id,
+      }) })
+      toast.success(`Invitation email sent to ${inviteEmail}`)
+      setInviteEmail(''); setInviteName(''); setInviteSpecialty(''); setInviteMsg(''); setShowEmailInvite(false)
+    } catch (e) { toast.error(e.message) } finally { setInviting(false) }
   }
 
   const STATES = ['TECHNICAL_CHECK', 'RETURNED_FOR_FORMATTING', 'EDITORIAL_ASSIGNMENT', 'COMMITTEE_REVIEW', 'EXTERNAL_PEER_REVIEW', 'REVIEWS_COMPLETED', 'EDITORIAL_DECISION', 'MAJOR_REVISION', 'MINOR_REVISION', 'ACCEPTED', 'REJECTED', 'WITHDRAWN', 'ORAL', 'POSTER', 'PROGRAMME_SCHEDULING', 'PUBLISHED', 'ARCHIVED']
+
+  // Filter already-assigned reviewers from the dropdown
+  const assignedReviewerIds = new Set((abs.reviewAssignments || []).map(r => r.reviewerId))
+  const availableReviewers = reviewers.filter(r => !assignedReviewerIds.has(r.id))
 
   return (
     <Card className="border-indigo-200">
@@ -2058,48 +2109,111 @@ function EditorialPanel({ abs, onRefresh, user }) {
         <CardTitle className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-indigo-600" /> Editorial actions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Committee Editor assignment */}
         <div>
-          <div className="text-sm font-semibold mb-2">Assign editor</div>
-          <div className="flex flex-wrap gap-2">
-            {editors.map(e => (
-              <Button key={e.id} variant="outline" size="sm" onClick={() => assignEditor(e.id)}>
-                {e.firstName} {e.lastName}
-              </Button>
-            ))}
-            {editors.length === 0 && <span className="text-xs text-muted-foreground">No section editors</span>}
+          <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <Briefcase className="h-4 w-4 text-indigo-600" /> Committee editor
+            {!canAssignEditor && <Badge variant="outline" className="text-[10px]">read-only</Badge>}
           </div>
-          {abs.editorAssignments?.length > 0 && (
-            <div className="text-xs text-muted-foreground mt-2">Assigned: {abs.editorAssignments.map(e => `${e.editor.firstName} ${e.editor.lastName}`).join(', ')}</div>
+          {assignedEditor ? (
+            <div className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 p-2">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-indigo-700">Currently assigned</div>
+              <div className="font-medium">{assignedEditor.editor?.firstName} {assignedEditor.editor?.lastName}</div>
+              <div className="text-[11px] text-muted-foreground">{assignedEditor.editor?.email}</div>
+            </div>
+          ) : (
+            <div className="mb-2 rounded-md border border-dashed border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-amber-700" /> No committee editor assigned yet.
+            </div>
+          )}
+          {canAssignEditor ? (
+            <Select value="" onValueChange={assignCommitteeEditor}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={assignedEditor ? 'Reassign to another committee editor…' : 'Choose a committee editor…'} />
+              </SelectTrigger>
+              <SelectContent>
+                {committeeEditors.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No committee editors registered</div>}
+                {committeeEditors
+                  .filter(ce => !assignedEditor || ce.id !== assignedEditor.editorId)
+                  .map(ce => {
+                    const rs = (ce.roles || []).map(r => r.role || r)
+                    const isChief = rs.includes('CHIEF_EDITOR')
+                    const isMe = ce.id === user?.id
+                    return (
+                      <SelectItem key={ce.id} value={ce.id}>
+                        {ce.title ? `${ce.title} ` : ''}{ce.firstName} {ce.lastName}
+                        {isChief && ' · Chief Editor'}
+                        {isMe && ' (me)'}
+                      </SelectItem>
+                    )
+                  })}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="text-xs text-muted-foreground italic">
+              Only the Chief Editor and System Admin can assign or reassign a committee editor.
+            </div>
           )}
         </div>
 
         <Separator />
 
+        {/* Reviewer invitations */}
         {canInviteReviewers ? (
           <div>
-            <div className="text-sm font-semibold mb-2">Invite reviewer</div>
-            <div className="space-y-1 max-h-40 overflow-auto">
-              {reviewers.map(r => (
-                <div key={r.id} className="flex justify-between items-center py-1.5 px-2 rounded hover:bg-slate-50">
-                  <div className="text-sm">
-                    <span className="font-medium">{r.firstName} {r.lastName}</span>
-                    <span className="text-xs text-muted-foreground ml-2">{r.institution?.name || r.affiliation}</span>
-                    {r.specialties?.length > 0 && <span className="text-xs text-muted-foreground ml-2">· {r.specialties.slice(0, 2).join(', ')}</span>}
-                  </div>
-                  <div className="flex gap-1">
-                    <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'EXTERNAL_REVIEWER')}>External</Button>
-                    <Button variant="outline" size="sm" onClick={() => assignReviewer(r.id, 'COMMITTEE_MEMBER')}>Committee</Button>
-                  </div>
-                </div>
-              ))}
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Send className="h-4 w-4 text-purple-600" /> Invite external reviewer
             </div>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Pick a registered reviewer from the dropdown, or use the last option to invite someone by email — they'll receive an email with a registration link.
+            </p>
+            <Select value=""
+              onValueChange={(v) => {
+                if (v === '__email__') { setShowEmailInvite(true); return }
+                assignReviewer(v, 'EXTERNAL_REVIEWER')
+              }}>
+              <SelectTrigger className="w-full"><SelectValue placeholder="Choose a registered reviewer or invite by email…" /></SelectTrigger>
+              <SelectContent>
+                {availableReviewers.length === 0 ? (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No registered external reviewers left to invite</div>
+                ) : availableReviewers.map(r => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.title ? `${r.title} ` : ''}{r.firstName} {r.lastName}
+                    {r.specialties?.length > 0 && ` · ${r.specialties.slice(0, 2).join(', ')}`}
+                  </SelectItem>
+                ))}
+                <div className="border-t my-1" />
+                <SelectItem value="__email__">
+                  ✉️  Invite external reviewer by email…
+                </SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Inline email-invite form */}
+            {showEmailInvite && (
+              <div className="mt-3 rounded-md border border-purple-200 bg-purple-50/40 p-3 space-y-2">
+                <div className="text-xs font-semibold text-purple-700">Invite a new external reviewer</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label className="text-xs">Email *</Label><Input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="reviewer@example.com" /></div>
+                  <div><Label className="text-xs">Full name</Label><Input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Dr. Jane Doe" /></div>
+                </div>
+                <div><Label className="text-xs">Specialty / expertise</Label><Input value={inviteSpecialty} onChange={e => setInviteSpecialty(e.target.value)} placeholder="e.g. Cardiology" /></div>
+                <div><Label className="text-xs">Personal note (optional)</Label><Textarea rows={2} value={inviteMsg} onChange={e => setInviteMsg(e.target.value)} placeholder="A short line to the invitee — appears in the email." /></div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button size="sm" variant="ghost" onClick={() => { setShowEmailInvite(false); setInviteEmail(''); setInviteName(''); setInviteSpecialty(''); setInviteMsg('') }}>Cancel</Button>
+                  <Button size="sm" onClick={sendEmailInvite} disabled={inviting} className="bg-purple-600 hover:bg-purple-700">
+                    {inviting && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />} Send invitation email
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600 flex items-start gap-2">
             <AlertCircle className="h-4 w-4 text-slate-500 shrink-0 mt-0.5" />
             <div>
               <div className="font-semibold text-slate-700 mb-0.5">Reviewer invitations restricted</div>
-              Only the assigned Committee Editor and the Chief Editor can invite reviewers for this abstract. Assign a Committee Editor from the Editorial Office first.
+              Only the assigned Committee Editor and the Chief Editor can invite reviewers for this abstract. The Chief Editor / Admin assigns a Committee Editor from the panel above.
             </div>
           </div>
         )}
@@ -3317,7 +3431,7 @@ function ManageRolesDialog({ user, onClose, onDone }) {
 
   // Categorise roles for the admin UX
   const roleGroups = [
-    { label: 'Editorial Committee', keys: ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'] },
+    { label: 'Editorial Committee', keys: ['CHIEF_EDITOR', 'MANAGING_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'] },
     { label: 'Logistics Committee', keys: ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'] },
     { label: 'Reviewers & Participants', keys: ['EXTERNAL_REVIEWER', 'AUTHOR', 'ATTENDEE', 'INDUSTRY_PARTNER', 'GUEST'] },
     { label: 'Administrative', keys: ['SYSTEM_ADMIN'] },
@@ -3710,6 +3824,7 @@ function ConferenceDialog({ editing, onClose, onDone }) {
     name: editing?.name || '',
     subtitle: editing?.subtitle || '',
     theme: editing?.theme || '',
+    mainTheme: editing?.mainTheme || '',
     description: editing?.description || '',
     venue: editing?.venue || '',
     city: editing?.city || '',
@@ -3786,6 +3901,7 @@ function ConferenceDialog({ editing, onClose, onDone }) {
           <div><Label>Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="International Conference on ..." /></div>
           <div><Label>Subtitle / tagline</Label><Input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })} placeholder="Shown under title on the public site" /></div>
           <div><Label>Conference theme (shown in footer)</Label><Input value={form.theme} onChange={e => setForm({ ...form, theme: e.target.value })} placeholder="e.g. Advancing Health Through Innovation" /></div>
+          <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 5)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
           <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           <div className="grid grid-cols-3 gap-2">
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
@@ -3851,28 +3967,88 @@ function ThemeDialog({ conferenceId, onClose, onDone }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [keywords, setKeywords] = useState('')
+  const [existing, setExisting] = useState([])
+  const [conf, setConf] = useState(null)
+  const MAX_SUBTHEMES = 5
+
+  const refresh = () => {
+    api(`/conferences/${conferenceId}`).then(d => {
+      setConf(d.conference)
+      setExisting(d.conference?.themes || [])
+    }).catch(() => {})
+  }
+  useEffect(() => { refresh() }, [conferenceId])
+
   const submit = async () => {
-    if (!name) return toast.error('Theme name required')
+    if (!name) return toast.error('Sub-theme name required')
+    if (existing.length >= MAX_SUBTHEMES) return toast.error(`A conference can have at most ${MAX_SUBTHEMES} sub-themes.`)
     try {
       await api(`/conferences/${conferenceId}/themes`, {
         method: 'POST',
         body: JSON.stringify({ name, description, keywords: keywords.split(',').map(k => k.trim()).filter(Boolean) }),
       })
-      toast.success('Theme added'); onDone()
+      toast.success('Sub-theme added')
+      setName(''); setDescription(''); setKeywords('')
+      refresh()
     } catch (e) { toast.error(e.message) }
   }
+
+  const removeTheme = async (themeId) => {
+    if (!confirm('Remove this sub-theme? Any abstracts already tagged with it will remain but lose the tag.')) return
+    try {
+      await api(`/themes/${themeId}`, { method: 'DELETE' })
+      toast.success('Sub-theme removed')
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const remaining = MAX_SUBTHEMES - existing.length
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Add scientific theme</DialogTitle></DialogHeader>
-        <div className="space-y-2">
-          <div><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Computer Vision" /></div>
-          <div><Label>Description</Label><Textarea rows={2} value={description} onChange={e => setDescription(e.target.value)} /></div>
-          <div><Label>Keywords (comma separated)</Label><Input value={keywords} onChange={e => setKeywords(e.target.value)} /></div>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>Sub-themes for “{conf?.name || 'this conference'}”</DialogTitle>
+          <DialogDescription>
+            Main theme: <span className="font-medium text-slate-800">{conf?.mainTheme || <em className="text-muted-foreground">(not set — edit the conference to add one)</em>}</span>
+            <br />Sub-themes are shown in the dropdown when authors submit abstracts. Maximum 5.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Existing sub-themes */}
+        <div className="border rounded-lg bg-slate-50 p-3 space-y-1">
+          <div className="text-xs uppercase tracking-wider font-semibold text-slate-600 mb-1">Current sub-themes ({existing.length}/{MAX_SUBTHEMES})</div>
+          {existing.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic">No sub-themes yet. Add up to {MAX_SUBTHEMES} below.</div>
+          ) : existing.map(t => (
+            <div key={t.id} className="flex items-center justify-between bg-white border rounded px-2 py-1.5">
+              <div>
+                <div className="font-medium text-sm">{t.name}</div>
+                {t.keywords?.length > 0 && <div className="text-[10px] text-muted-foreground">Keywords: {t.keywords.join(', ')}</div>}
+              </div>
+              <Button size="sm" variant="ghost" className="text-rose-600 hover:text-rose-700 hover:bg-rose-50" onClick={() => removeTheme(t.id)}>
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
         </div>
+
+        {/* Add new sub-theme */}
+        {remaining > 0 ? (
+          <div className="space-y-2 border rounded-lg p-3">
+            <div className="text-xs uppercase tracking-wider font-semibold text-indigo-600 mb-1">Add sub-theme ({remaining} slot{remaining !== 1 ? 's' : ''} remaining)</div>
+            <div><Label>Sub-theme name *</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Machine Learning in Radiology" /></div>
+            <div><Label>Description</Label><Textarea rows={2} value={description} onChange={e => setDescription(e.target.value)} /></div>
+            <div><Label>Keywords (comma separated)</Label><Input value={keywords} onChange={e => setKeywords(e.target.value)} /></div>
+          </div>
+        ) : (
+          <div className="p-3 rounded-md border border-amber-200 bg-amber-50 text-xs text-amber-800">
+            You have reached the maximum of {MAX_SUBTHEMES} sub-themes. Remove one first to add another.
+          </div>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit}>Add theme</Button>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          <Button onClick={submit} disabled={remaining <= 0}>Add sub-theme</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

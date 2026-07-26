@@ -22,7 +22,7 @@ async function main() {
     { email: 'admin@scms.io', firstName: 'System', lastName: 'Admin', role: Role.SYSTEM_ADMIN, title: 'Dr.', institutionId: inst1.id, country: 'USA' },
     { email: 'chief@scms.io', firstName: 'Helena', lastName: 'Vasquez', role: Role.CHIEF_EDITOR, title: 'Prof.', institutionId: inst1.id, country: 'Spain', specialties: ['Editorial leadership'] },
     { email: 'managing@scms.io', firstName: 'Margaret', lastName: 'Chen', role: Role.MANAGING_EDITOR, title: 'Prof.', institutionId: inst1.id, country: 'USA' },
-    { email: 'section@scms.io', firstName: 'Samuel', lastName: 'Okonkwo', role: Role.SECTION_EDITOR, title: 'Prof.', institutionId: inst2.id, country: 'UK', specialties: ['Machine Learning', 'AI Ethics'] },
+    { email: 'section@scms.io', firstName: 'Samuel', lastName: 'Okonkwo', role: Role.COMMITTEE_EDITOR, title: 'Prof.', institutionId: inst2.id, country: 'UK', specialties: ['Machine Learning', 'AI Ethics'] },
     { email: 'committee@scms.io', firstName: 'Carla', lastName: 'Rossi', role: Role.COMMITTEE_EDITOR, title: 'Dr.', institutionId: inst2.id, country: 'Italy', specialties: ['Neural Networks'] },
     { email: 'committee2@scms.io', firstName: 'Dmitri', lastName: 'Petrov', role: Role.COMMITTEE_EDITOR, title: 'Dr.', institutionId: inst1.id, country: 'Russia', specialties: ['Data science'] },
     { email: 'reviewer1@scms.io', firstName: 'Rajesh', lastName: 'Kumar', role: Role.EXTERNAL_REVIEWER, title: 'Dr.', institutionId: inst1.id, country: 'India', specialties: ['NLP', 'Transformers'] },

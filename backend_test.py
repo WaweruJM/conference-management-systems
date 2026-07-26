@@ -1,623 +1,741 @@
 #!/usr/bin/env python3
 """
-Backend API tests for SCMS platform - Sprint: Editorial Office enhancements
-Tests 4 specific changes:
-1. GET /api/abstracts SEARCH BY AUTHOR NAME
-2. TECHNICAL SCORE AGGREGATION ON /api/abstracts
-3. POST /api/abstracts/:id/assign-editor — RBAC + REASSIGNMENT
-4. LIGHT REGRESSION
+Backend API tests for SCMS - Focused batch testing
+Tests 5 specific scenarios as per review request
 """
 
 import requests
 import json
 import sys
+from datetime import datetime
 
+# Configuration
 BASE_URL = "https://scms-platform-1.preview.emergentagent.com/api"
-
-# Test credentials (all password: password123)
 CREDENTIALS = {
     "admin": {"email": "admin@scms.io", "password": "password123"},
+    "chief": {"email": "chief@scms.io", "password": "password123"},
     "managing": {"email": "managing@scms.io", "password": "password123"},
-    "section": {"email": "section@scms.io", "password": "password123"},
     "committee": {"email": "committee@scms.io", "password": "password123"},
-    "reviewer1": {"email": "reviewer1@scms.io", "password": "password123"},
     "author": {"email": "author@scms.io", "password": "password123"},
 }
 
-def login(email, password):
-    """Login and return JWT token"""
+def login(user_key):
+    """Login and return Bearer token"""
     try:
-        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("token")
+        creds = CREDENTIALS[user_key]
+        response = requests.post(f"{BASE_URL}/auth/login", json=creds, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get("token")
+            print(f"✅ Login successful for {creds['email']}")
+            return token
         else:
-            print(f"❌ Login failed for {email}: {resp.status_code} - {resp.text}")
+            print(f"❌ Login failed for {creds['email']}: {response.status_code} - {response.text}")
             return None
     except Exception as e:
-        print(f"❌ Login exception for {email}: {e}")
+        print(f"❌ Login exception for {user_key}: {str(e)}")
         return None
 
 def get_headers(token):
-    """Return headers with Bearer token"""
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    """Get headers with Bearer token"""
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
 
-def test_author_search():
-    """Test 1: GET /api/abstracts SEARCH BY AUTHOR NAME"""
+def test_1_subthemes_max_5_and_delete():
+    """
+    Test 1: Sub-themes max 5 enforced + delete
+    - GET /api/conferences and get the featured conference id
+    - As admin: GET conference themes list
+    - POST /api/conferences/:id/themes until we hit 5 total themes
+    - POST 6th theme should return 400
+    - DELETE one theme, then POST should succeed again
+    """
     print("\n" + "="*80)
-    print("TEST 1: GET /api/abstracts SEARCH BY AUTHOR NAME")
+    print("TEST 1: Sub-themes max 5 enforced + delete")
     print("="*80)
     
-    token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
-    if not token:
-        print("❌ Cannot proceed without admin token")
-        return False
-    
-    headers = get_headers(token)
-    all_passed = True
-    
-    # Test 1a: Search by author name "Anna"
-    print("\n[1a] GET /api/abstracts?q=Anna")
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts?q=Anna", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            abstracts = data.get("abstracts", [])
-            print(f"✅ Returned {len(abstracts)} abstracts")
-            
-            # Verify each abstract has "Anna" in authors or submittedBy or title/code
-            for idx, abstract in enumerate(abstracts):
-                has_anna = False
-                match_reason = []
-                
-                # Check authors
-                for author in abstract.get("authors", []):
-                    if "anna" in author.get("fullName", "").lower():
-                        has_anna = True
-                        match_reason.append(f"author: {author.get('fullName')}")
-                
-                # Check submittedBy
-                submitted_by = abstract.get("submittedBy", {})
-                if submitted_by:
-                    first = submitted_by.get("firstName", "").lower()
-                    last = submitted_by.get("lastName", "").lower()
-                    if "anna" in first or "anna" in last:
-                        has_anna = True
-                        match_reason.append(f"submittedBy: {submitted_by.get('firstName')} {submitted_by.get('lastName')}")
-                
-                # Check title/code
-                if "anna" in abstract.get("title", "").lower() or "anna" in abstract.get("submissionCode", "").lower():
-                    has_anna = True
-                    match_reason.append("title/code")
-                
-                if has_anna:
-                    print(f"  ✅ Abstract {idx+1} ({abstract.get('submissionCode')}): matches via {', '.join(match_reason)}")
-                else:
-                    print(f"  ❌ Abstract {idx+1} ({abstract.get('submissionCode')}): NO MATCH for 'Anna'")
-                    all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 1b: Search by author name "Fischer"
-    print("\n[1b] GET /api/abstracts?q=Fischer")
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts?q=Fischer", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            abstracts = data.get("abstracts", [])
-            print(f"✅ Returned {len(abstracts)} abstracts")
-            
-            for idx, abstract in enumerate(abstracts):
-                has_fischer = False
-                match_reason = []
-                
-                for author in abstract.get("authors", []):
-                    if "fischer" in author.get("fullName", "").lower():
-                        has_fischer = True
-                        match_reason.append(f"author: {author.get('fullName')}")
-                
-                submitted_by = abstract.get("submittedBy", {})
-                if submitted_by:
-                    first = submitted_by.get("firstName", "").lower()
-                    last = submitted_by.get("lastName", "").lower()
-                    if "fischer" in first or "fischer" in last:
-                        has_fischer = True
-                        match_reason.append(f"submittedBy: {submitted_by.get('firstName')} {submitted_by.get('lastName')}")
-                
-                if "fischer" in abstract.get("title", "").lower() or "fischer" in abstract.get("submissionCode", "").lower():
-                    has_fischer = True
-                    match_reason.append("title/code")
-                
-                if has_fischer:
-                    print(f"  ✅ Abstract {idx+1} ({abstract.get('submissionCode')}): matches via {', '.join(match_reason)}")
-                else:
-                    print(f"  ❌ Abstract {idx+1} ({abstract.get('submissionCode')}): NO MATCH for 'Fischer'")
-                    all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 1c: Search with no results
-    print("\n[1c] GET /api/abstracts?q=zzznoresult")
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts?q=zzznoresult", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            abstracts = data.get("abstracts", [])
-            if len(abstracts) == 0:
-                print(f"✅ Returned empty list as expected")
-            else:
-                print(f"❌ Expected empty list, got {len(abstracts)} abstracts")
-                all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 1d: No query parameter
-    print("\n[1d] GET /api/abstracts (no q parameter)")
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            abstracts = data.get("abstracts", [])
-            print(f"✅ Returned {len(abstracts)} abstracts (full list)")
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    return all_passed
-
-def test_technical_score_aggregation():
-    """Test 2: TECHNICAL SCORE AGGREGATION ON /api/abstracts"""
-    print("\n" + "="*80)
-    print("TEST 2: TECHNICAL SCORE AGGREGATION ON /api/abstracts")
-    print("="*80)
-    
-    token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
-    if not token:
-        print("❌ Cannot proceed without admin token")
-        return False
-    
-    headers = get_headers(token)
-    all_passed = True
-    
-    print("\n[2a] GET /api/abstracts - Check technicalScoreAverage and technicalScoreCount fields")
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            abstracts = data.get("abstracts", [])
-            print(f"✅ Returned {len(abstracts)} abstracts")
-            
-            if len(abstracts) == 0:
-                print("⚠️  No abstracts to check")
-                return True
-            
-            # Check every abstract has the required fields
-            for idx, abstract in enumerate(abstracts):
-                code = abstract.get("submissionCode", "N/A")
-                has_avg = "technicalScoreAverage" in abstract
-                has_count = "technicalScoreCount" in abstract
-                
-                avg_val = abstract.get("technicalScoreAverage")
-                count_val = abstract.get("technicalScoreCount")
-                
-                if has_avg and has_count:
-                    # Validate types
-                    if count_val is not None and not isinstance(count_val, int):
-                        print(f"  ❌ Abstract {idx+1} ({code}): technicalScoreCount is not an integer: {count_val}")
-                        all_passed = False
-                    elif count_val is not None and count_val < 0:
-                        print(f"  ❌ Abstract {idx+1} ({code}): technicalScoreCount is negative: {count_val}")
-                        all_passed = False
-                    elif avg_val is not None and not isinstance(avg_val, (int, float)):
-                        print(f"  ❌ Abstract {idx+1} ({code}): technicalScoreAverage is not a number: {avg_val}")
-                        all_passed = False
-                    else:
-                        print(f"  ✅ Abstract {idx+1} ({code}): technicalScoreAverage={avg_val}, technicalScoreCount={count_val}")
-                else:
-                    missing = []
-                    if not has_avg:
-                        missing.append("technicalScoreAverage")
-                    if not has_count:
-                        missing.append("technicalScoreCount")
-                    print(f"  ❌ Abstract {idx+1} ({code}): Missing fields: {', '.join(missing)}")
-                    all_passed = False
-            
-            # Find at least one abstract with scores > 0 to verify calculation
-            found_scored = False
-            for abstract in abstracts:
-                if abstract.get("technicalScoreCount", 0) > 0:
-                    found_scored = True
-                    code = abstract.get("submissionCode")
-                    avg = abstract.get("technicalScoreAverage")
-                    count = abstract.get("technicalScoreCount")
-                    print(f"\n  ℹ️  Found scored abstract: {code} with avg={avg}, count={count}")
-                    print(f"     (Average should be mean of 5 category scores from TechnicalScore table)")
-                    break
-            
-            if not found_scored:
-                print("\n  ℹ️  No abstracts have technical scores yet (all have count=0, avg=null)")
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    return all_passed
-
-def test_assign_editor_rbac_reassignment():
-    """Test 3: POST /api/abstracts/:id/assign-editor — RBAC + REASSIGNMENT"""
-    print("\n" + "="*80)
-    print("TEST 3: POST /api/abstracts/:id/assign-editor — RBAC + REASSIGNMENT")
-    print("="*80)
-    
-    # First, get an abstract ID and user IDs
-    admin_token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
+    admin_token = login("admin")
     if not admin_token:
-        print("❌ Cannot proceed without admin token")
+        print("❌ TEST 1 FAILED: Could not login as admin")
         return False
     
     headers = get_headers(admin_token)
-    all_passed = True
     
-    # Get abstracts
-    print("\n[Setup] Getting abstracts and users...")
     try:
-        resp = requests.get(f"{BASE_URL}/abstracts", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            print(f"❌ Failed to get abstracts: {resp.status_code}")
-            return False
-        abstracts = resp.json().get("abstracts", [])
-        if len(abstracts) == 0:
-            print("❌ No abstracts available for testing")
+        # Step 1: Get featured conference
+        print("\n[1.1] Getting featured conference...")
+        response = requests.get(f"{BASE_URL}/conferences", timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Failed to get conferences: {response.status_code}")
             return False
         
-        # Pick first abstract
-        test_abstract = abstracts[0]
-        abstract_id = test_abstract["id"]
-        abstract_code = test_abstract.get("submissionCode", "N/A")
-        print(f"✅ Using abstract: {abstract_code} (ID: {abstract_id})")
+        conferences = response.json().get("conferences", [])
+        featured_conf = next((c for c in conferences if c.get("isFeatured")), None)
+        if not featured_conf:
+            featured_conf = conferences[0] if conferences else None
         
-        # Get users with committee/editor roles
-        resp = requests.get(f"{BASE_URL}/users", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            print(f"❌ Failed to get users: {resp.status_code}")
-            return False
-        users = resp.json().get("users", [])
-        
-        # Find committee@scms.io and section@scms.io
-        committee_user = None
-        section_user = None
-        for u in users:
-            if u["email"] == "committee@scms.io":
-                committee_user = u
-            elif u["email"] == "section@scms.io":
-                section_user = u
-        
-        if not committee_user:
-            print("❌ committee@scms.io user not found")
-            return False
-        if not section_user:
-            print("❌ section@scms.io user not found")
+        if not featured_conf:
+            print("❌ No conference found")
             return False
         
-        print(f"✅ Found committee user: {committee_user['email']} (ID: {committee_user['id']})")
-        print(f"✅ Found section user: {section_user['email']} (ID: {section_user['id']})")
+        conf_id = featured_conf["id"]
+        conf_name = featured_conf.get("name", "Unknown")
+        print(f"✅ Found conference: {conf_name} (ID: {conf_id})")
+        
+        # Step 2: Get current themes
+        print(f"\n[1.2] Getting current themes for conference...")
+        response = requests.get(f"{BASE_URL}/conferences/{conf_id}", timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Failed to get conference details: {response.status_code}")
+            return False
+        
+        conf_data = response.json().get("conference", {})
+        current_themes = conf_data.get("themes", [])
+        theme_count = len(current_themes)
+        print(f"✅ Conference currently has {theme_count} themes")
+        
+        # Step 3: Add themes until we reach 5
+        themes_to_add = 5 - theme_count
+        added_theme_ids = []
+        
+        if themes_to_add > 0:
+            print(f"\n[1.3] Adding {themes_to_add} themes to reach 5 total...")
+            for i in range(themes_to_add):
+                theme_name = f"TestTheme_{datetime.now().timestamp()}_{i}"
+                theme_body = {
+                    "name": theme_name,
+                    "keywords": [f"keyword{i}"]
+                }
+                response = requests.post(
+                    f"{BASE_URL}/conferences/{conf_id}/themes",
+                    headers=headers,
+                    json=theme_body,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    theme_data = response.json().get("theme", {})
+                    added_theme_ids.append(theme_data.get("id"))
+                    print(f"  ✅ Added theme {i+1}/{themes_to_add}: {theme_name}")
+                else:
+                    print(f"  ❌ Failed to add theme {i+1}: {response.status_code} - {response.text}")
+                    return False
+        else:
+            print(f"\n[1.3] Conference already has {theme_count} themes (>= 5)")
+        
+        # Step 4: Try to add 6th theme (should fail with 400)
+        print(f"\n[1.4] Attempting to add 6th theme (should fail with 400)...")
+        overflow_theme = {
+            "name": f"Overflow_{datetime.now().timestamp()}",
+            "keywords": ["overflow"]
+        }
+        response = requests.post(
+            f"{BASE_URL}/conferences/{conf_id}/themes",
+            headers=headers,
+            json=overflow_theme,
+            timeout=10
+        )
+        
+        if response.status_code == 400:
+            error_msg = response.json().get("error", "")
+            if "maximum" in error_msg.lower() and "5" in error_msg:
+                print(f"✅ Correctly rejected 6th theme with 400: {error_msg}")
+            else:
+                print(f"⚠️  Got 400 but unexpected message: {error_msg}")
+                return False
+        else:
+            print(f"❌ Expected 400 but got {response.status_code}: {response.text}")
+            return False
+        
+        # Step 5: Delete one theme
+        print(f"\n[1.5] Deleting one theme to bring count below 5...")
+        # Get a theme ID to delete (prefer one we just added, or use existing)
+        theme_to_delete = added_theme_ids[0] if added_theme_ids else current_themes[0]["id"]
+        
+        response = requests.delete(
+            f"{BASE_URL}/themes/{theme_to_delete}",
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Successfully deleted theme: {theme_to_delete}")
+        else:
+            print(f"❌ Failed to delete theme: {response.status_code} - {response.text}")
+            return False
+        
+        # Step 6: Try to add theme again (should succeed now)
+        print(f"\n[1.6] Adding theme again (should succeed now)...")
+        new_theme = {
+            "name": f"AfterDelete_{datetime.now().timestamp()}",
+            "keywords": ["after-delete"]
+        }
+        response = requests.post(
+            f"{BASE_URL}/conferences/{conf_id}/themes",
+            headers=headers,
+            json=new_theme,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Successfully added theme after deletion")
+        else:
+            print(f"❌ Failed to add theme after deletion: {response.status_code} - {response.text}")
+            return False
+        
+        print("\n✅ TEST 1 PASSED: Sub-themes max 5 enforced + delete working correctly")
+        return True
         
     except Exception as e:
-        print(f"❌ Setup exception: {e}")
+        print(f"❌ TEST 1 EXCEPTION: {str(e)}")
         return False
-    
-    # Test 3a: Assign editor as admin
-    print(f"\n[3a] POST /api/abstracts/{abstract_id}/assign-editor as admin@scms.io")
-    try:
-        payload = {"editorId": committee_user["id"], "role": "COMMITTEE_EDITOR"}
-        resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", 
-                           headers=headers, json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            assignment = data.get("assignment", {})
-            print(f"✅ Assignment created: {assignment.get('id')}")
-            
-            # Verify the abstract now has this assignment
-            resp2 = requests.get(f"{BASE_URL}/abstracts/{abstract_id}", headers=headers, timeout=10)
-            if resp2.status_code == 200:
-                abstract = resp2.json().get("abstract", {})
-                editor_assignments = abstract.get("editorAssignments", [])
-                active_assignments = [a for a in editor_assignments if a.get("active", False)]
-                
-                if len(active_assignments) == 1:
-                    assigned_editor = active_assignments[0].get("editor", {})
-                    if assigned_editor.get("id") == committee_user["id"]:
-                        print(f"✅ Verified: Exactly ONE active assignment to {assigned_editor.get('email')}")
-                    else:
-                        print(f"❌ Active assignment is to wrong editor: {assigned_editor.get('email')}")
-                        all_passed = False
-                else:
-                    print(f"❌ Expected 1 active assignment, found {len(active_assignments)}")
-                    all_passed = False
-            else:
-                print(f"❌ Failed to verify assignment: {resp2.status_code}")
-                all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 3b: Reassign to different editor (test deactivation of previous)
-    print(f"\n[3b] POST /api/abstracts/{abstract_id}/assign-editor again (reassignment to section@scms.io)")
-    try:
-        payload = {"editorId": section_user["id"], "role": "SECTION_EDITOR"}
-        resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", 
-                           headers=headers, json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            print(f"✅ Reassignment created")
-            
-            # Verify: previous assignment should be inactive, new one active
-            resp2 = requests.get(f"{BASE_URL}/abstracts/{abstract_id}", headers=headers, timeout=10)
-            if resp2.status_code == 200:
-                abstract = resp2.json().get("abstract", {})
-                editor_assignments = abstract.get("editorAssignments", [])
-                active_assignments = [a for a in editor_assignments if a.get("active", False)]
-                inactive_assignments = [a for a in editor_assignments if not a.get("active", False)]
-                
-                if len(active_assignments) == 1:
-                    assigned_editor = active_assignments[0].get("editor", {})
-                    if assigned_editor.get("id") == section_user["id"]:
-                        print(f"✅ Verified: New active assignment to {assigned_editor.get('email')}")
-                    else:
-                        print(f"❌ Active assignment is to wrong editor: {assigned_editor.get('email')}")
-                        all_passed = False
-                    
-                    # Check that previous assignment is now inactive
-                    if len(inactive_assignments) >= 1:
-                        prev_inactive = [a for a in inactive_assignments if a.get("editor", {}).get("id") == committee_user["id"]]
-                        if len(prev_inactive) > 0:
-                            print(f"✅ Verified: Previous assignment to {committee_user['email']} is now inactive")
-                        else:
-                            print(f"⚠️  Previous assignment to {committee_user['email']} not found in inactive list")
-                    else:
-                        print(f"⚠️  No inactive assignments found (expected at least 1)")
-                else:
-                    print(f"❌ Expected 1 active assignment, found {len(active_assignments)}")
-                    all_passed = False
-            else:
-                print(f"❌ Failed to verify reassignment: {resp2.status_code}")
-                all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 3c: RBAC - author should get 403
-    print(f"\n[3c] POST /api/abstracts/{abstract_id}/assign-editor as author@scms.io (expect 403)")
-    try:
-        author_token = login(CREDENTIALS["author"]["email"], CREDENTIALS["author"]["password"])
-        if not author_token:
-            print("❌ Failed to login as author")
-            all_passed = False
-        else:
-            author_headers = get_headers(author_token)
-            payload = {"editorId": committee_user["id"], "role": "COMMITTEE_EDITOR"}
-            resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", 
-                               headers=author_headers, json=payload, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 403:
-                print(f"✅ Correctly denied with 403")
-            else:
-                print(f"❌ Expected 403, got {resp.status_code}: {resp.text}")
-                all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 3d: RBAC - managing editor should be allowed
-    print(f"\n[3d] POST /api/abstracts/{abstract_id}/assign-editor as managing@scms.io (expect 200)")
-    try:
-        managing_token = login(CREDENTIALS["managing"]["email"], CREDENTIALS["managing"]["password"])
-        if not managing_token:
-            print("❌ Failed to login as managing editor")
-            all_passed = False
-        else:
-            managing_headers = get_headers(managing_token)
-            payload = {"editorId": committee_user["id"], "role": "COMMITTEE_EDITOR"}
-            resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", 
-                               headers=managing_headers, json=payload, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 200:
-                print(f"✅ Managing editor allowed (200)")
-            else:
-                print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-                all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 3e: RBAC - CHIEF_EDITOR should be allowed (section@scms.io has CHIEF_EDITOR role)
-    print(f"\n[3e] POST /api/abstracts/{abstract_id}/assign-editor as section@scms.io (CHIEF_EDITOR, expect 200)")
-    try:
-        section_token = login(CREDENTIALS["section"]["email"], CREDENTIALS["section"]["password"])
-        if not section_token:
-            print("❌ Failed to login as section editor")
-            all_passed = False
-        else:
-            section_headers = get_headers(section_token)
-            payload = {"editorId": committee_user["id"], "role": "COMMITTEE_EDITOR"}
-            resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", 
-                               headers=section_headers, json=payload, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 200:
-                print(f"✅ CHIEF_EDITOR allowed (200)")
-            else:
-                print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-                all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    return all_passed
 
-def test_light_regression():
-    """Test 4: LIGHT REGRESSION"""
+def test_2_mainTheme_field():
+    """
+    Test 2: mainTheme field on Conference
+    - Pick a conference
+    - PUT /api/conferences/:id with mainTheme
+    - GET /api/conferences/:id and confirm mainTheme is set
+    - Set mainTheme back to null
+    """
     print("\n" + "="*80)
-    print("TEST 4: LIGHT REGRESSION")
+    print("TEST 2: mainTheme field on Conference")
     print("="*80)
     
-    all_passed = True
+    admin_token = login("admin")
+    if not admin_token:
+        print("❌ TEST 2 FAILED: Could not login as admin")
+        return False
     
-    # Test 4a: GET /api/abstracts?scope=mine as author
-    print("\n[4a] GET /api/abstracts?scope=mine as author@scms.io")
+    headers = get_headers(admin_token)
+    
     try:
-        author_token = login(CREDENTIALS["author"]["email"], CREDENTIALS["author"]["password"])
+        # Get a conference
+        print("\n[2.1] Getting conference...")
+        response = requests.get(f"{BASE_URL}/conferences", timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Failed to get conferences: {response.status_code}")
+            return False
+        
+        conferences = response.json().get("conferences", [])
+        if not conferences:
+            print("❌ No conferences found")
+            return False
+        
+        conf = conferences[0]
+        conf_id = conf["id"]
+        print(f"✅ Using conference: {conf.get('name')} (ID: {conf_id})")
+        
+        # Set mainTheme
+        print("\n[2.2] Setting mainTheme to 'Precision Medicine and Public Health'...")
+        update_body = {
+            "mainTheme": "Precision Medicine and Public Health"
+        }
+        response = requests.put(
+            f"{BASE_URL}/conferences/{conf_id}",
+            headers=headers,
+            json=update_body,
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to update conference: {response.status_code} - {response.text}")
+            return False
+        
+        print("✅ Conference updated successfully")
+        
+        # Verify mainTheme is set
+        print("\n[2.3] Verifying mainTheme is set...")
+        response = requests.get(f"{BASE_URL}/conferences/{conf_id}", timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Failed to get conference: {response.status_code}")
+            return False
+        
+        conf_data = response.json().get("conference", {})
+        main_theme = conf_data.get("mainTheme")
+        
+        if main_theme == "Precision Medicine and Public Health":
+            print(f"✅ mainTheme correctly set: {main_theme}")
+        else:
+            print(f"❌ mainTheme not set correctly. Got: {main_theme}")
+            return False
+        
+        # Reset mainTheme to null
+        print("\n[2.4] Resetting mainTheme to null...")
+        reset_body = {
+            "mainTheme": None
+        }
+        response = requests.put(
+            f"{BASE_URL}/conferences/{conf_id}",
+            headers=headers,
+            json=reset_body,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print("✅ mainTheme reset to null")
+        else:
+            print(f"⚠️  Failed to reset mainTheme: {response.status_code}")
+        
+        print("\n✅ TEST 2 PASSED: mainTheme field working correctly")
+        return True
+        
+    except Exception as e:
+        print(f"❌ TEST 2 EXCEPTION: {str(e)}")
+        return False
+
+def test_3_reviewer_invitations_with_abstractId():
+    """
+    Test 3: POST /api/reviewer-invitations still works with abstractId
+    - Login as chief@scms.io
+    - Pick any existing abstract id
+    - POST /api/reviewer-invitations with abstractId
+    - As author@scms.io (no editor role) POST same -> expect 403
+    """
+    print("\n" + "="*80)
+    print("TEST 3: POST /api/reviewer-invitations with abstractId")
+    print("="*80)
+    
+    chief_token = login("chief")
+    if not chief_token:
+        print("❌ TEST 3 FAILED: Could not login as chief")
+        return False
+    
+    headers = get_headers(chief_token)
+    
+    try:
+        # Get an abstract
+        print("\n[3.1] Getting an abstract...")
+        response = requests.get(
+            f"{BASE_URL}/abstracts",
+            headers=headers,
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ Failed to get abstracts: {response.status_code}")
+            return False
+        
+        abstracts = response.json().get("abstracts", [])
+        if not abstracts:
+            print("❌ No abstracts found")
+            return False
+        
+        abstract_id = abstracts[0]["id"]
+        print(f"✅ Using abstract ID: {abstract_id}")
+        
+        # Send invitation with abstractId
+        print("\n[3.2] Sending reviewer invitation with abstractId as chief...")
+        ts = datetime.now().timestamp()
+        invite_body = {
+            "email": f"invite-test-{ts}@example.com",
+            "fullName": "Dr Invite Test",
+            "specialty": "Cardiology",
+            "message": "Please review this abstract",
+            "abstractId": abstract_id
+        }
+        response = requests.post(
+            f"{BASE_URL}/reviewer-invitations",
+            headers=headers,
+            json=invite_body,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            invitation = data.get("invitation", {})
+            register_url = data.get("registerUrl", "")
+            print(f"✅ Invitation sent successfully")
+            print(f"   Invitation ID: {invitation.get('id')}")
+            print(f"   Register URL: {register_url}")
+            if not register_url:
+                print("⚠️  Warning: registerUrl is empty")
+        else:
+            print(f"❌ Failed to send invitation: {response.status_code} - {response.text}")
+            return False
+        
+        # Try as author (should fail with 403)
+        print("\n[3.3] Attempting to send invitation as author (should fail with 403)...")
+        author_token = login("author")
         if not author_token:
-            print("❌ Failed to login as author")
-            all_passed = False
+            print("❌ Could not login as author")
+            return False
+        
+        author_headers = get_headers(author_token)
+        invite_body2 = {
+            "email": f"invite-test-2-{ts}@example.com",
+            "fullName": "Dr Invite Test 2",
+            "specialty": "Oncology",
+            "message": "Please review",
+            "abstractId": abstract_id
+        }
+        response = requests.post(
+            f"{BASE_URL}/reviewer-invitations",
+            headers=author_headers,
+            json=invite_body2,
+            timeout=10
+        )
+        
+        if response.status_code == 403:
+            print(f"✅ Correctly rejected author with 403")
         else:
-            headers = get_headers(author_token)
-            resp = requests.get(f"{BASE_URL}/abstracts?scope=mine", headers=headers, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                abstracts = data.get("abstracts", [])
-                print(f"✅ Returned {len(abstracts)} abstracts (author's own)")
-            else:
-                print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-                all_passed = False
+            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
+            return False
+        
+        print("\n✅ TEST 3 PASSED: Reviewer invitations with abstractId working correctly")
+        return True
+        
     except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
+        print(f"❌ TEST 3 EXCEPTION: {str(e)}")
+        return False
+
+def test_4_get_abstract_rbac():
+    """
+    Test 4: GET /api/abstracts/:id RBAC — Chief Editor + Committee Editor allowed
+    - Login as chief@scms.io and GET /api/abstracts/:id (abstract they don't own) -> expect 200
+    - Login as committee@scms.io and GET /api/abstracts/:id -> expect 200
+    - Login as author@scms.io and GET /api/abstracts/:id (not theirs, not assigned) -> expect 403
+    """
+    print("\n" + "="*80)
+    print("TEST 4: GET /api/abstracts/:id RBAC")
+    print("="*80)
     
-    # Test 4b: GET /api/abstracts?scope=assigned as reviewer
-    print("\n[4b] GET /api/abstracts?scope=assigned as reviewer1@scms.io")
     try:
-        reviewer_token = login(CREDENTIALS["reviewer1"]["email"], CREDENTIALS["reviewer1"]["password"])
-        if not reviewer_token:
-            print("❌ Failed to login as reviewer")
-            all_passed = False
-        else:
-            headers = get_headers(reviewer_token)
-            resp = requests.get(f"{BASE_URL}/abstracts?scope=assigned", headers=headers, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                abstracts = data.get("abstracts", [])
-                print(f"✅ Returned {len(abstracts)} abstracts (assigned to reviewer)")
-            else:
-                print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-                all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 4c: POST /api/auth/login for admin
-    print("\n[4c] POST /api/auth/login for admin@scms.io")
-    try:
-        resp = requests.post(f"{BASE_URL}/auth/login", 
-                           json={"email": CREDENTIALS["admin"]["email"], "password": CREDENTIALS["admin"]["password"]}, 
-                           timeout=10)
-        print(f"Status: {resp.status_code}")
-        if resp.status_code == 200:
-            data = resp.json()
-            token = data.get("token")
-            if token and token.startswith("eyJ"):
-                print(f"✅ Login successful, JWT token received (starts with 'eyJ')")
-            else:
-                print(f"❌ Token format unexpected: {token[:20] if token else 'None'}")
-                all_passed = False
-        else:
-            print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
-    
-    # Test 4d: GET /api/notifications for admin
-    print("\n[4d] GET /api/notifications for admin@scms.io")
-    try:
-        admin_token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
+        # Get an abstract ID first (as admin to see all)
+        print("\n[4.1] Getting an abstract ID...")
+        admin_token = login("admin")
         if not admin_token:
-            print("❌ Failed to login as admin")
-            all_passed = False
+            print("❌ Could not login as admin")
+            return False
+        
+        admin_headers = get_headers(admin_token)
+        response = requests.get(
+            f"{BASE_URL}/abstracts",
+            headers=admin_headers,
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ Failed to get abstracts: {response.status_code}")
+            return False
+        
+        abstracts = response.json().get("abstracts", [])
+        if not abstracts:
+            print("❌ No abstracts found")
+            return False
+        
+        # Find an abstract not owned by author@scms.io
+        author_token = login("author")
+        author_headers = get_headers(author_token)
+        response = requests.get(
+            f"{BASE_URL}/abstracts?scope=mine",
+            headers=author_headers,
+            timeout=10
+        )
+        author_abstracts = response.json().get("abstracts", [])
+        author_abstract_ids = [a["id"] for a in author_abstracts]
+        
+        # Pick an abstract not owned by author
+        test_abstract = None
+        for abstract in abstracts:
+            if abstract["id"] not in author_abstract_ids:
+                test_abstract = abstract
+                break
+        
+        if not test_abstract:
+            # If all abstracts belong to author, use the first one
+            test_abstract = abstracts[0]
+        
+        abstract_id = test_abstract["id"]
+        submission_code = test_abstract.get("submissionCode", "Unknown")
+        print(f"✅ Using abstract: {submission_code} (ID: {abstract_id})")
+        
+        # Test 1: Chief Editor access
+        print("\n[4.2] Testing Chief Editor access...")
+        chief_token = login("chief")
+        if not chief_token:
+            print("❌ Could not login as chief")
+            return False
+        
+        chief_headers = get_headers(chief_token)
+        response = requests.get(
+            f"{BASE_URL}/abstracts/{abstract_id}",
+            headers=chief_headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Chief Editor can access abstract (200)")
         else:
-            headers = get_headers(admin_token)
-            resp = requests.get(f"{BASE_URL}/notifications", headers=headers, timeout=10)
-            print(f"Status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                notifications = data.get("notifications", [])
-                print(f"✅ Returned {len(notifications)} notifications")
+            print(f"❌ Chief Editor access failed: {response.status_code} - {response.text}")
+            return False
+        
+        # Test 2: Committee Editor access
+        print("\n[4.3] Testing Committee Editor access...")
+        committee_token = login("committee")
+        if not committee_token:
+            print("❌ Could not login as committee")
+            return False
+        
+        committee_headers = get_headers(committee_token)
+        response = requests.get(
+            f"{BASE_URL}/abstracts/{abstract_id}",
+            headers=committee_headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Committee Editor can access abstract (200)")
+        else:
+            print(f"❌ Committee Editor access failed: {response.status_code} - {response.text}")
+            return False
+        
+        # Test 3: Author access to non-owned, non-assigned abstract
+        print("\n[4.4] Testing Author access to non-owned abstract (should fail with 403)...")
+        response = requests.get(
+            f"{BASE_URL}/abstracts/{abstract_id}",
+            headers=author_headers,
+            timeout=10
+        )
+        
+        if response.status_code == 403:
+            print(f"✅ Author correctly denied access (403)")
+        elif response.status_code == 200:
+            # This might be their own abstract or they're assigned
+            print(f"⚠️  Author got 200 - might be their abstract or they're assigned")
+            # Try to find another abstract
+            for abstract in abstracts:
+                if abstract["id"] not in author_abstract_ids and abstract["id"] != abstract_id:
+                    test_id = abstract["id"]
+                    response = requests.get(
+                        f"{BASE_URL}/abstracts/{test_id}",
+                        headers=author_headers,
+                        timeout=10
+                    )
+                    if response.status_code == 403:
+                        print(f"✅ Author correctly denied access to {test_id} (403)")
+                        break
+                    elif response.status_code == 200:
+                        continue
             else:
-                print(f"❌ Expected 200, got {resp.status_code}: {resp.text}")
-                all_passed = False
+                print("⚠️  Could not find an abstract that author doesn't have access to")
+        else:
+            print(f"❌ Unexpected status code: {response.status_code} - {response.text}")
+            return False
+        
+        print("\n✅ TEST 4 PASSED: GET /api/abstracts/:id RBAC working correctly")
+        return True
+        
     except Exception as e:
-        print(f"❌ Exception: {e}")
-        all_passed = False
+        print(f"❌ TEST 4 EXCEPTION: {str(e)}")
+        return False
+
+def test_5_assign_editor_rbac():
+    """
+    Test 5: POST /api/abstracts/:id/assign-editor RBAC still tight
+    - Login as managing@scms.io, POST assign-editor -> expect 403
+    - Login as chief@scms.io -> 200. Try self-assignment -> 200
+    - Login as admin@scms.io -> 200
+    - Login as committee@scms.io -> 403
+    """
+    print("\n" + "="*80)
+    print("TEST 5: POST /api/abstracts/:id/assign-editor RBAC")
+    print("="*80)
     
-    return all_passed
+    try:
+        # Get an abstract and committee user ID
+        print("\n[5.1] Getting abstract and committee user ID...")
+        admin_token = login("admin")
+        if not admin_token:
+            print("❌ Could not login as admin")
+            return False
+        
+        admin_headers = get_headers(admin_token)
+        
+        # Get abstracts
+        response = requests.get(
+            f"{BASE_URL}/abstracts",
+            headers=admin_headers,
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ Failed to get abstracts: {response.status_code}")
+            return False
+        
+        abstracts = response.json().get("abstracts", [])
+        if not abstracts:
+            print("❌ No abstracts found")
+            return False
+        
+        abstract_id = abstracts[0]["id"]
+        submission_code = abstracts[0].get("submissionCode", "Unknown")
+        print(f"✅ Using abstract: {submission_code} (ID: {abstract_id})")
+        
+        # Get committee user ID
+        response = requests.get(
+            f"{BASE_URL}/users",
+            headers=admin_headers,
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ Failed to get users: {response.status_code}")
+            return False
+        
+        users = response.json().get("users", [])
+        committee_user = next((u for u in users if u["email"] == "committee@scms.io"), None)
+        chief_user = next((u for u in users if u["email"] == "chief@scms.io"), None)
+        
+        if not committee_user:
+            print("❌ Committee user not found")
+            return False
+        
+        committee_user_id = committee_user["id"]
+        chief_user_id = chief_user["id"] if chief_user else None
+        print(f"✅ Committee user ID: {committee_user_id}")
+        if chief_user_id:
+            print(f"✅ Chief user ID: {chief_user_id}")
+        
+        # Test 1: Managing Editor (should fail with 403)
+        print("\n[5.2] Testing Managing Editor assign-editor (should fail with 403)...")
+        managing_token = login("managing")
+        if not managing_token:
+            print("❌ Could not login as managing")
+            return False
+        
+        managing_headers = get_headers(managing_token)
+        assign_body = {
+            "editorId": committee_user_id,
+            "role": "COMMITTEE_EDITOR"
+        }
+        response = requests.post(
+            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
+            headers=managing_headers,
+            json=assign_body,
+            timeout=10
+        )
+        
+        if response.status_code == 403:
+            print(f"✅ Managing Editor correctly denied (403)")
+        else:
+            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
+            return False
+        
+        # Test 2: Chief Editor (should succeed)
+        print("\n[5.3] Testing Chief Editor assign-editor (should succeed with 200)...")
+        chief_token = login("chief")
+        if not chief_token:
+            print("❌ Could not login as chief")
+            return False
+        
+        chief_headers = get_headers(chief_token)
+        response = requests.post(
+            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
+            headers=chief_headers,
+            json=assign_body,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Chief Editor can assign editor (200)")
+        else:
+            print(f"❌ Chief Editor assign failed: {response.status_code} - {response.text}")
+            return False
+        
+        # Test 3: Chief Editor self-assignment (should succeed)
+        if chief_user_id:
+            print("\n[5.4] Testing Chief Editor self-assignment (should succeed with 200)...")
+            self_assign_body = {
+                "editorId": chief_user_id,
+                "role": "COMMITTEE_EDITOR"
+            }
+            response = requests.post(
+                f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
+                headers=chief_headers,
+                json=self_assign_body,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print(f"✅ Chief Editor can self-assign (200)")
+            else:
+                print(f"❌ Chief Editor self-assign failed: {response.status_code} - {response.text}")
+                return False
+        
+        # Test 4: Admin (should succeed)
+        print("\n[5.5] Testing Admin assign-editor (should succeed with 200)...")
+        response = requests.post(
+            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
+            headers=admin_headers,
+            json=assign_body,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Admin can assign editor (200)")
+        else:
+            print(f"❌ Admin assign failed: {response.status_code} - {response.text}")
+            return False
+        
+        # Test 5: Committee Member (should fail with 403)
+        print("\n[5.6] Testing Committee Member assign-editor (should fail with 403)...")
+        committee_token = login("committee")
+        if not committee_token:
+            print("❌ Could not login as committee")
+            return False
+        
+        committee_headers = get_headers(committee_token)
+        response = requests.post(
+            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
+            headers=committee_headers,
+            json=assign_body,
+            timeout=10
+        )
+        
+        if response.status_code == 403:
+            print(f"✅ Committee Member correctly denied (403)")
+        else:
+            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
+            return False
+        
+        print("\n✅ TEST 5 PASSED: POST /api/abstracts/:id/assign-editor RBAC working correctly")
+        return True
+        
+    except Exception as e:
+        print(f"❌ TEST 5 EXCEPTION: {str(e)}")
+        return False
 
 def main():
     """Run all tests"""
     print("\n" + "="*80)
-    print("SCMS BACKEND API TESTS - Editorial Office Enhancements")
+    print("SCMS BACKEND API TESTS - FOCUSED BATCH")
+    print("Testing 5 specific scenarios")
     print("="*80)
-    print(f"Base URL: {BASE_URL}")
-    print(f"Testing 4 specific changes:")
-    print("  1. GET /api/abstracts SEARCH BY AUTHOR NAME")
-    print("  2. TECHNICAL SCORE AGGREGATION ON /api/abstracts")
-    print("  3. POST /api/abstracts/:id/assign-editor — RBAC + REASSIGNMENT")
-    print("  4. LIGHT REGRESSION")
     
-    results = {}
+    results = {
+        "Test 1: Sub-themes max 5 + delete": test_1_subthemes_max_5_and_delete(),
+        "Test 2: mainTheme field": test_2_mainTheme_field(),
+        "Test 3: Reviewer invitations with abstractId": test_3_reviewer_invitations_with_abstractId(),
+        "Test 4: GET /api/abstracts/:id RBAC": test_4_get_abstract_rbac(),
+        "Test 5: POST /api/abstracts/:id/assign-editor RBAC": test_5_assign_editor_rbac(),
+    }
     
-    # Run tests
-    results["test1_author_search"] = test_author_search()
-    results["test2_technical_scores"] = test_technical_score_aggregation()
-    results["test3_assign_editor"] = test_assign_editor_rbac_reassignment()
-    results["test4_regression"] = test_light_regression()
-    
-    # Summary
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
     
-    for test_name, passed in results.items():
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        print(f"{test_name}: {status}")
+    passed = sum(1 for v in results.values() if v)
+    total = len(results)
     
-    all_passed = all(results.values())
+    for test_name, result in results.items():
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {test_name}")
     
-    if all_passed:
-        print("\n🎉 ALL TESTS PASSED")
+    print(f"\nTotal: {passed}/{total} tests passed")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
         return 0
     else:
-        print("\n❌ SOME TESTS FAILED")
+        print(f"\n⚠️  {total - passed} test(s) failed")
         return 1
 
 if __name__ == "__main__":

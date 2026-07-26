@@ -196,12 +196,25 @@ async function handleConferences(route, method, request) {
   const themeMatch = route.match(/^\/conferences\/([^\/]+)\/themes$/)
   if (themeMatch && method === 'POST') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // Enforce max of 5 sub-themes per conference
+    const existingCount = await prisma.theme.count({ where: { conferenceId: themeMatch[1] } })
+    if (existingCount >= 5) return err('This conference already has the maximum of 5 sub-themes.', 400)
     const body = await request.json()
     const theme = await prisma.theme.create({
       data: { conferenceId: themeMatch[1], name: body.name, description: body.description, keywords: body.keywords || [] },
     })
     return ok({ theme })
+  }
+  // Delete an individual sub-theme
+  const themeDelMatch = route.match(/^\/themes\/([^\/]+)$/)
+  if (themeDelMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // Detach abstracts that reference this theme so we don't break FK
+    await prisma.abstract.updateMany({ where: { themeId: themeDelMatch[1] }, data: { themeId: null } })
+    await prisma.theme.delete({ where: { id: themeDelMatch[1] } })
+    return ok({ ok: true })
   }
 
   const regMatch = route.match(/^\/conferences\/([^\/]+)\/register$/)
@@ -274,7 +287,7 @@ async function handleConferences(route, method, request) {
       include: { user: { select: { firstName: true, lastName: true, affiliation: true } } },
     })
     const editors = await prisma.user.findMany({
-      where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','SECTION_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
+      where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
       select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
     })
     const logistics = await prisma.user.findMany({
@@ -396,7 +409,7 @@ async function handleConferences(route, method, request) {
     let editorRegs = []
     if (modeFilter === 'PHYSICAL') {
       const editors = await prisma.user.findMany({
-        where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','SECTION_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
+        where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
         select: { firstName: true, lastName: true, email: true, affiliation: true, roles: { select: { role: true } } },
       })
       editorRegs = editors.map(e => ({
@@ -531,12 +544,12 @@ async function handleAbstracts(route, method, request) {
       // editor or reviewer assignments
       if (hasRole(user, 'EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER')) {
         where.reviewAssignments = { some: { reviewerId: user.id } }
-      } else if (hasRole(user, 'SECTION_EDITOR', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) {
+      } else if (hasRole(user, 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) {
         where.editorAssignments = { some: { editorId: user.id, active: true } }
       }
     }
     // authors see only their own by default
-    if (!scope && !hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'EXTERNAL_REVIEWER')) {
+    if (!scope && !hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'EXTERNAL_REVIEWER')) {
       where.submittedById = user.id
     }
     // Free-text search across title, submissionCode, and author names (case-insensitive)
@@ -659,8 +672,8 @@ async function handleAbstracts(route, method, request) {
     // Access control: authors can see own, editors/reviewers can see if assigned, admin all
     const isOwner = abstract.submittedById === user.id
     const isAssigned = abstract.reviewAssignments.some(r => r.reviewerId === user.id) || abstract.editorAssignments.some(e => e.editorId === user.id)
-    const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')
-    if (!isOwner && !isAssigned && !isPrivileged && !hasRole(user, 'SECTION_EDITOR', 'COMMITTEE_MEMBER')) {
+    const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
+    if (!isOwner && !isAssigned && !isPrivileged && !hasRole(user, 'COMMITTEE_MEMBER', 'COMMITTEE_EDITOR')) {
       return err('Forbidden', 403)
     }
     // Double-blind: hide author identity from reviewers if enabled
@@ -725,7 +738,7 @@ async function handleAbstracts(route, method, request) {
   // Transition state
   const transMatch = route.match(/^\/abstracts\/([^\/]+)\/transition$/)
   if (transMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const updated = await transitionState(transMatch[1], body.newState, user.id, body.comment)
     // Notify author
@@ -768,7 +781,7 @@ async function handleAbstracts(route, method, request) {
   // Assign reviewer
   const assignRvMatch = route.match(/^\/abstracts\/([^\/]+)\/assign-reviewer$/)
   if (assignRvMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const assignment = await prisma.reviewAssignment.create({
       data: {
@@ -803,7 +816,7 @@ async function handleAbstracts(route, method, request) {
   // Decision
   const decMatch = route.match(/^\/abstracts\/([^\/]+)\/decision$/)
   if (decMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const decision = await prisma.editorialDecision.create({
       data: {
@@ -1347,7 +1360,7 @@ async function handleTemplates(route, method, request) {
     const t = await prisma.conferenceTemplate.findUnique({ where: { id: dlMatch[1] } })
     if (!t) return err('Not found', 404)
     // Authors of accepted abstracts, editors, admin can download
-    const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')
+    const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')
     if (!isPrivileged) {
       const acceptedAbs = await prisma.abstract.findFirst({
         where: {
@@ -1442,7 +1455,7 @@ async function handleTechnicalScore(route, method, request) {
     return ok({ scores: withScorers, average: avg, overall })
   }
   if (listMatch && method === 'POST') {
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Only editors can score.', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Only editors can score.', 403)
     const body = await request.json()
     const fields = ['originality', 'methodology', 'relevance', 'language', 'themeAlignment']
     for (const f of fields) {
@@ -1486,7 +1499,7 @@ async function handleAnnouncements(route, method, request) {
   const validChannels = ['EDITORIAL', 'LOGISTICS']
   if (!validChannels.includes(channel)) return err('Invalid channel', 400)
 
-  const editorialRoles = ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER']
+  const editorialRoles = ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER']
   const logisticsRoles = ['SYSTEM_ADMIN', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS']
   const allowedRoles = channel === 'LOGISTICS' ? logisticsRoles : editorialRoles
   if (!hasRole(user, ...allowedRoles)) return err(`Only ${channel === 'LOGISTICS' ? 'logistics committee' : 'editors'} may access this channel`, 403)
@@ -1515,7 +1528,7 @@ async function handleAnnouncements(route, method, request) {
 async function handleReviewerInvitations(route, method, request) {
   if (route === '/reviewer-invitations' && method === 'POST') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     if (!body.email) return err('Email required')
     const token = crypto.randomBytes(24).toString('hex')
@@ -1556,7 +1569,7 @@ ${confName} Editorial Committee`
 
   if (route === '/reviewer-invitations' && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) return err('Forbidden', 403)
     const list = await prisma.reviewerInvitation.findMany({ orderBy: { createdAt: 'desc' }, take: 200 })
     return ok({ invitations: list })
   }
@@ -1576,7 +1589,7 @@ async function handleConferenceBook(route, method, request) {
   const cfgMatch = route.match(/^\/conferences\/([^\/]+)\/book-config$/)
   if (cfgMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     let book = await prisma.conferenceBook.findUnique({ where: { conferenceId: cfgMatch[1] } })
     if (!book) {
       book = await prisma.conferenceBook.create({
@@ -1616,7 +1629,7 @@ async function handleConferenceBook(route, method, request) {
   const pdfMatch = route.match(/^\/conferences\/([^\/]+)\/book\.pdf$/)
   if (pdfMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const conferenceId = pdfMatch[1]
     const conference = await prisma.conference.findUnique({ where: { id: conferenceId } })
     if (!conference) return err('Conference not found', 404)
@@ -1688,7 +1701,7 @@ async function handleSurveys(route, method, request) {
   const listMatch = route.match(/^\/conferences\/([^\/]+)\/surveys$/)
   if (listMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const surveys = await prisma.feedbackSurvey.findMany({
       where: { conferenceId: listMatch[1] },
       include: { _count: { select: { responses: true } } },
@@ -1725,7 +1738,7 @@ async function handleSurveys(route, method, request) {
   const oneMatch = route.match(/^\/surveys\/([^\/]+)$/)
   if (oneMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const survey = await prisma.feedbackSurvey.findUnique({ where: { id: oneMatch[1] } })
     if (!survey) return err('Not found', 404)
     return ok({ survey })
@@ -1853,7 +1866,7 @@ ${survey.conference.name} Editorial Committee`
   const analyticsMatch = route.match(/^\/surveys\/([^\/]+)\/analytics$/)
   if (analyticsMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'SECTION_EDITOR')) return err('Forbidden', 403)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const survey = await prisma.feedbackSurvey.findUnique({ where: { id: analyticsMatch[1] } })
     if (!survey) return err('Not found', 404)
     const responses = await prisma.feedbackResponse.findMany({
