@@ -645,6 +645,21 @@ model ExhibitionBooth {
   @@index([conferenceId])
 }
 
+// ============ SPONSORSHIP TIERS (editable) ============
+model SponsorshipTier {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  label        String
+  price        String   // Free-form so admin can enter "50,000" or a range
+  currency     String   @default("USD")  // "USD" or "KES"
+  benefits     String[] // Array of benefit lines
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([displayOrder])
+}
+
 // ============ SPONSORSHIP REQUESTS ============
 model SponsorshipRequest {
   id             String   @id @default(uuid())

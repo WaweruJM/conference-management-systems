@@ -583,6 +583,53 @@ backend:
         agent: "testing"
         comment: "Assign-editor RBAC tightened correctly: managing@scms.io (MANAGING_EDITOR) correctly denied with 403. chief@scms.io (CHIEF_EDITOR) can assign editor (200) and self-assign (200). admin@scms.io (SYSTEM_ADMIN) can assign editor (200). committee@scms.io (COMMITTEE_MEMBER) correctly denied with 403. RBAC properly enforced - MANAGING_EDITOR no longer has access as intended."
 
+
+  - task: "Sponsorship Tiers CRUD (DB-backed)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/sponsorship-tiers auto-seeds 4 default tiers (PLATINUM, GOLD, SILVER, BRONZE) on first call. POST/PUT/DELETE endpoints restricted to SYSTEM_ADMIN and CHIEF_LOGISTICS. Tiers have key, label, price, currency, benefits, displayOrder, isActive fields."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL SPONSORSHIP TIERS TESTS PASSED (5/5 = 100% SUCCESS RATE)
+          
+          **Test 1 — GET /sponsorship-tiers auto-seeds defaults (1/1 passed):**
+          ✅ Unauthenticated GET /api/sponsorship-tiers → 200 with 4+ tiers
+          ✅ Default tiers present: PLATINUM, GOLD, SILVER, BRONZE
+          ✅ All required fields present: id, key, label, price, currency, benefits (array), displayOrder, isActive
+          ✅ Default currency is USD
+          
+          **Test 2 — POST /sponsorship-tiers RBAC (4/4 passed):**
+          ✅ POST as admin@scms.io with TITANIUM tier (KES currency, displayOrder:0) → 200
+          ✅ GET /api/sponsorship-tiers confirms TITANIUM appears first (displayOrder:0 works)
+          ✅ POST as chief.logistics@scms.io with COPPER tier → 200
+          ✅ POST as author@scms.io → 403 (correctly denied)
+          ✅ POST as sponsor@scms.io → 403 (correctly denied)
+          
+          **Test 3 — PUT /sponsorship-tiers/:id edit (2/2 passed):**
+          ✅ PUT as admin@scms.io updates TITANIUM tier (price, currency, label) → 200
+          ✅ GET /api/sponsorship-tiers confirms changes persisted
+          ✅ PUT as author@scms.io → 403 (correctly denied)
+          
+          **Test 4 — DELETE /sponsorship-tiers/:id (2/2 passed):**
+          ✅ DELETE as author@scms.io → 403 (correctly denied)
+          ✅ DELETE as chief.logistics@scms.io removes COPPER tier → 200
+          ✅ GET /api/sponsorship-tiers confirms COPPER tier is deleted
+          
+          **Test 5 — Regressions (3/3 passed):**
+          ✅ POST /api/sponsorship-requests as sponsor@scms.io with TITANIUM tier → 200
+          ✅ GET /api/abstracts as admin@scms.io → 200 with 6 abstracts
+          ✅ POST /api/auth/login for all 4 test accounts (admin, chief.logistics, author, sponsor) → 200 with JWT
+          
+          All CRUD operations working correctly. RBAC properly enforced. Auto-seeding works. Regressions pass.
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -648,12 +695,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "POST /reviewer-invitations — returns 502 with detailed error when email send fails; 200 (with delivery info) when it succeeds"
-    - "POST /reviewer-invitations — RBAC allows assigned committee editor (via abstractId) even without a privileged role"
-    - "POST /abstracts/:id/transition — committee editors permitted only when assigned; Chief/Admin/Managing always"
-    - "POST /abstracts/:id/decision — same assigned-only rule for committee editors"
-    - "POST /abstracts/:id/assign-reviewer — same assigned-only rule for committee editors"
-    - "REGRESSION: POST /abstracts/:id/assign-editor still restricted to SYSTEM_ADMIN + CHIEF_EDITOR"
+    - "GET /sponsorship-tiers now returns DB-backed tiers (auto-seeds 4 defaults on first call)"
+    - "POST /sponsorship-tiers, PUT /sponsorship-tiers/:id, DELETE /sponsorship-tiers/:id — Admin + Chief Logistics only (403 for others)"
+    - "REGRESSION: POST /sponsorship-requests still works (uses tier key)"
+    - "REGRESSION: GET /abstracts unaffected"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1269,3 +1314,44 @@ agent_communication:
       - ✅ Committee editor assignment restrictions working correctly
       
       **Platform Status:** FUNCTIONAL - All critical smoke tests passed. The 502 on reviewer invitations is expected behavior for invalid email domains and demonstrates proper error handling.
+
+
+  - agent: "testing"
+    message: |
+      ✅ SPONSORSHIP TIERS CRUD VERIFICATION COMPLETE - ALL TESTS PASSED (5/5 = 100%)
+      
+      **Test Scope:** Verification of new DB-backed sponsorship tiers CRUD feature per review request.
+      
+      **Test 1 — GET /sponsorship-tiers auto-seeds defaults (✅ PASS):**
+      ✅ Unauthenticated GET /api/sponsorship-tiers → 200 with 4+ tiers
+      ✅ Default tiers present: PLATINUM, GOLD, SILVER, BRONZE (auto-seeded on first call)
+      ✅ Each tier has all required fields: id, key, label, price, currency, benefits (array), displayOrder, isActive
+      ✅ Default currency is USD for all default tiers
+      
+      **Test 2 — POST /sponsorship-tiers RBAC (✅ PASS):**
+      ✅ POST as admin@scms.io creates TITANIUM tier with KES currency and displayOrder:0 → 200
+      ✅ GET /api/sponsorship-tiers confirms TITANIUM appears first in list (displayOrder:0 works)
+      ✅ POST as chief.logistics@scms.io creates COPPER tier → 200
+      ✅ POST as author@scms.io → 403 (correctly denied)
+      ✅ POST as sponsor@scms.io → 403 (correctly denied)
+      
+      **Test 3 — PUT /sponsorship-tiers/:id edit (✅ PASS):**
+      ✅ PUT as admin@scms.io updates TITANIUM tier (price: 50000→75000, label: "Titanium Sponsor"→"Titanium Sponsor - Premium") → 200
+      ✅ GET /api/sponsorship-tiers confirms changes persisted
+      ✅ PUT as author@scms.io → 403 (correctly denied)
+      
+      **Test 4 — DELETE /sponsorship-tiers/:id (✅ PASS):**
+      ✅ DELETE as author@scms.io → 403 (correctly denied)
+      ✅ DELETE as chief.logistics@scms.io removes COPPER tier → 200
+      ✅ GET /api/sponsorship-tiers confirms COPPER tier is deleted from list
+      
+      **Test 5 — Regressions (✅ PASS):**
+      ✅ POST /api/sponsorship-requests as sponsor@scms.io with conferenceId, companyName, sponsorTier:"TITANIUM", contactEmail → 200
+      ✅ GET /api/abstracts as admin@scms.io → 200 with 6 abstracts (unaffected by new feature)
+      ✅ POST /api/auth/login for all 4 test accounts (admin, chief.logistics, author, sponsor) → 200 with JWT
+      
+      **Cleanup:**
+      ✅ Test tiers (TITANIUM) deleted successfully after testing
+      
+      **Summary:**
+      All sponsorship tiers CRUD operations working correctly. RBAC properly enforced (only SYSTEM_ADMIN and CHIEF_LOGISTICS can create/edit/delete). Auto-seeding works on first GET. Regressions pass - existing features unaffected.

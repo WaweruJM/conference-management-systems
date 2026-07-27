@@ -2090,16 +2090,70 @@ async function handleBooths(route, method, request) {
 // ============ SPONSORSHIP REQUESTS ============
 // Sponsors submit sponsorship requests; Chief Logistics (and Admin) review them.
 async function handleSponsorshipRequests(route, method, request) {
-  // Public sponsorship tiers & pricing
+  // Public sponsorship tiers & pricing (DB-backed so Admin / Chief Logistics can edit)
   if (route === '/sponsorship-tiers' && method === 'GET') {
-    return ok({
-      tiers: [
-        { key: 'PLATINUM', label: 'Platinum Sponsor', price: 'USD 20,000', benefits: ['Primary logo on stage & website', 'Keynote slot (30 min)', 'Premium booth (5x3m)', '10 delegate passes', 'Full-page ad in book'] },
-        { key: 'GOLD',     label: 'Gold Sponsor',     price: 'USD 12,000', benefits: ['Logo on stage & website', 'Speaking slot (15 min)', 'Standard booth (3x3m)', '6 delegate passes', 'Half-page ad in book'] },
-        { key: 'SILVER',   label: 'Silver Sponsor',   price: 'USD 6,000',  benefits: ['Logo on website & book', 'Shared booth (2x2m)', '3 delegate passes', 'Quarter-page ad'] },
-        { key: 'BRONZE',   label: 'Bronze Sponsor',   price: 'USD 2,500',  benefits: ['Logo on website', '1 delegate pass', 'Listing in the book'] },
-      ],
+    let tiers = await prisma.sponsorshipTier.findMany({
+      where: { isActive: true },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     })
+    // Seed the four defaults on first ever read so the site never renders empty
+    if (tiers.length === 0) {
+      const defaults = [
+        { key: 'PLATINUM', label: 'Platinum Sponsor', price: '20,000', currency: 'USD', displayOrder: 1, benefits: ['Primary logo on stage & website', 'Keynote slot (30 min)', 'Premium booth (5x3m)', '10 delegate passes', 'Full-page ad in book'] },
+        { key: 'GOLD',     label: 'Gold Sponsor',     price: '12,000', currency: 'USD', displayOrder: 2, benefits: ['Logo on stage & website', 'Speaking slot (15 min)', 'Standard booth (3x3m)', '6 delegate passes', 'Half-page ad in book'] },
+        { key: 'SILVER',   label: 'Silver Sponsor',   price: '6,000',  currency: 'USD', displayOrder: 3, benefits: ['Logo on website & book', 'Shared booth (2x2m)', '3 delegate passes', 'Quarter-page ad'] },
+        { key: 'BRONZE',   label: 'Bronze Sponsor',   price: '2,500',  currency: 'USD', displayOrder: 4, benefits: ['Logo on website', '1 delegate pass', 'Listing in the book'] },
+      ]
+      for (const d of defaults) await prisma.sponsorshipTier.create({ data: d })
+      tiers = await prisma.sponsorshipTier.findMany({ where: { isActive: true }, orderBy: [{ displayOrder: 'asc' }] })
+    }
+    return ok({ tiers })
+  }
+
+  // CRUD for sponsorship tiers — Admin / Chief Logistics only
+  if (route === '/sponsorship-tiers' && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_LOGISTICS')) return err('Forbidden', 403)
+    const body = await request.json()
+    if (!body.key || !body.label || !body.price) return err('key, label and price are required', 400)
+    const created = await prisma.sponsorshipTier.create({
+      data: {
+        key: body.key.toUpperCase(),
+        label: body.label,
+        price: body.price,
+        currency: (body.currency || 'USD').toUpperCase(),
+        benefits: body.benefits || [],
+        displayOrder: body.displayOrder ?? 100,
+        isActive: body.isActive !== false,
+      },
+    })
+    return ok({ tier: created })
+  }
+
+  const tierMatch = route.match(/^\/sponsorship-tiers\/([^\/]+)$/)
+  if (tierMatch && method === 'PUT') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_LOGISTICS')) return err('Forbidden', 403)
+    const body = await request.json()
+    const updated = await prisma.sponsorshipTier.update({
+      where: { id: tierMatch[1] },
+      data: {
+        ...(body.key !== undefined      ? { key: body.key.toUpperCase() } : {}),
+        ...(body.label !== undefined    ? { label: body.label } : {}),
+        ...(body.price !== undefined    ? { price: body.price } : {}),
+        ...(body.currency !== undefined ? { currency: body.currency.toUpperCase() } : {}),
+        ...(body.benefits !== undefined ? { benefits: body.benefits } : {}),
+        ...(body.displayOrder !== undefined ? { displayOrder: body.displayOrder } : {}),
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      },
+    })
+    return ok({ tier: updated })
+  }
+  if (tierMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_LOGISTICS')) return err('Forbidden', 403)
+    await prisma.sponsorshipTier.delete({ where: { id: tierMatch[1] } })
+    return ok({ ok: true })
   }
 
   const listMatch = route.match(/^\/sponsorship-requests$/)

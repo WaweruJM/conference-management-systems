@@ -124,8 +124,8 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
   const navItems = [
     { key: 'home', label: 'Home' },
     { key: 'guidelines', label: 'Access submission guidelines' },
+    { key: 'themes', label: 'Conference themes' },
     { key: 'venue', label: 'Venue & Dates' },
-    { key: 'themes', label: 'Themes' },
     { key: 'booths', label: 'Virtual Exhibition Booths' },
     { key: 'live', label: 'Virtual Conference' },
     { key: 'contact', label: 'Contact' },
@@ -216,6 +216,19 @@ function App() {
   const [reviewerInvite, setReviewerInvite] = useState(null)
   const [surveyToken, setSurveyToken] = useState('')
 
+  // Compute default route from a fresh user object
+  const defaultRouteForUser = (u) => {
+    const roles = (u?.roles || []).map(r => r.role || r)
+    const isAdm = roles.includes('SYSTEM_ADMIN')
+    const isEd = roles.some(r => ['MANAGING_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
+    const isRev = roles.some(r => ['EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER'].includes(r))
+    const isLog = roles.some(r => ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r))
+    const isSp = roles.includes('INDUSTRY_PARTNER')
+    if (isLog && !isAdm && !isEd && !isRev) return { name: 'logistics' }
+    if (isSp && !isAdm && !isEd && !isRev && !isLog) return { name: 'sponsors' }
+    return { name: 'dashboard' }
+  }
+
   useEffect(() => {
     // Detect URL params (?resetToken=... or ?reviewerInvite=... or ?survey=...)
     if (typeof window !== 'undefined') {
@@ -236,7 +249,9 @@ function App() {
     }
     const t = getToken()
     if (!t) { setLoading(false); return }
-    api('/auth/me').then(d => { setUser(d.user); setView('app') }).catch(() => setToken(null)).finally(() => setLoading(false))
+    api('/auth/me').then(d => {
+      setUser(d.user); setView('app'); setRoute(defaultRouteForUser(d.user))
+    }).catch(() => setToken(null)).finally(() => setLoading(false))
   }, [])
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>
@@ -245,8 +260,8 @@ function App() {
   if (view === 'reset') return <ResetPasswordPage token={resetToken} onDone={() => { setView('login'); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} />
   if (view === 'forgot') return <ForgotPassword onBack={() => setView('login')} />
   if (view === 'landing' && !user) return <Landing onLogin={() => setView('login')} onRegister={() => setView('register')} />
-  if (view === 'login') return <AuthPage mode="login" onDone={(u) => { setUser(u); setView('app') }} onSwitch={() => setView('register')} onBack={() => setView('landing')} onForgot={() => setView('forgot')} />
-  if (view === 'register') return <AuthPage mode="register" reviewerInvite={reviewerInvite} onDone={(u) => { setUser(u); setView('app'); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} onSwitch={() => setView('login')} onBack={() => setView('landing')} />
+  if (view === 'login') return <AuthPage mode="login" onDone={(u) => { setUser(u); setView('app'); setRoute(defaultRouteForUser(u)) }} onSwitch={() => setView('register')} onBack={() => setView('landing')} onForgot={() => setView('forgot')} />
+  if (view === 'register') return <AuthPage mode="register" reviewerInvite={reviewerInvite} onDone={(u) => { setUser(u); setView('app'); setRoute(defaultRouteForUser(u)); if (typeof window !== 'undefined') window.history.replaceState({}, '', '/') }} onSwitch={() => setView('login')} onBack={() => setView('landing')} />
 
   return <AppShell user={user} setUser={setUser} route={route} setRoute={setRoute} onLogout={() => { api('/auth/logout', { method: 'POST' }).catch(() => {}); setToken(null); setUser(null); setView('landing') }} />
 }
@@ -642,19 +657,92 @@ function PublicVenue({ conf }) {
 }
 
 function PublicThemes({ conf }) {
+  const subthemes = conf?.themes || []
   return (
-    <div className="container mx-auto px-6 py-10 max-w-4xl">
-      <h1 className="text-3xl font-bold mb-6">Conference sub-themes</h1>
-      {conf?.themes?.length ? (
-        <div className="grid md:grid-cols-2 gap-4">
-          {conf.themes.map(t => (
-            <Card key={t.id}>
-              <CardHeader><CardTitle className="text-lg">{t.name}</CardTitle></CardHeader>
-              {t.description && <CardContent className="text-sm text-muted-foreground">{t.description}</CardContent>}
-            </Card>
-          ))}
+    <div className="container mx-auto px-6 py-12 max-w-6xl">
+      {/* Header */}
+      <div className="text-center mb-10">
+        <div className="text-[10px] uppercase tracking-widest font-semibold text-indigo-600 mb-2">Scientific Programme</div>
+        <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-3">Conference themes</h1>
+        <p className="text-muted-foreground max-w-2xl mx-auto">
+          The scientific programme is organised around an overarching main theme,
+          expanded into focused sub-themes that guide the abstract submissions and
+          the panel discussions.
+        </p>
+      </div>
+
+      {/* Main theme card */}
+      <Card className="border-0 shadow-lg overflow-hidden mb-10">
+        <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 text-white p-8 md:p-10 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-4">
+            <Award className="h-3 w-3" /> Main theme
+          </div>
+          {conf?.mainTheme ? (
+            <h2 className="text-2xl md:text-4xl font-bold leading-tight max-w-4xl mx-auto">{conf.mainTheme}</h2>
+          ) : (
+            <h2 className="text-xl md:text-2xl font-medium text-white/80 max-w-3xl mx-auto italic">
+              The main theme will be published shortly by the editorial committee.
+            </h2>
+          )}
+          {conf?.subtitle && <p className="mt-4 text-lg text-white/90 max-w-3xl mx-auto">{conf.subtitle}</p>}
         </div>
-      ) : <div className="text-muted-foreground">No sub-themes defined yet.</div>}
+      </Card>
+
+      {/* Sub-themes */}
+      <div className="mb-6 flex items-baseline justify-between">
+        <h2 className="text-2xl font-bold tracking-tight">Sub-themes</h2>
+        <span className="text-sm text-muted-foreground">{subthemes.length} area{subthemes.length !== 1 ? 's' : ''} of focus</span>
+      </div>
+
+      {subthemes.length === 0 ? (
+        <Card className="border-dashed border-2">
+          <CardContent className="p-10 text-center text-muted-foreground">
+            <BookOpen className="h-10 w-10 mx-auto mb-3 text-slate-300" />
+            <div className="font-medium">Sub-themes are being finalised</div>
+            <p className="text-sm mt-1">Please check back — the editorial committee is preparing the full programme.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {subthemes.map((t, idx) => {
+            const gradients = [
+              'from-indigo-500 to-blue-500',
+              'from-fuchsia-500 to-pink-500',
+              'from-emerald-500 to-teal-500',
+              'from-amber-500 to-orange-500',
+              'from-purple-500 to-violet-500',
+              'from-rose-500 to-red-500',
+            ]
+            const g = gradients[idx % gradients.length]
+            return (
+              <Card key={t.id} className="hover:shadow-lg transition overflow-hidden border-0 shadow-sm">
+                <div className={`h-1.5 bg-gradient-to-r ${g}`} />
+                <CardContent className="p-5">
+                  <div className="flex items-start gap-3 mb-2">
+                    <div className={`h-9 w-9 rounded-lg bg-gradient-to-br ${g} text-white flex items-center justify-center font-bold shrink-0`}>
+                      {String(idx + 1).padStart(2, '0')}
+                    </div>
+                    <h3 className="text-lg font-bold leading-tight">{t.name}</h3>
+                  </div>
+                  {t.description && <p className="text-sm text-muted-foreground leading-relaxed">{t.description}</p>}
+                  {t.keywords?.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {t.keywords.map(k => (
+                        <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{k}</span>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Footer note */}
+      <div className="mt-10 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4 text-center text-sm text-slate-600">
+        Authors are asked to align their abstract with one of the sub-themes above during submission.
+      </div>
     </div>
   )
 }
@@ -845,6 +933,9 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const isChiefLogistics = roles.includes('CHIEF_LOGISTICS')
   const isSponsor = roles.includes('INDUSTRY_PARTNER')
   const isReviewer = roles.some(r => ['EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER'].includes(r))
+  // A "pure" role means the user has NO privileged sidebar (no admin, no editor, no reviewer, no author-with-abstracts overview needs)
+  const isLogisticsOnly = isLogistics && !isAdmin && !isEditor && !isReviewer
+  const isSponsorOnly = isSponsor && !isAdmin && !isEditor && !isLogistics && !isReviewer
 
   const refreshNotifs = () => api('/notifications').then(d => setNotifs(d.notifications || [])).catch(() => {})
   useEffect(() => {
@@ -899,7 +990,9 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const confTheme = featured?.theme || featured?.subtitle || featured?.description || 'Advancing Science Through Rigorous Peer Review'
 
   const nav = [
-    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true, group: 'core' },
+    // Dashboard is hidden for pure logistics or pure sponsor users — they have their
+    // own landing hub (Logistics Boardroom / Sponsors page).
+    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: !isLogisticsOnly && !isSponsorOnly, group: 'core' },
     // Reviewer-focused (appears near top for reviewers)
     { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
     // Editor-focused
@@ -908,25 +1001,28 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
     // Logistics-focused
     { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
-    // Sponsor-focused
-    { key: 'sponsors', label: 'Sponsors', icon: Award, show: true, group: 'general' },
-    // Author-focused
-    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: true, group: 'author' },
-    { key: 'submit', label: 'Submit new abstract', icon: Plus, show: true, group: 'author' },
+    // Sponsor-focused — only shown to sponsors themselves plus admin & chief logistics for oversight
+    { key: 'sponsors', label: 'Sponsors', icon: Award, show: isSponsor || isAdmin || isChiefLogistics, group: 'general' },
+    // Author-focused (hidden for pure logistics/sponsor users — those roles don't submit)
+    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: !isLogisticsOnly && !isSponsorOnly, group: 'author' },
+    { key: 'submit', label: 'Submit new abstract', icon: Plus, show: !isLogisticsOnly && !isSponsorOnly, group: 'author' },
     // General
     { key: 'live', label: 'Live Conference', icon: Radio, show: true, group: 'general' },
-    { key: 'programme', label: 'Programme', icon: GraduationCap, show: true, group: 'general' },
-    { key: 'templates', label: 'Templates', icon: FileText, show: true, group: 'general' },
+    { key: 'programme', label: 'Programme', icon: GraduationCap, show: !isSponsorOnly, group: 'general' },
+    { key: 'booths', label: 'Virtual Exhibition', icon: Building2, show: isSponsorOnly, group: 'general' },
+    { key: 'templates', label: 'Templates', icon: FileText, show: !isLogisticsOnly && !isSponsorOnly, group: 'general' },
     // Admin
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: isAdmin, group: 'admin' },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin, group: 'admin' },
     { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor || isChiefLogistics, group: 'admin' },
+    { key: 'sponsorship-tiers', label: 'Sponsorship Tiers', icon: Award, show: isAdmin || isChiefLogistics, group: 'admin' },
     { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor, group: 'admin' },
     { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor, group: 'admin' },
     { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor, group: 'admin' },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin, group: 'admin' },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin, group: 'admin' },
-    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor || isChiefLogistics, group: 'admin' },
+    // Delegates hidden from pure logistics users
+    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor, group: 'admin' },
     { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin, group: 'admin' },
   ]
 
@@ -1056,7 +1152,9 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
   if (route.name === 'announcements') return <AnnouncementsBoard user={user} channel="EDITORIAL" />
   if (route.name === 'logistics') return <LogisticsBoardroom user={user} />
-  if (route.name === 'sponsors') return <SponsorsPage user={user} featured={featured} />
+  if (route.name === 'sponsors') return <SponsorsPage user={user} featured={featured} setRoute={setRoute} />
+  if (route.name === 'booths') return <ExhibitionBoothsPublic conf={featured} />
+  if (route.name === 'sponsorship-tiers') return <SponsorshipTiersAdmin />
   if (route.name === 'invite-reviewers') return <InviteReviewers />
   if (route.name === 'analytics') return <Analytics />
   if (route.name === 'users') return <UserManagement />
@@ -4385,19 +4483,28 @@ function LogisticsBoardroom({ user }) {
 }
 
 // ============ SPONSORS PAGE (public + authenticated view) ============
-function SponsorsPage({ user, featured }) {
+// Helper — display formatted amount with currency code
+function fmtSponsorPrice(t) {
+  const c = (t.currency || 'USD').toUpperCase()
+  return `${c} ${t.price}`
+}
+
+function SponsorsPage({ user, featured, setRoute }) {
   const [tiers, setTiers] = useState([])
-  const [mine, setMine] = useState([])
-  const [showRequest, setShowRequest] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const refresh = () => {
-    api('/sponsorship-tiers').then(d => setTiers(d.tiers || [])).catch(() => {})
-    api('/sponsorship-requests').then(d => setMine(d.requests || [])).catch(() => {})
+    setLoading(true)
+    api('/sponsorship-tiers')
+      .then(d => setTiers(d.tiers || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }
   useEffect(() => { refresh() }, [])
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
+      {/* Header */}
       <Card className="border-0 shadow-md overflow-hidden">
         <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 p-6 text-white">
           <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -4405,11 +4512,6 @@ function SponsorsPage({ user, featured }) {
               <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Sponsorship</div>
               <h1 className="text-2xl md:text-3xl font-bold leading-tight">Become a sponsor</h1>
               <p className="text-white/90 text-sm mt-2 max-w-2xl">Support {featured?.name || 'the scientific conference'} and gain unparalleled reach with the delegates, editorial board and industry partners attending the event.</p>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <Button size="sm" onClick={() => setShowRequest(true)} className="bg-white text-amber-700 hover:bg-slate-100 shadow">
-                <Send className="h-4 w-4 mr-1" /> Request sponsorship
-              </Button>
             </div>
           </div>
         </div>
@@ -4422,150 +4524,262 @@ function SponsorsPage({ user, featured }) {
           <CardDescription>Choose the tier that best fits your organisation's outreach goals.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
-            {tiers.map(t => (
-              <div key={t.key} className="border rounded-lg p-4 hover:shadow-md transition bg-white">
-                <div className="flex justify-between items-baseline mb-2">
-                  <div className="font-bold text-lg">{t.label}</div>
-                  <Badge className="bg-amber-100 text-amber-900 border-0">{t.price}</Badge>
+          {loading ? (
+            <div className="p-6 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-amber-500" /></div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {tiers.map(t => (
+                <div key={t.id || t.key} className="border rounded-lg p-4 hover:shadow-md transition bg-white">
+                  <div className="flex justify-between items-baseline mb-2">
+                    <div className="font-bold text-lg">{t.label}</div>
+                    <Badge className="bg-amber-100 text-amber-900 border-0">{fmtSponsorPrice(t)}</Badge>
+                  </div>
+                  <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
+                    {(t.benefits || []).map(b => <li key={b}>{b}</li>)}
+                  </ul>
                 </div>
-                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                  {t.benefits.map(b => <li key={b}>{b}</li>)}
-                </ul>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* My requests */}
-      {mine.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Your sponsorship requests</CardTitle>
-            <CardDescription>Status of your submitted sponsorship applications.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {mine.map(r => {
-                const statusColor = r.status === 'APPROVED' ? 'bg-emerald-600'
-                  : r.status === 'DECLINED' ? 'bg-rose-600'
-                  : 'bg-amber-500'
-                return (
-                  <div key={r.id} className="border rounded-md p-3 bg-white flex justify-between items-start gap-2">
-                    <div>
-                      <div className="font-semibold text-sm">{r.companyName} <span className="text-xs text-muted-foreground">· {r.sponsorTier || 'Tier TBD'}</span></div>
-                      <div className="text-xs text-muted-foreground">Submitted {new Date(r.createdAt).toLocaleString()}</div>
-                      {r.reviewNotes && <div className="text-xs italic text-slate-600 mt-1">Notes from logistics: {r.reviewNotes}</div>}
-                    </div>
-                    <Badge className={`${statusColor} text-white text-[10px]`}>{r.status}</Badge>
-                  </div>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Inline sponsorship request form (Task 6) */}
+      <SponsorshipRequestInline user={user} conferenceId={featured?.id} tiers={tiers} onSubmitted={refresh} />
 
-      {showRequest && (
-        <SponsorshipRequestDialog
-          user={user}
-          conferenceId={featured?.id}
-          tiers={tiers}
-          onClose={() => setShowRequest(false)}
-          onDone={() => { setShowRequest(false); refresh() }}
-        />
-      )}
+      {/* Invitation to view exhibition booths (Task 6) */}
+      <Card className="border-0 shadow-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-50 via-fuchsia-50 to-rose-50 p-6 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white shrink-0">
+              <Building2 className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-800">Curious what other sponsors look like?</div>
+              <div className="text-sm text-muted-foreground">Preview the current exhibition hall — see how sponsors are showcased to conference delegates.</div>
+            </div>
+          </div>
+          <Button onClick={() => setRoute && setRoute({ name: 'booths' })} className="bg-indigo-600 hover:bg-indigo-700">
+            <Building2 className="h-4 w-4 mr-1" /> View sponsor exhibition booths
+          </Button>
+        </div>
+      </Card>
     </div>
   )
 }
 
-// ============ SPONSORSHIP REQUEST DIALOG (booth-style) ============
-function SponsorshipRequestDialog({ user, conferenceId, tiers, onClose, onDone }) {
+// ============ SPONSORSHIP REQUEST INLINE FORM (booth-style) ============
+function SponsorshipRequestInline({ user, conferenceId, tiers, onSubmitted }) {
   const [form, setForm] = useState({
     companyName: '', companyType: '', industry: '', companyAddress: '',
     websiteUrl: '', contactEmail: user?.email || '', contactPhone: '',
-    sponsorTier: 'BRONZE', virtualBoothRequested: false, physicalBoothRequested: false,
+    sponsorTier: '', virtualBoothRequested: false, physicalBoothRequested: false,
     products: '', message: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  // Set default tier once tiers are loaded
+  useEffect(() => {
+    if (!form.sponsorTier && tiers.length) setForm(f => ({ ...f, sponsorTier: tiers[tiers.length - 1].key }))
+  }, [tiers.length])
 
   const submit = async () => {
+    setError(''); setSuccess('')
     if (!form.companyName.trim()) return setError('Company name is required.')
     if (!conferenceId) return setError('No active conference selected.')
-    setSaving(true); setError('')
+    setSaving(true)
     try {
       await api('/sponsorship-requests', {
         method: 'POST',
         body: JSON.stringify({ ...form, conferenceId }),
       })
-      toast.success('Sponsorship request submitted — the Chief Logistics team will be in touch.')
-      onDone()
+      setSuccess('Your sponsorship request has been sent — the Chief Logistics team will be in touch shortly.')
+      toast.success('Sponsorship request submitted')
+      setForm(f => ({ ...f, companyName: '', companyType: '', industry: '', companyAddress: '', websiteUrl: '', contactPhone: '', products: '', message: '', virtualBoothRequested: false, physicalBoothRequested: false }))
+      if (onSubmitted) onSubmitted()
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
-        <DialogHeader>
-          <DialogTitle>Request sponsorship</DialogTitle>
-          <p className="text-sm text-muted-foreground">Mirror the fields required for an exhibition booth. Your request will land in the Logistics Boardroom for review by the Chief Logistics.</p>
-        </DialogHeader>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Send className="h-5 w-5 text-amber-600" /> Request sponsorship
+        </CardTitle>
+        <CardDescription>Complete the form to formally request sponsorship. Your request will be reviewed by the Chief Logistics team.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
         {error && <div className="p-2 rounded bg-rose-50 border border-rose-200 text-sm text-rose-700">{error}</div>}
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>Company / Institution *</Label><Input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} /></div>
-            <div><Label>Company type</Label><Input value={form.companyType} onChange={e => setForm({ ...form, companyType: e.target.value })} placeholder="e.g. Pharmaceutical" /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>Industry</Label><Input value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })} placeholder="e.g. Medical Devices" /></div>
-            <div><Label>Company address</Label><Input value={form.companyAddress} onChange={e => setForm({ ...form, companyAddress: e.target.value })} /></div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div><Label>Website</Label><Input value={form.websiteUrl} onChange={e => setForm({ ...form, websiteUrl: e.target.value })} placeholder="https://..." /></div>
-            <div><Label>Contact email</Label><Input value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
-            <div><Label>Contact phone</Label><Input value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
-          </div>
-          <div><Label>Products / Services</Label><Textarea rows={3} value={form.products} onChange={e => setForm({ ...form, products: e.target.value })} placeholder="What will you be showcasing?" /></div>
-          <div>
-            <Label>Sponsorship tier</Label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
-              {tiers.map(t => (
-                <button key={t.key} type="button" onClick={() => setForm({ ...form, sponsorTier: t.key })}
-                  className={`text-left p-2 rounded-md border ${form.sponsorTier === t.key ? 'border-amber-600 bg-amber-50' : 'border-slate-200 hover:border-slate-300'}`}>
-                  <div className="flex justify-between items-center">
-                    <div className="font-semibold text-sm">{t.label}</div>
-                    <Badge variant="outline">{t.price}</Badge>
-                  </div>
-                  <ul className="text-[11px] text-muted-foreground mt-1 list-disc list-inside">
-                    {t.benefits.slice(0, 3).map(b => <li key={b}>{b}</li>)}
-                  </ul>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
-              <input type="checkbox" checked={form.virtualBoothRequested} onChange={e => setForm({ ...form, virtualBoothRequested: e.target.checked })} />
-              <span className="text-sm">Request virtual exhibition booth</span>
-            </label>
-            <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
-              <input type="checkbox" checked={form.physicalBoothRequested} onChange={e => setForm({ ...form, physicalBoothRequested: e.target.checked })} />
-              <span className="text-sm">Request physical exhibition booth</span>
-            </label>
-          </div>
-          <div><Label>Message to Chief Logistics (optional)</Label><Textarea rows={3} value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} placeholder="Anything else the logistics team should know?" /></div>
+        {success && <div className="p-3 rounded bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-start gap-2"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" /><div>{success}</div></div>}
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Company / Institution *</Label><Input value={form.companyName} onChange={e => setForm({ ...form, companyName: e.target.value })} /></div>
+          <div><Label>Company type</Label><Input value={form.companyType} onChange={e => setForm({ ...form, companyType: e.target.value })} placeholder="e.g. Pharmaceutical" /></div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Industry</Label><Input value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })} placeholder="e.g. Medical Devices" /></div>
+          <div><Label>Company address</Label><Input value={form.companyAddress} onChange={e => setForm({ ...form, companyAddress: e.target.value })} /></div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div><Label>Website</Label><Input value={form.websiteUrl} onChange={e => setForm({ ...form, websiteUrl: e.target.value })} placeholder="https://..." /></div>
+          <div><Label>Contact email</Label><Input value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
+          <div><Label>Contact phone</Label><Input value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
+        </div>
+        <div><Label>Products / Services</Label><Textarea rows={3} value={form.products} onChange={e => setForm({ ...form, products: e.target.value })} placeholder="What will you be showcasing?" /></div>
+        <div>
+          <Label>Preferred sponsorship tier</Label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
+            {tiers.map(t => (
+              <button key={t.id || t.key} type="button" onClick={() => setForm({ ...form, sponsorTier: t.key })}
+                className={`text-left p-2 rounded-md border ${form.sponsorTier === t.key ? 'border-amber-600 bg-amber-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                <div className="flex justify-between items-center">
+                  <div className="font-semibold text-sm">{t.label}</div>
+                  <Badge variant="outline">{fmtSponsorPrice(t)}</Badge>
+                </div>
+                <ul className="text-[11px] text-muted-foreground mt-1 list-disc list-inside">
+                  {(t.benefits || []).slice(0, 3).map(b => <li key={b}>{b}</li>)}
+                </ul>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+            <input type="checkbox" checked={form.virtualBoothRequested} onChange={e => setForm({ ...form, virtualBoothRequested: e.target.checked })} />
+            <span className="text-sm">Request virtual exhibition booth</span>
+          </label>
+          <label className="flex items-center gap-2 border rounded-md p-2 cursor-pointer">
+            <input type="checkbox" checked={form.physicalBoothRequested} onChange={e => setForm({ ...form, physicalBoothRequested: e.target.checked })} />
+            <span className="text-sm">Request physical exhibition booth</span>
+          </label>
+        </div>
+        <div><Label>Message to Chief Logistics (optional)</Label><Textarea rows={3} value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} /></div>
+        <div className="flex justify-end pt-1">
           <Button onClick={submit} disabled={saving} className="bg-amber-600 hover:bg-amber-700">
-            {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send request
+            {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send sponsorship request
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </CardContent>
+    </Card>
   )
+}
+
+// ============ SPONSORSHIP TIERS ADMIN (Admin + Chief Logistics) ============
+function SponsorshipTiersAdmin() {
+  const [tiers, setTiers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const refresh = () => {
+    setLoading(true)
+    api('/sponsorship-tiers').then(d => setTiers(d.tiers || [])).finally(() => setLoading(false))
+  }
+  useEffect(() => { refresh() }, [])
+
+  const addBlank = async () => {
+    const key = prompt('Unique key for the new tier (e.g. TITANIUM)')?.trim().toUpperCase()
+    if (!key) return
+    try {
+      await api('/sponsorship-tiers', { method: 'POST', body: JSON.stringify({ key, label: key.charAt(0) + key.slice(1).toLowerCase() + ' Sponsor', price: '0', currency: 'USD', benefits: [], displayOrder: (tiers.length + 1) * 10 }) })
+      toast.success('Tier added — edit its fields below')
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+  const saveTier = async (t) => {
+    try {
+      await api(`/sponsorship-tiers/${t.id}`, { method: 'PUT', body: JSON.stringify(t) })
+      toast.success(`${t.label} saved`)
+      refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+  const removeTier = async (t) => {
+    if (!confirm(`Delete "${t.label}"? This cannot be undone.`)) return
+    try { await api(`/sponsorship-tiers/${t.id}`, { method: 'DELETE' }); toast.success('Tier removed'); refresh() } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold">Sponsorship Tiers</h1>
+          <p className="text-muted-foreground">Edit tier names, prices, benefits and currency (USD / KES). Changes appear on the public Sponsors page immediately.</p>
+        </div>
+        <Button onClick={addBlank} className="bg-amber-600 hover:bg-amber-700"><Plus className="h-4 w-4 mr-1" /> Add tier</Button>
+      </div>
+
+      {loading ? <div className="p-10 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-amber-500" /></div>
+        : tiers.length === 0 ? <EmptyState label="No tiers configured" />
+        : <div className="space-y-3">
+            {tiers.map(t => <TierEditRow key={t.id} tier={t} onSave={saveTier} onDelete={removeTier} />)}
+          </div>}
+    </div>
+  )
+}
+
+function TierEditRow({ tier, onSave, onDelete }) {
+  const [t, setT] = useState({ ...tier, benefits: [...(tier.benefits || [])] })
+  const [newBenefit, setNewBenefit] = useState('')
+  const setField = (k, v) => setT(prev => ({ ...prev, [k]: v }))
+  const addBenefit = () => {
+    if (!newBenefit.trim()) return
+    setT(prev => ({ ...prev, benefits: [...prev.benefits, newBenefit.trim()] }))
+    setNewBenefit('')
+  }
+  const removeBenefit = (i) => setT(prev => ({ ...prev, benefits: prev.benefits.filter((_, idx) => idx !== i) }))
+  const dirty = JSON.stringify(t) !== JSON.stringify({ ...tier, benefits: [...(tier.benefits || [])] })
+
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-4 space-y-3">
+        <div className="grid md:grid-cols-6 gap-2">
+          <div className="md:col-span-2"><Label>Label</Label><Input value={t.label} onChange={e => setField('label', e.target.value)} /></div>
+          <div><Label>Key</Label><Input value={t.key} onChange={e => setField('key', e.target.value.toUpperCase())} /></div>
+          <div><Label>Price</Label><Input value={t.price} onChange={e => setField('price', e.target.value)} placeholder="e.g. 20,000" /></div>
+          <div>
+            <Label>Currency</Label>
+            <Select value={t.currency || 'USD'} onValueChange={v => setField('currency', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="USD">USD (US Dollar)</SelectItem>
+                <SelectItem value="KES">KES (Kenyan Shilling)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div><Label>Display order</Label><Input type="number" value={t.displayOrder} onChange={e => setField('displayOrder', parseInt(e.target.value, 10) || 0)} /></div>
+        </div>
+        <div>
+          <Label>Benefits</Label>
+          <div className="border rounded-md p-2 bg-slate-50 space-y-1 min-h-[60px]">
+            {t.benefits.length === 0 ? <div className="text-xs text-muted-foreground italic">No benefits added yet.</div>
+              : t.benefits.map((b, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 bg-white border rounded px-2 py-1">
+                  <span className="text-sm">{b}</span>
+                  <button onClick={() => removeBenefit(i)} className="text-rose-500 hover:text-rose-700"><XCircle className="h-4 w-4" /></button>
+                </div>
+              ))}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <Input value={newBenefit} onChange={e => setNewBenefit(e.target.value)} placeholder="Add a benefit line and press Enter or the plus" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBenefit() } }} />
+            <Button variant="outline" onClick={addBenefit}><Plus className="h-4 w-4" /></Button>
+          </div>
+        </div>
+        <div className="flex justify-between items-center">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={t.isActive} onChange={e => setField('isActive', e.target.checked)} />
+            Active (visible on public Sponsors page)
+          </label>
+          <div className="flex gap-2">
+            <Button variant="destructive" size="sm" onClick={() => onDelete(t)}>Delete</Button>
+            <Button size="sm" onClick={() => onSave(t)} disabled={!dirty} className={dirty ? 'bg-amber-600 hover:bg-amber-700' : ''}>Save</Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ============ SPONSORSHIP REQUEST DIALOG (booth-style) — retained for compatibility ============
+function SponsorshipRequestDialog({ user, conferenceId, tiers, onClose, onDone }) {
+  return null // Replaced by inline form. Kept as placeholder to avoid breaking imports.
 }
 
 // ============ INVITE REVIEWERS ============
@@ -4812,11 +5026,20 @@ function ResetPasswordPage({ token, onDone }) {
 // ============ EXHIBITION BOOTHS ============
 function ExhibitionBoothsPublic({ conf }) {
   const [booths, setBooths] = useState([])
+  const [loading, setLoading] = useState(true)
   const [idx, setIdx] = useState(0)
   const [prevIdx, setPrevIdx] = useState(0)
   const [transitioning, setTransitioning] = useState(false)
   const [paused, setPaused] = useState(false)
-  useEffect(() => { if (conf?.id) fetch(`/api/conferences/${conf.id}/booths`).then(r => r.json()).then(d => setBooths(d.booths || [])) }, [conf?.id])
+  useEffect(() => {
+    if (!conf?.id) { setLoading(false); return }
+    setLoading(true)
+    fetch(`/api/conferences/${conf.id}/booths`)
+      .then(r => r.json())
+      .then(d => setBooths(d.booths || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [conf?.id])
 
   const goTo = (nextIdx) => {
     if (nextIdx === idx) return
@@ -4832,6 +5055,12 @@ function ExhibitionBoothsPublic({ conf }) {
     return () => clearInterval(t)
   }, [booths.length, paused, idx])
 
+  if (loading) return (
+    <div className="container mx-auto px-6 py-24 text-center">
+      <Loader2 className="h-8 w-8 mx-auto text-indigo-500 animate-spin mb-3" />
+      <div className="text-sm text-muted-foreground">Loading exhibition booths…</div>
+    </div>
+  )
   if (booths.length === 0) return (
     <div className="container mx-auto px-6 py-16 text-center">
       <Building2 className="h-16 w-16 mx-auto text-slate-300 mb-3" />
@@ -4987,8 +5216,16 @@ function BoothAdmin() {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   const [booths, setBooths] = useState([])
+  const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const refresh = () => confId && fetch(`/api/conferences/${confId}/booths`).then(r => r.json()).then(d => setBooths(d.booths || []))
+  const refresh = () => {
+    if (!confId) { setLoading(false); return }
+    setLoading(true)
+    fetch(`/api/conferences/${confId}/booths`).then(r => r.json())
+      .then(d => setBooths(d.booths || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
   useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
   useEffect(() => { refresh() }, [confId])
 
@@ -5018,7 +5255,8 @@ function BoothAdmin() {
         </Select>
       </div>
       <div className="grid gap-3">
-        {booths.length === 0 ? <EmptyState label="No booths yet" onAction={create} actionLabel="Add first booth" />
+      {loading ? <div className="p-10 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-indigo-500" /><div className="text-sm text-muted-foreground mt-2">Loading booths…</div></div>
+        : booths.length === 0 ? <EmptyState label="No booths yet" onAction={create} actionLabel="Add first booth" />
         : booths.map(b => (
           <Card key={b.id}>
             <CardContent className="p-4 flex gap-4">
