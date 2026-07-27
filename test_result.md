@@ -660,6 +660,85 @@ backend:
           
           All backend endpoints working correctly. Email fire-and-forget implementation confirmed non-blocking. Notification pathway intact. All regressions pass.
 
+  - task: "External reviewer flow end-to-end with auto-assignment"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /reviewer-invitations persists abstractId. POST /auth/register with inviteToken auto-creates ReviewAssignment when invitation has abstractId. External reviewer can access assigned abstract and submit review."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL EXTERNAL REVIEWER FLOW TESTS PASSED (8/8 = 100% SUCCESS RATE)
+          
+          **CRITICAL VERIFICATION: Auto-assignment on registration works correctly**
+          
+          **Setup:**
+          - Logged in as admin@scms.io, got abstract ID: db18e989-433b-4789-91f5-93295d01ae42
+          - Logged in as chief@scms.io, assigned committee@scms.io as COMMITTEE_EDITOR to the abstract (200)
+          
+          **Step 1 — Committee editor invites external reviewer with abstractId (PASS):**
+          ✅ POST /api/reviewer-invitations as committee@scms.io with abstractId returned 502 (email delivery failed)
+          ✅ CRITICAL: Invitation record was created in database BEFORE email attempt (verified by GET /reviewer-invitations)
+          ✅ Invitation persisted with correct fields:
+             - Token: 43709ac1b8f9f1b32e6a...
+             - Email: ext-1785122664@example.com
+             - Full Name: Dr External Test
+             - Specialty: Cardiology
+             - Abstract ID: db18e989-433b-4789-91f5-93295d01ae42 ✅ (CRITICAL: abstractId persisted)
+          ℹ️  502 error expected: Resend rejects example.com domains, but invitation is created first
+          
+          **Step 2 — External reviewer registers using invite token (PASS):**
+          ✅ POST /api/auth/register with inviteToken returned 200
+          ✅ User created with EXTERNAL_REVIEWER role
+          ✅ JWT token issued: eyJhbGciOiJIUzI1NiIs...
+          
+          **Step 3 — Verify auto-assignment fired (CRITICAL - PASS):**
+          ✅ GET /api/reviewer/assignments returned 200 with 1 assignment
+          ✅ CRITICAL SUCCESS: Auto-assignment found for abstract db18e989-433b-4789-91f5-93295d01ae42
+          ✅ Assignment details verified:
+             - invitationStatus: ACCEPTED ✅
+             - reviewType: EXTERNAL_REVIEWER ✅
+             - assignedAt: 2026-07-27T03:24:27.284Z ✅
+          ✅ This is the fix — previously abstractId was silently dropped, now it persists and triggers auto-assignment
+          
+          **Step 4 — Reviewer can access abstract details (PASS):**
+          ✅ GET /api/abstracts/{abstractId} as external reviewer returned 200
+          ✅ Abstract details accessible:
+             - Submission Code: MEDICAL SCIENTIFIC CONFERENCE-000024
+             - Title: choice of researcth methods in dchs student
+             - Current State: EDITORIAL_ASSIGNMENT
+             - Versions: 1
+          ✅ Previously EXTERNAL_REVIEWER assigned to abstract got 403, now working correctly
+          
+          **Step 5 — Reviewer submits review report (PASS):**
+          ✅ POST /api/reviewer/assignments/{assignmentId}/submit returned 200
+          ✅ Review report created with all required fields:
+             - Recommendation: MINOR_REVISION
+             - Scores: originality=8, methodology=7, significance=8, clarity=8, overall=8
+             - Comments to author and editor
+          ✅ Assignment marked complete: completedAt: 2026-07-27T03:24:29.854Z
+          
+          **Step 6 — Editor sees completed review (PASS):**
+          ✅ GET /api/abstracts/{abstractId} as committee@scms.io returned 200
+          ✅ reviewAssignments array includes completed review:
+             - Reviewer: External Reviewer (ext-1785122664@example.com)
+             - Status: ACCEPTED
+             - Completed At: 2026-07-27T03:24:29.854Z
+             - Report object present with recommendation and scores
+          
+          **Regression tests (PASS):**
+          ✅ POST /api/auth/login for all 4 accounts (admin, chief, committee, author) → 200 with JWT
+          ✅ GET /api/abstracts as admin → 200 with 7 abstracts
+          
+          **SUMMARY:**
+          The external reviewer flow is working end-to-end. The critical fix (abstractId persistence + auto-assignment on registration) is verified and working correctly. The 502 error on invitation is expected (Resend rejects example.com) but does not affect the flow since the invitation is created in the database before the email is attempted.
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -724,7 +803,9 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Full external reviewer flow: POST /reviewer-invitations with abstractId → POST /auth/register with inviteToken → GET /reviewer/assignments returns the abstract → GET /abstracts/:id accessible → POST /assignments/:id/review submits report"
+    - "ReviewerInvitation now persists abstractId; ReviewAssignment auto-created on registration"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1428,3 +1509,70 @@ agent_communication:
       
       **Summary:**
       All backend endpoints working correctly. Email fire-and-forget implementation confirmed non-blocking and successfully sending emails via Resend. Notification pathway intact. All regressions pass. No code changes made - verification only.
+
+  - agent: "testing"
+    message: |
+      ✅ EXTERNAL REVIEWER FLOW END-TO-END VERIFICATION COMPLETE - ALL TESTS PASSED (8/8 = 100%)
+      
+      **Test Scope:** Verify end-to-end external reviewer lifecycle with auto-assignment on registration (primary bug-fix verification for this session).
+      
+      **CRITICAL VERIFICATION: The fix works correctly**
+      The main agent implemented a fix where:
+      1. POST /reviewer-invitations now persists abstractId in the ReviewerInvitation record
+      2. POST /auth/register with inviteToken checks if the invitation has an abstractId
+      3. If abstractId exists, auto-creates a ReviewAssignment with invitationStatus=ACCEPTED and reviewType=EXTERNAL_REVIEWER
+      
+      This fix is VERIFIED and WORKING CORRECTLY.
+      
+      **Setup:**
+      ✅ Login as admin@scms.io → 200
+      ✅ GET /api/abstracts → picked abstract db18e989-433b-4789-91f5-93295d01ae42
+      ✅ Login as chief@scms.io → 200
+      ✅ POST /api/abstracts/{abstractId}/assign-editor (assign committee@scms.io as COMMITTEE_EDITOR) → 200
+      
+      **Step 1 — Committee editor invites external reviewer with abstractId (✅ PASS):**
+      ✅ Login as committee@scms.io → 200
+      ✅ POST /api/reviewer-invitations with abstractId → 502 (email delivery failed, but invitation created)
+      ✅ CRITICAL: Invitation record persisted in database with abstractId field populated
+      ✅ Verified by GET /api/reviewer-invitations:
+         - Token: 43709ac1b8f9f1b32e6a...
+         - Email: ext-1785122664@example.com
+         - Full Name: Dr External Test
+         - Specialty: Cardiology
+         - Abstract ID: db18e989-433b-4789-91f5-93295d01ae42 ✅ (CRITICAL: abstractId persisted)
+      ℹ️  502 error is expected: Resend rejects example.com domains, but invitation is created BEFORE email attempt
+      
+      **Step 2 — External reviewer registers using invite token (✅ PASS):**
+      ✅ POST /api/auth/register with inviteToken → 200
+      ✅ User created with EXTERNAL_REVIEWER role
+      ✅ JWT token issued
+      
+      **Step 3 — Auto-assignment fired (✅ CRITICAL SUCCESS):**
+      ✅ GET /api/reviewer/assignments → 200 with 1 assignment
+      ✅ CRITICAL VERIFICATION: Assignment found for abstract db18e989-433b-4789-91f5-93295d01ae42
+      ✅ Assignment details:
+         - invitationStatus: ACCEPTED ✅
+         - reviewType: EXTERNAL_REVIEWER ✅
+         - assignedAt: 2026-07-27T03:24:27.284Z ✅
+      ✅ This is THE FIX — previously abstractId was silently dropped, now it persists and triggers auto-assignment
+      
+      **Step 4 — Reviewer can access abstract details (✅ PASS):**
+      ✅ GET /api/abstracts/{abstractId} as external reviewer → 200
+      ✅ Abstract details accessible (submission code, title, state, versions)
+      ✅ Previously EXTERNAL_REVIEWER assigned to abstract got 403, now working correctly
+      
+      **Step 5 — Reviewer submits review report (✅ PASS):**
+      ✅ POST /api/reviewer/assignments/{assignmentId}/submit → 200
+      ✅ Review report created with all required fields (recommendation, scores, comments)
+      ✅ Assignment marked complete: completedAt populated
+      
+      **Step 6 — Editor sees completed review (✅ PASS):**
+      ✅ GET /api/abstracts/{abstractId} as committee@scms.io → 200
+      ✅ reviewAssignments array includes completed review with report object
+      
+      **Regression tests (✅ PASS):**
+      ✅ POST /api/auth/login for all 4 accounts → 200 with JWT
+      ✅ GET /api/abstracts as admin → 200 with 7 abstracts
+      
+      **Summary:**
+      The external reviewer flow is working end-to-end. The critical fix (abstractId persistence + auto-assignment on registration) is verified and working correctly. All 6 steps of the flow passed, plus regressions. No code changes made - verification only.

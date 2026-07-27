@@ -1257,7 +1257,7 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-[280px]">
                 <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1">Author dashboard</div>
-                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Thank you for your submission to "{confTitle}"</h1>
+                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Thank you for your consideration to submit your abstract to "{confTitle}".</h1>
                 <p className="text-white/90 text-sm mt-2 max-w-2xl">Track each abstract editorial process, submit a new abstract, and inbox the editor — all from this dashboard.</p>
               </div>
               <div className="flex gap-2 flex-wrap">
@@ -1413,8 +1413,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
       )}
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* My recent submissions — hidden for editor view (author metrics live in "My Abstracts") */}
-        {!isEditorView && (
+        {/* My recent submissions — hidden for editor view (author metrics live in "My Abstracts")
+           and hidden for reviewer-only users (they aren't primarily authors). */}
+        {!isEditorView && !isReviewerOnly && (
           <Card>
             <CardHeader className="flex-row justify-between items-center">
               <CardTitle>My recent submissions</CardTitle>

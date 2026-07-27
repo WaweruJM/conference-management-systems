@@ -617,6 +617,7 @@ model ReviewerInvitation {
   specialty        String?
   message          String?  @db.Text
   invitedById      String
+  abstractId       String?  // Optional — auto-assign the reviewer to this abstract on registration
   token            String   @unique
   respondedAt      DateTime?
   registeredUserId String?

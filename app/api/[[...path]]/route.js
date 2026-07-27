@@ -59,6 +59,24 @@ async function handleAuth(route, method, request) {
         where: { id: matchingInvite.id },
         data: { respondedAt: new Date(), registeredUserId: user.id },
       })
+      // If the invitation was created for a specific abstract, auto-assign the reviewer
+      // to that abstract so it appears in their workspace immediately after registration.
+      if (matchingInvite.abstractId) {
+        const already = await prisma.reviewAssignment.findFirst({
+          where: { abstractId: matchingInvite.abstractId, reviewerId: user.id },
+        })
+        if (!already) {
+          await prisma.reviewAssignment.create({
+            data: {
+              abstractId: matchingInvite.abstractId,
+              reviewerId: user.id,
+              reviewType: 'EXTERNAL_REVIEWER',
+              invitationStatus: 'ACCEPTED',
+              assignedAt: new Date(),
+            },
+          })
+        }
+      }
     }
     // Send a persistent welcome notification for this first-time registration
     try {
@@ -1578,6 +1596,7 @@ async function handleReviewerInvitations(route, method, request) {
         fullName: body.fullName || null,
         specialty: body.specialty || null,
         message: body.message || null,
+        abstractId: body.abstractId || null,
         invitedById: user.id,
         token,
       },
