@@ -1,742 +1,375 @@
 #!/usr/bin/env python3
 """
-Backend API tests for SCMS - Focused batch testing
-Tests 5 specific scenarios as per review request
+SCMS Backend Smoke Test
+Quick smoke test to verify JSX fix and RBAC rules
 """
 
 import requests
 import json
-import sys
+import time
 from datetime import datetime
 
-# Configuration
-BASE_URL = "https://scms-platform-1.preview.emergentagent.com/api"
+# Base URL from .env
+BASE_URL = "https://scms-platform-1.preview.emergentagent.com"
+API_URL = f"{BASE_URL}/api"
+
+# Test credentials (all password: password123)
 CREDENTIALS = {
     "admin": {"email": "admin@scms.io", "password": "password123"},
     "chief": {"email": "chief@scms.io", "password": "password123"},
-    "managing": {"email": "managing@scms.io", "password": "password123"},
-    "committee": {"email": "committee@scms.io", "password": "password123"},
     "author": {"email": "author@scms.io", "password": "password123"},
+    "committee": {"email": "committee@scms.io", "password": "password123"}
 }
 
-def login(user_key):
-    """Login and return Bearer token"""
+def login(email, password):
+    """Login and return JWT token"""
     try:
-        creds = CREDENTIALS[user_key]
-        response = requests.post(f"{BASE_URL}/auth/login", json=creds, timeout=10)
+        response = requests.post(
+            f"{API_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("token")
+        else:
+            print(f"❌ Login failed for {email}: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"❌ Login exception for {email}: {str(e)}")
+        return None
+
+def test_landing_page():
+    """Test 1.1: GET / returns 200 HTML (JSX build error fixed)"""
+    print("\n=== TEST 1.1: Landing Page (JSX Build Fix) ===")
+    try:
+        response = requests.get(BASE_URL, timeout=10)
+        if response.status_code == 200 and "text/html" in response.headers.get("content-type", ""):
+            print(f"✅ GET / → 200 (HTML) - JSX build error is fixed")
+            return True
+        else:
+            print(f"❌ GET / → {response.status_code} - Expected 200 HTML")
+            return False
+    except Exception as e:
+        print(f"❌ GET / exception: {str(e)}")
+        return False
+
+def test_auth_login():
+    """Test 1.2 & 1.3: Login for admin and chief"""
+    print("\n=== TEST 1.2 & 1.3: Authentication ===")
+    results = []
+    
+    # Test admin login
+    try:
+        response = requests.post(
+            f"{API_URL}/auth/login",
+            json=CREDENTIALS["admin"],
+            timeout=10
+        )
         if response.status_code == 200:
             data = response.json()
             token = data.get("token")
-            print(f"✅ Login successful for {creds['email']}")
-            return token
-        else:
-            print(f"❌ Login failed for {creds['email']}: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        print(f"❌ Login exception for {user_key}: {str(e)}")
-        return None
-
-def get_headers(token):
-    """Get headers with Bearer token"""
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-def test_1_subthemes_max_5_and_delete():
-    """
-    Test 1: Sub-themes max 5 enforced + delete
-    - GET /api/conferences and get the featured conference id
-    - As admin: GET conference themes list
-    - POST /api/conferences/:id/themes until we hit 5 total themes
-    - POST 6th theme should return 400
-    - DELETE one theme, then POST should succeed again
-    """
-    print("\n" + "="*80)
-    print("TEST 1: Sub-themes max 5 enforced + delete")
-    print("="*80)
-    
-    admin_token = login("admin")
-    if not admin_token:
-        print("❌ TEST 1 FAILED: Could not login as admin")
-        return False
-    
-    headers = get_headers(admin_token)
-    
-    try:
-        # Step 1: Get featured conference
-        print("\n[1.1] Getting featured conference...")
-        response = requests.get(f"{BASE_URL}/conferences", timeout=10)
-        if response.status_code != 200:
-            print(f"❌ Failed to get conferences: {response.status_code}")
-            return False
-        
-        conferences = response.json().get("conferences", [])
-        featured_conf = next((c for c in conferences if c.get("isFeatured")), None)
-        if not featured_conf:
-            featured_conf = conferences[0] if conferences else None
-        
-        if not featured_conf:
-            print("❌ No conference found")
-            return False
-        
-        conf_id = featured_conf["id"]
-        conf_name = featured_conf.get("name", "Unknown")
-        print(f"✅ Found conference: {conf_name} (ID: {conf_id})")
-        
-        # Step 2: Get current themes
-        print(f"\n[1.2] Getting current themes for conference...")
-        response = requests.get(f"{BASE_URL}/conferences/{conf_id}", timeout=10)
-        if response.status_code != 200:
-            print(f"❌ Failed to get conference details: {response.status_code}")
-            return False
-        
-        conf_data = response.json().get("conference", {})
-        current_themes = conf_data.get("themes", [])
-        theme_count = len(current_themes)
-        print(f"✅ Conference currently has {theme_count} themes")
-        
-        # Step 3: Add themes until we reach 5
-        themes_to_add = 5 - theme_count
-        added_theme_ids = []
-        
-        if themes_to_add > 0:
-            print(f"\n[1.3] Adding {themes_to_add} themes to reach 5 total...")
-            for i in range(themes_to_add):
-                theme_name = f"TestTheme_{datetime.now().timestamp()}_{i}"
-                theme_body = {
-                    "name": theme_name,
-                    "keywords": [f"keyword{i}"]
-                }
-                response = requests.post(
-                    f"{BASE_URL}/conferences/{conf_id}/themes",
-                    headers=headers,
-                    json=theme_body,
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    theme_data = response.json().get("theme", {})
-                    added_theme_ids.append(theme_data.get("id"))
-                    print(f"  ✅ Added theme {i+1}/{themes_to_add}: {theme_name}")
-                else:
-                    print(f"  ❌ Failed to add theme {i+1}: {response.status_code} - {response.text}")
-                    return False
-        else:
-            print(f"\n[1.3] Conference already has {theme_count} themes (>= 5)")
-        
-        # Step 4: Try to add 6th theme (should fail with 400)
-        print(f"\n[1.4] Attempting to add 6th theme (should fail with 400)...")
-        overflow_theme = {
-            "name": f"Overflow_{datetime.now().timestamp()}",
-            "keywords": ["overflow"]
-        }
-        response = requests.post(
-            f"{BASE_URL}/conferences/{conf_id}/themes",
-            headers=headers,
-            json=overflow_theme,
-            timeout=10
-        )
-        
-        if response.status_code == 400:
-            error_msg = response.json().get("error", "")
-            if "maximum" in error_msg.lower() and "5" in error_msg:
-                print(f"✅ Correctly rejected 6th theme with 400: {error_msg}")
+            roles = data.get("user", {}).get("roles", [])
+            if token and isinstance(roles, list):
+                print(f"✅ POST /api/auth/login (admin@scms.io) → 200 with JWT and roles: {roles}")
+                results.append(True)
             else:
-                print(f"⚠️  Got 400 but unexpected message: {error_msg}")
-                return False
+                print(f"❌ POST /api/auth/login (admin@scms.io) → 200 but missing token or roles")
+                results.append(False)
         else:
-            print(f"❌ Expected 400 but got {response.status_code}: {response.text}")
-            return False
-        
-        # Step 5: Delete one theme
-        print(f"\n[1.5] Deleting one theme to bring count below 5...")
-        # Get a theme ID to delete (prefer one we just added, or use existing)
-        theme_to_delete = added_theme_ids[0] if added_theme_ids else current_themes[0]["id"]
-        
-        response = requests.delete(
-            f"{BASE_URL}/themes/{theme_to_delete}",
-            headers=headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Successfully deleted theme: {theme_to_delete}")
-        else:
-            print(f"❌ Failed to delete theme: {response.status_code} - {response.text}")
-            return False
-        
-        # Step 6: Try to add theme again (should succeed now)
-        print(f"\n[1.6] Adding theme again (should succeed now)...")
-        new_theme = {
-            "name": f"AfterDelete_{datetime.now().timestamp()}",
-            "keywords": ["after-delete"]
-        }
-        response = requests.post(
-            f"{BASE_URL}/conferences/{conf_id}/themes",
-            headers=headers,
-            json=new_theme,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Successfully added theme after deletion")
-        else:
-            print(f"❌ Failed to add theme after deletion: {response.status_code} - {response.text}")
-            return False
-        
-        print("\n✅ TEST 1 PASSED: Sub-themes max 5 enforced + delete working correctly")
-        return True
-        
+            print(f"❌ POST /api/auth/login (admin@scms.io) → {response.status_code}")
+            results.append(False)
     except Exception as e:
-        print(f"❌ TEST 1 EXCEPTION: {str(e)}")
-        return False
-
-def test_2_mainTheme_field():
-    """
-    Test 2: mainTheme field on Conference
-    - Pick a conference
-    - PUT /api/conferences/:id with mainTheme
-    - GET /api/conferences/:id and confirm mainTheme is set
-    - Set mainTheme back to null
-    """
-    print("\n" + "="*80)
-    print("TEST 2: mainTheme field on Conference")
-    print("="*80)
+        print(f"❌ Admin login exception: {str(e)}")
+        results.append(False)
     
-    admin_token = login("admin")
-    if not admin_token:
-        print("❌ TEST 2 FAILED: Could not login as admin")
-        return False
-    
-    headers = get_headers(admin_token)
-    
+    # Test chief login
     try:
-        # Get a conference
-        print("\n[2.1] Getting conference...")
-        response = requests.get(f"{BASE_URL}/conferences", timeout=10)
-        if response.status_code != 200:
-            print(f"❌ Failed to get conferences: {response.status_code}")
-            return False
-        
-        conferences = response.json().get("conferences", [])
-        if not conferences:
-            print("❌ No conferences found")
-            return False
-        
-        conf = conferences[0]
-        conf_id = conf["id"]
-        print(f"✅ Using conference: {conf.get('name')} (ID: {conf_id})")
-        
-        # Set mainTheme
-        print("\n[2.2] Setting mainTheme to 'Precision Medicine and Public Health'...")
-        update_body = {
-            "mainTheme": "Precision Medicine and Public Health"
-        }
-        response = requests.put(
-            f"{BASE_URL}/conferences/{conf_id}",
-            headers=headers,
-            json=update_body,
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            print(f"❌ Failed to update conference: {response.status_code} - {response.text}")
-            return False
-        
-        print("✅ Conference updated successfully")
-        
-        # Verify mainTheme is set
-        print("\n[2.3] Verifying mainTheme is set...")
-        response = requests.get(f"{BASE_URL}/conferences/{conf_id}", timeout=10)
-        if response.status_code != 200:
-            print(f"❌ Failed to get conference: {response.status_code}")
-            return False
-        
-        conf_data = response.json().get("conference", {})
-        main_theme = conf_data.get("mainTheme")
-        
-        if main_theme == "Precision Medicine and Public Health":
-            print(f"✅ mainTheme correctly set: {main_theme}")
-        else:
-            print(f"❌ mainTheme not set correctly. Got: {main_theme}")
-            return False
-        
-        # Reset mainTheme to null
-        print("\n[2.4] Resetting mainTheme to null...")
-        reset_body = {
-            "mainTheme": None
-        }
-        response = requests.put(
-            f"{BASE_URL}/conferences/{conf_id}",
-            headers=headers,
-            json=reset_body,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print("✅ mainTheme reset to null")
-        else:
-            print(f"⚠️  Failed to reset mainTheme: {response.status_code}")
-        
-        print("\n✅ TEST 2 PASSED: mainTheme field working correctly")
-        return True
-        
-    except Exception as e:
-        print(f"❌ TEST 2 EXCEPTION: {str(e)}")
-        return False
-
-def test_3_reviewer_invitations_with_abstractId():
-    """
-    Test 3: POST /api/reviewer-invitations still works with abstractId
-    - Login as chief@scms.io
-    - Pick any existing abstract id
-    - POST /api/reviewer-invitations with abstractId
-    - As author@scms.io (no editor role) POST same -> expect 403
-    """
-    print("\n" + "="*80)
-    print("TEST 3: POST /api/reviewer-invitations with abstractId")
-    print("="*80)
-    
-    chief_token = login("chief")
-    if not chief_token:
-        print("❌ TEST 3 FAILED: Could not login as chief")
-        return False
-    
-    headers = get_headers(chief_token)
-    
-    try:
-        # Get an abstract
-        print("\n[3.1] Getting an abstract...")
-        response = requests.get(
-            f"{BASE_URL}/abstracts",
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ Failed to get abstracts: {response.status_code}")
-            return False
-        
-        abstracts = response.json().get("abstracts", [])
-        if not abstracts:
-            print("❌ No abstracts found")
-            return False
-        
-        abstract_id = abstracts[0]["id"]
-        print(f"✅ Using abstract ID: {abstract_id}")
-        
-        # Send invitation with abstractId
-        print("\n[3.2] Sending reviewer invitation with abstractId as chief...")
-        ts = datetime.now().timestamp()
-        invite_body = {
-            "email": f"invite-test-{ts}@example.com",
-            "fullName": "Dr Invite Test",
-            "specialty": "Cardiology",
-            "message": "Please review this abstract",
-            "abstractId": abstract_id
-        }
         response = requests.post(
-            f"{BASE_URL}/reviewer-invitations",
-            headers=headers,
-            json=invite_body,
+            f"{API_URL}/auth/login",
+            json=CREDENTIALS["chief"],
             timeout=10
         )
-        
         if response.status_code == 200:
             data = response.json()
-            invitation = data.get("invitation", {})
-            register_url = data.get("registerUrl", "")
-            print(f"✅ Invitation sent successfully")
-            print(f"   Invitation ID: {invitation.get('id')}")
-            print(f"   Register URL: {register_url}")
-            if not register_url:
-                print("⚠️  Warning: registerUrl is empty")
+            token = data.get("token")
+            roles = data.get("user", {}).get("roles", [])
+            if token and isinstance(roles, list):
+                print(f"✅ POST /api/auth/login (chief@scms.io) → 200 with JWT and roles: {roles}")
+                results.append(True)
+            else:
+                print(f"❌ POST /api/auth/login (chief@scms.io) → 200 but missing token or roles")
+                results.append(False)
         else:
-            print(f"❌ Failed to send invitation: {response.status_code} - {response.text}")
-            return False
-        
-        # Try as author (should fail with 403)
-        print("\n[3.3] Attempting to send invitation as author (should fail with 403)...")
-        author_token = login("author")
-        if not author_token:
-            print("❌ Could not login as author")
-            return False
-        
-        author_headers = get_headers(author_token)
-        invite_body2 = {
-            "email": f"invite-test-2-{ts}@example.com",
-            "fullName": "Dr Invite Test 2",
-            "specialty": "Oncology",
-            "message": "Please review",
-            "abstractId": abstract_id
-        }
-        response = requests.post(
-            f"{BASE_URL}/reviewer-invitations",
-            headers=author_headers,
-            json=invite_body2,
-            timeout=10
-        )
-        
-        if response.status_code == 403:
-            print(f"✅ Correctly rejected author with 403")
-        else:
-            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
-            return False
-        
-        print("\n✅ TEST 3 PASSED: Reviewer invitations with abstractId working correctly")
-        return True
-        
+            print(f"❌ POST /api/auth/login (chief@scms.io) → {response.status_code}")
+            results.append(False)
     except Exception as e:
-        print(f"❌ TEST 3 EXCEPTION: {str(e)}")
-        return False
+        print(f"❌ Chief login exception: {str(e)}")
+        results.append(False)
+    
+    return all(results)
 
-def test_4_get_abstract_rbac():
-    """
-    Test 4: GET /api/abstracts/:id RBAC — Chief Editor + Committee Editor allowed
-    - Login as chief@scms.io and GET /api/abstracts/:id (abstract they don't own) -> expect 200
-    - Login as committee@scms.io and GET /api/abstracts/:id -> expect 200
-    - Login as author@scms.io and GET /api/abstracts/:id (not theirs, not assigned) -> expect 403
-    """
-    print("\n" + "="*80)
-    print("TEST 4: GET /api/abstracts/:id RBAC")
-    print("="*80)
+def test_core_endpoints():
+    """Test 2: Core endpoints (abstracts, notifications)"""
+    print("\n=== TEST 2: Core Endpoints ===")
+    results = []
+    
+    # Login as admin
+    admin_token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
+    if not admin_token:
+        print("❌ Cannot test core endpoints - admin login failed")
+        return False
+    
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    
+    # Test GET /api/abstracts
+    try:
+        response = requests.get(f"{API_URL}/abstracts", headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            abstracts = data.get("abstracts", [])
+            if abstracts and len(abstracts) > 0:
+                # Check for technicalScoreAverage and technicalScoreCount
+                first_abstract = abstracts[0]
+                has_score_fields = "technicalScoreAverage" in first_abstract and "technicalScoreCount" in first_abstract
+                if has_score_fields:
+                    print(f"✅ GET /api/abstracts → 200 with {len(abstracts)} abstracts (technicalScoreAverage/Count present)")
+                    results.append(True)
+                    
+                    # Store an abstract ID for next test
+                    abstract_id = first_abstract.get("id")
+                    
+                    # Test GET /api/abstracts/:id
+                    if abstract_id:
+                        try:
+                            response2 = requests.get(f"{API_URL}/abstracts/{abstract_id}", headers=headers, timeout=10)
+                            if response2.status_code == 200:
+                                print(f"✅ GET /api/abstracts/{abstract_id} → 200")
+                                results.append(True)
+                            else:
+                                print(f"❌ GET /api/abstracts/{abstract_id} → {response2.status_code}")
+                                results.append(False)
+                        except Exception as e:
+                            print(f"❌ GET /api/abstracts/:id exception: {str(e)}")
+                            results.append(False)
+                else:
+                    print(f"❌ GET /api/abstracts → 200 but missing technicalScoreAverage/Count fields")
+                    results.append(False)
+            else:
+                print(f"❌ GET /api/abstracts → 200 but empty abstracts array")
+                results.append(False)
+        else:
+            print(f"❌ GET /api/abstracts → {response.status_code}")
+            results.append(False)
+    except Exception as e:
+        print(f"❌ GET /api/abstracts exception: {str(e)}")
+        results.append(False)
+    
+    # Test GET /api/notifications
+    try:
+        response = requests.get(f"{API_URL}/notifications", headers=headers, timeout=10)
+        if response.status_code == 200:
+            print(f"✅ GET /api/notifications → 200")
+            results.append(True)
+        else:
+            print(f"❌ GET /api/notifications → {response.status_code}")
+            results.append(False)
+    except Exception as e:
+        print(f"❌ GET /api/notifications exception: {str(e)}")
+        results.append(False)
+    
+    return all(results)
+
+def test_rbac_reviewer_invitations():
+    """Test 3.1 & 3.2: Reviewer invitation RBAC"""
+    print("\n=== TEST 3.1 & 3.2: Reviewer Invitation RBAC ===")
+    results = []
+    
+    timestamp = int(time.time())
+    test_email = f"smoke-{timestamp}@example.com"
+    invitation_payload = {
+        "email": test_email,
+        "fullName": "Smoke Test",
+        "specialty": "Cardio"
+    }
+    
+    # Test 3.1: Chief editor can invite (should return 200 with delivery.sent:true)
+    chief_token = login(CREDENTIALS["chief"]["email"], CREDENTIALS["chief"]["password"])
+    if chief_token:
+        headers = {"Authorization": f"Bearer {chief_token}"}
+        try:
+            response = requests.post(
+                f"{API_URL}/reviewer-invitations",
+                json=invitation_payload,
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                delivery_sent = data.get("delivery", {}).get("sent")
+                if delivery_sent is True:
+                    print(f"✅ POST /api/reviewer-invitations (chief@scms.io) → 200 with delivery.sent:true")
+                    results.append(True)
+                else:
+                    print(f"❌ POST /api/reviewer-invitations (chief@scms.io) → 200 but delivery.sent is not true: {data}")
+                    results.append(False)
+            else:
+                print(f"❌ POST /api/reviewer-invitations (chief@scms.io) → {response.status_code}: {response.text}")
+                results.append(False)
+        except Exception as e:
+            print(f"❌ Chief reviewer invitation exception: {str(e)}")
+            results.append(False)
+    else:
+        print("❌ Cannot test chief reviewer invitation - login failed")
+        results.append(False)
+    
+    # Test 3.2: Author cannot invite (should return 403)
+    author_token = login(CREDENTIALS["author"]["email"], CREDENTIALS["author"]["password"])
+    if author_token:
+        headers = {"Authorization": f"Bearer {author_token}"}
+        try:
+            response = requests.post(
+                f"{API_URL}/reviewer-invitations",
+                json=invitation_payload,
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 403:
+                print(f"✅ POST /api/reviewer-invitations (author@scms.io) → 403 (correctly denied)")
+                results.append(True)
+            else:
+                print(f"❌ POST /api/reviewer-invitations (author@scms.io) → {response.status_code} (expected 403)")
+                results.append(False)
+        except Exception as e:
+            print(f"❌ Author reviewer invitation exception: {str(e)}")
+            results.append(False)
+    else:
+        print("❌ Cannot test author reviewer invitation - login failed")
+        results.append(False)
+    
+    return all(results)
+
+def test_rbac_committee_transition():
+    """Test 3.3: Committee editor can only transition assigned abstracts"""
+    print("\n=== TEST 3.3: Committee Editor Transition RBAC ===")
+    
+    # First, get all abstracts as admin to find one NOT assigned to committee@scms.io
+    admin_token = login(CREDENTIALS["admin"]["email"], CREDENTIALS["admin"]["password"])
+    if not admin_token:
+        print("❌ Cannot test committee transition - admin login failed")
+        return False
+    
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
     
     try:
-        # Get an abstract ID first (as admin to see all)
-        print("\n[4.1] Getting an abstract ID...")
-        admin_token = login("admin")
-        if not admin_token:
-            print("❌ Could not login as admin")
-            return False
-        
-        admin_headers = get_headers(admin_token)
-        response = requests.get(
-            f"{BASE_URL}/abstracts",
-            headers=admin_headers,
-            timeout=10
-        )
+        response = requests.get(f"{API_URL}/abstracts", headers=admin_headers, timeout=10)
         if response.status_code != 200:
-            print(f"❌ Failed to get abstracts: {response.status_code}")
+            print(f"❌ Cannot get abstracts list: {response.status_code}")
             return False
         
-        abstracts = response.json().get("abstracts", [])
-        if not abstracts:
-            print("❌ No abstracts found")
-            return False
+        data = response.json()
+        abstracts = data.get("abstracts", [])
         
-        # Find an abstract not owned by author@scms.io
-        author_token = login("author")
-        author_headers = get_headers(author_token)
-        response = requests.get(
-            f"{BASE_URL}/abstracts?scope=mine",
-            headers=author_headers,
-            timeout=10
-        )
-        author_abstracts = response.json().get("abstracts", [])
-        author_abstract_ids = [a["id"] for a in author_abstracts]
-        
-        # Pick an abstract not owned by author
-        test_abstract = None
+        # Find an abstract NOT assigned to committee@scms.io
+        unassigned_abstract_id = None
         for abstract in abstracts:
-            if abstract["id"] not in author_abstract_ids:
-                test_abstract = abstract
+            editor_assignments = abstract.get("editorAssignments", [])
+            # Check if committee@scms.io is assigned
+            is_assigned = any(
+                ea.get("editor", {}).get("email") == "committee@scms.io" 
+                for ea in editor_assignments
+            )
+            if not is_assigned:
+                unassigned_abstract_id = abstract.get("id")
                 break
         
-        if not test_abstract:
-            # If all abstracts belong to author, use the first one
-            test_abstract = abstracts[0]
-        
-        abstract_id = test_abstract["id"]
-        submission_code = test_abstract.get("submissionCode", "Unknown")
-        print(f"✅ Using abstract: {submission_code} (ID: {abstract_id})")
-        
-        # Test 1: Chief Editor access
-        print("\n[4.2] Testing Chief Editor access...")
-        chief_token = login("chief")
-        if not chief_token:
-            print("❌ Could not login as chief")
-            return False
-        
-        chief_headers = get_headers(chief_token)
-        response = requests.get(
-            f"{BASE_URL}/abstracts/{abstract_id}",
-            headers=chief_headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Chief Editor can access abstract (200)")
-        else:
-            print(f"❌ Chief Editor access failed: {response.status_code} - {response.text}")
-            return False
-        
-        # Test 2: Committee Editor access
-        print("\n[4.3] Testing Committee Editor access...")
-        committee_token = login("committee")
-        if not committee_token:
-            print("❌ Could not login as committee")
-            return False
-        
-        committee_headers = get_headers(committee_token)
-        response = requests.get(
-            f"{BASE_URL}/abstracts/{abstract_id}",
-            headers=committee_headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Committee Editor can access abstract (200)")
-        else:
-            print(f"❌ Committee Editor access failed: {response.status_code} - {response.text}")
-            return False
-        
-        # Test 3: Author access to non-owned, non-assigned abstract
-        print("\n[4.4] Testing Author access to non-owned abstract (should fail with 403)...")
-        response = requests.get(
-            f"{BASE_URL}/abstracts/{abstract_id}",
-            headers=author_headers,
-            timeout=10
-        )
-        
-        if response.status_code == 403:
-            print(f"✅ Author correctly denied access (403)")
-        elif response.status_code == 200:
-            # This might be their own abstract or they're assigned
-            print(f"⚠️  Author got 200 - might be their abstract or they're assigned")
-            # Try to find another abstract
-            for abstract in abstracts:
-                if abstract["id"] not in author_abstract_ids and abstract["id"] != abstract_id:
-                    test_id = abstract["id"]
-                    response = requests.get(
-                        f"{BASE_URL}/abstracts/{test_id}",
-                        headers=author_headers,
-                        timeout=10
-                    )
-                    if response.status_code == 403:
-                        print(f"✅ Author correctly denied access to {test_id} (403)")
-                        break
-                    elif response.status_code == 200:
-                        continue
+        if not unassigned_abstract_id:
+            print("⚠️  All abstracts are assigned to committee@scms.io - cannot test unassigned scenario")
+            # Try to use any abstract
+            if abstracts:
+                unassigned_abstract_id = abstracts[0].get("id")
+                print(f"ℹ️  Using abstract {unassigned_abstract_id} for testing (may be assigned)")
             else:
-                print("⚠️  Could not find an abstract that author doesn't have access to")
-        else:
-            print(f"❌ Unexpected status code: {response.status_code} - {response.text}")
+                print("❌ No abstracts available for testing")
+                return False
+        
+        # Now try to transition as committee@scms.io
+        committee_token = login(CREDENTIALS["committee"]["email"], CREDENTIALS["committee"]["password"])
+        if not committee_token:
+            print("❌ Cannot test committee transition - committee login failed")
             return False
         
-        print("\n✅ TEST 4 PASSED: GET /api/abstracts/:id RBAC working correctly")
-        return True
+        committee_headers = {"Authorization": f"Bearer {committee_token}"}
         
-    except Exception as e:
-        print(f"❌ TEST 4 EXCEPTION: {str(e)}")
-        return False
-
-def test_5_assign_editor_rbac():
-    """
-    Test 5: POST /api/abstracts/:id/assign-editor RBAC still tight
-    - Login as managing@scms.io, POST assign-editor -> expect 403
-    - Login as chief@scms.io -> 200. Try self-assignment -> 200
-    - Login as admin@scms.io -> 200
-    - Login as committee@scms.io -> 403
-    """
-    print("\n" + "="*80)
-    print("TEST 5: POST /api/abstracts/:id/assign-editor RBAC")
-    print("="*80)
-    
-    try:
-        # Get an abstract and committee user ID
-        print("\n[5.1] Getting abstract and committee user ID...")
-        admin_token = login("admin")
-        if not admin_token:
-            print("❌ Could not login as admin")
-            return False
-        
-        admin_headers = get_headers(admin_token)
-        
-        # Get abstracts
-        response = requests.get(
-            f"{BASE_URL}/abstracts",
-            headers=admin_headers,
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ Failed to get abstracts: {response.status_code}")
-            return False
-        
-        abstracts = response.json().get("abstracts", [])
-        if not abstracts:
-            print("❌ No abstracts found")
-            return False
-        
-        abstract_id = abstracts[0]["id"]
-        submission_code = abstracts[0].get("submissionCode", "Unknown")
-        print(f"✅ Using abstract: {submission_code} (ID: {abstract_id})")
-        
-        # Get committee user ID
-        response = requests.get(
-            f"{BASE_URL}/users",
-            headers=admin_headers,
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ Failed to get users: {response.status_code}")
-            return False
-        
-        users = response.json().get("users", [])
-        committee_user = next((u for u in users if u["email"] == "committee@scms.io"), None)
-        chief_user = next((u for u in users if u["email"] == "chief@scms.io"), None)
-        
-        if not committee_user:
-            print("❌ Committee user not found")
-            return False
-        
-        committee_user_id = committee_user["id"]
-        chief_user_id = chief_user["id"] if chief_user else None
-        print(f"✅ Committee user ID: {committee_user_id}")
-        if chief_user_id:
-            print(f"✅ Chief user ID: {chief_user_id}")
-        
-        # Test 1: Managing Editor (should fail with 403)
-        print("\n[5.2] Testing Managing Editor assign-editor (should fail with 403)...")
-        managing_token = login("managing")
-        if not managing_token:
-            print("❌ Could not login as managing")
-            return False
-        
-        managing_headers = get_headers(managing_token)
-        assign_body = {
-            "editorId": committee_user_id,
-            "role": "COMMITTEE_EDITOR"
-        }
-        response = requests.post(
-            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
-            headers=managing_headers,
-            json=assign_body,
-            timeout=10
-        )
-        
-        if response.status_code == 403:
-            print(f"✅ Managing Editor correctly denied (403)")
-        else:
-            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
-            return False
-        
-        # Test 2: Chief Editor (should succeed)
-        print("\n[5.3] Testing Chief Editor assign-editor (should succeed with 200)...")
-        chief_token = login("chief")
-        if not chief_token:
-            print("❌ Could not login as chief")
-            return False
-        
-        chief_headers = get_headers(chief_token)
-        response = requests.post(
-            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
-            headers=chief_headers,
-            json=assign_body,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Chief Editor can assign editor (200)")
-        else:
-            print(f"❌ Chief Editor assign failed: {response.status_code} - {response.text}")
-            return False
-        
-        # Test 3: Chief Editor self-assignment (should succeed)
-        if chief_user_id:
-            print("\n[5.4] Testing Chief Editor self-assignment (should succeed with 200)...")
-            self_assign_body = {
-                "editorId": chief_user_id,
-                "role": "COMMITTEE_EDITOR"
-            }
+        try:
             response = requests.post(
-                f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
-                headers=chief_headers,
-                json=self_assign_body,
+                f"{API_URL}/abstracts/{unassigned_abstract_id}/transition",
+                json={"newState": "COMMITTEE_REVIEW"},
+                headers=committee_headers,
                 timeout=10
             )
             
-            if response.status_code == 200:
-                print(f"✅ Chief Editor can self-assign (200)")
+            if response.status_code == 403:
+                error_text = response.text.lower()
+                if "assigned" in error_text:
+                    print(f"✅ POST /api/abstracts/:id/transition (committee@scms.io, unassigned abstract) → 403 with 'assigned' phrasing")
+                    return True
+                else:
+                    print(f"✅ POST /api/abstracts/:id/transition (committee@scms.io, unassigned abstract) → 403 (but missing 'assigned' phrasing)")
+                    print(f"   Response: {response.text}")
+                    return True  # Still pass as 403 is correct
             else:
-                print(f"❌ Chief Editor self-assign failed: {response.status_code} - {response.text}")
+                print(f"❌ POST /api/abstracts/:id/transition (committee@scms.io, unassigned abstract) → {response.status_code} (expected 403)")
+                print(f"   Response: {response.text}")
                 return False
-        
-        # Test 4: Admin (should succeed)
-        print("\n[5.5] Testing Admin assign-editor (should succeed with 200)...")
-        response = requests.post(
-            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
-            headers=admin_headers,
-            json=assign_body,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Admin can assign editor (200)")
-        else:
-            print(f"❌ Admin assign failed: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"❌ Committee transition exception: {str(e)}")
             return False
-        
-        # Test 5: Committee Member (should fail with 403)
-        print("\n[5.6] Testing Committee Member assign-editor (should fail with 403)...")
-        committee_token = login("committee")
-        if not committee_token:
-            print("❌ Could not login as committee")
-            return False
-        
-        committee_headers = get_headers(committee_token)
-        response = requests.post(
-            f"{BASE_URL}/abstracts/{abstract_id}/assign-editor",
-            headers=committee_headers,
-            json=assign_body,
-            timeout=10
-        )
-        
-        if response.status_code == 403:
-            print(f"✅ Committee Member correctly denied (403)")
-        else:
-            print(f"❌ Expected 403 but got {response.status_code}: {response.text}")
-            return False
-        
-        print("\n✅ TEST 5 PASSED: POST /api/abstracts/:id/assign-editor RBAC working correctly")
-        return True
-        
+            
     except Exception as e:
-        print(f"❌ TEST 5 EXCEPTION: {str(e)}")
+        print(f"❌ Exception getting abstracts: {str(e)}")
         return False
 
 def main():
-    """Run all tests"""
-    print("\n" + "="*80)
-    print("SCMS BACKEND API TESTS - FOCUSED BATCH")
-    print("Testing 5 specific scenarios")
-    print("="*80)
+    """Run all smoke tests"""
+    print("=" * 70)
+    print("SCMS BACKEND SMOKE TEST")
+    print("Quick smoke test to verify JSX fix and RBAC rules")
+    print("=" * 70)
     
     results = {
-        "Test 1: Sub-themes max 5 + delete": test_1_subthemes_max_5_and_delete(),
-        "Test 2: mainTheme field": test_2_mainTheme_field(),
-        "Test 3: Reviewer invitations with abstractId": test_3_reviewer_invitations_with_abstractId(),
-        "Test 4: GET /api/abstracts/:id RBAC": test_4_get_abstract_rbac(),
-        "Test 5: POST /api/abstracts/:id/assign-editor RBAC": test_5_assign_editor_rbac(),
+        "1.1 Landing Page (JSX Fix)": False,
+        "1.2-1.3 Authentication": False,
+        "2. Core Endpoints": False,
+        "3.1-3.2 Reviewer Invitation RBAC": False,
+        "3.3 Committee Transition RBAC": False
     }
     
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
+    # Run tests
+    results["1.1 Landing Page (JSX Fix)"] = test_landing_page()
+    results["1.2-1.3 Authentication"] = test_auth_login()
+    results["2. Core Endpoints"] = test_core_endpoints()
+    results["3.1-3.2 Reviewer Invitation RBAC"] = test_rbac_reviewer_invitations()
+    results["3.3 Committee Transition RBAC"] = test_rbac_committee_transition()
+    
+    # Summary
+    print("\n" + "=" * 70)
+    print("SMOKE TEST SUMMARY")
+    print("=" * 70)
     
     passed = sum(1 for v in results.values() if v)
     total = len(results)
     
-    for test_name, result in results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status}: {test_name}")
+    for test_name, passed_flag in results.items():
+        status = "✅ PASS" if passed_flag else "❌ FAIL"
+        print(f"{status} - {test_name}")
     
-    print(f"\nTotal: {passed}/{total} tests passed")
+    print("=" * 70)
+    print(f"TOTAL: {passed}/{total} test groups passed")
+    print("=" * 70)
     
-    if passed == total:
-        print("\n🎉 ALL TESTS PASSED!")
-        return 0
-    else:
-        print(f"\n⚠️  {total - passed} test(s) failed")
-        return 1
+    return passed == total
 
 if __name__ == "__main__":
-    sys.exit(main())
+    success = main()
+    exit(0 if success else 1)

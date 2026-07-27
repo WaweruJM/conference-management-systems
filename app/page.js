@@ -1957,7 +1957,7 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
                 <EditorialPanel abs={abs} onRefresh={refresh} user={user} />
               </>
             )
-          })()}}
+          })()}
           {isOwner && ['MAJOR_REVISION', 'MINOR_REVISION', 'RETURNED_FOR_FORMATTING'].includes(abs.currentState) && (
             <RevisionUpload abs={abs} onDone={refresh} />
           )}
