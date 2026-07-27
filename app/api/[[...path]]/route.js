@@ -2185,7 +2185,7 @@ async function handleSponsorshipRequests(route, method, request) {
     // Notify all Chief Logistics + Admin about the new sponsorship request
     const logisticsChiefs = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS', 'SYSTEM_ADMIN'] } } } },
-      select: { id: true },
+      select: { id: true, email: true, firstName: true },
     })
     for (const c of logisticsChiefs) {
       await prisma.notification.create({
@@ -2197,6 +2197,54 @@ async function handleSponsorshipRequests(route, method, request) {
         },
       })
     }
+    // Fire-and-forget email notifications (best-effort)
+    try {
+      const conf = await prisma.conference.findUnique({ where: { id: body.conferenceId } })
+      const confName = conf?.name || 'the Scientific Conference'
+      const { sendEmail } = await import('@/lib/email')
+      const { renderEmailHtml } = await import('@/lib/email-templates')
+      // 1. Confirmation email to the sponsor
+      const sponsorSubject = `Thank you for your sponsorship interest — ${confName}`
+      const sponsorBody = `Dear ${user.firstName || 'Partner'},
+
+Thank you for choosing to partner with ${confName}. We have received your sponsorship request for ${body.companyName}${body.sponsorTier ? ` (${body.sponsorTier} tier)` : ''} and truly appreciate your interest in supporting our conference.
+
+The Chief Logistics team has been notified and will review your request. You can expect to hear from them within a few working days with next steps and any additional details required.
+
+Sponsorship details submitted:
+  • Company: ${body.companyName}
+  • Preferred tier: ${body.sponsorTier || 'To be discussed'}
+  • Booth requested: ${body.virtualBoothRequested ? 'Virtual' : ''}${body.virtualBoothRequested && body.physicalBoothRequested ? ' + ' : ''}${body.physicalBoothRequested ? 'Physical' : ''}${!body.virtualBoothRequested && !body.physicalBoothRequested ? 'None specified' : ''}
+
+If you have any additional information to share in the meantime, please reply to this email.
+
+With gratitude,
+${confName} Logistics Committee`
+      const sponsorHtml = renderEmailHtml({ subject: sponsorSubject, body: sponsorBody, conferenceName: confName })
+      sendEmail({ to: (body.contactEmail || user.email), subject: sponsorSubject, text: sponsorBody, html: sponsorHtml }).catch(() => {})
+
+      // 2. Copy to every Chief Logistics + Admin
+      const chiefSubject = `New sponsorship request — ${body.companyName} — ${confName}`
+      const chiefBody = `A new sponsorship request has just been submitted for ${confName}.
+
+Requested by: ${user.firstName} ${user.lastName} (${user.email})
+Company: ${body.companyName}${body.companyType ? ' — ' + body.companyType : ''}
+Industry: ${body.industry || '—'}
+Preferred tier: ${body.sponsorTier || '—'}
+Booth requested: ${body.virtualBoothRequested ? 'Virtual' : ''}${body.virtualBoothRequested && body.physicalBoothRequested ? ' + ' : ''}${body.physicalBoothRequested ? 'Physical' : ''}${!body.virtualBoothRequested && !body.physicalBoothRequested ? 'None specified' : ''}
+Contact email: ${body.contactEmail || user.email}
+Contact phone: ${body.contactPhone || '—'}
+Website: ${body.websiteUrl || '—'}
+
+Message from sponsor:
+${body.message || '(no message)'}
+
+Review and respond in the Logistics Boardroom.`
+      const chiefHtml = renderEmailHtml({ subject: chiefSubject, body: chiefBody, conferenceName: confName })
+      for (const c of logisticsChiefs) {
+        if (c.email) sendEmail({ to: c.email, subject: chiefSubject, text: chiefBody, html: chiefHtml }).catch(() => {})
+      }
+    } catch (e) { /* email failures should not block */ }
     return ok({ request: created })
   }
 

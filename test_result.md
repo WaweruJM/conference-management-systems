@@ -629,6 +629,36 @@ backend:
           ✅ POST /api/auth/login for all 4 test accounts (admin, chief.logistics, author, sponsor) → 200 with JWT
           
           All CRUD operations working correctly. RBAC properly enforced. Auto-seeding works. Regressions pass.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ SMOKE TEST COMPLETE — Sponsorship Requests Email Fire-and-Forget (5/5 tests passed = 100%)
+          
+          **Test 1 — POST /api/sponsorship-requests with email fire-and-forget (PASS):**
+          ✅ POST /api/sponsorship-requests as sponsor@scms.io with GOLD tier → 200
+          ✅ Response contains request object with id, status=PENDING, createdAt, sponsorTier=GOLD, virtualBoothRequested=true
+          ✅ Email fire-and-forget code executed (wrapped in try/catch, non-blocking)
+          
+          **Test 2 — GET /api/notifications for chief.logistics (PASS):**
+          ✅ Found notification: "New sponsorship request from Smoke Test Corp"
+          ✅ Notification pathway confirmed working after adding email try/catch block
+          
+          **Test 3 — Regression: Unauthenticated POST /api/sponsorship-requests (PASS):**
+          ✅ Unauthenticated POST correctly returned 401
+          
+          **Test 4 — Regression: Sponsorship tier CRUD (PASS):**
+          ✅ Unauthenticated GET /api/sponsorship-tiers → 200 with 5 tiers (PLATINUM, GOLD, SILVER, BRONZE + 1 custom)
+          ✅ POST /api/sponsorship-tiers as admin with SMOKE-VERIFY tier → 200
+          ✅ PUT /api/sponsorship-tiers/:id as admin (price=1200, currency=KES) → 200
+          ✅ POST /api/sponsorship-tiers as author → 403 (correctly denied)
+          ✅ DELETE /api/sponsorship-tiers/:id as admin → 200
+          
+          **Test 5 — Regression: Auth + main endpoints (PASS):**
+          ✅ POST /api/auth/login for all 4 accounts (admin, chief.logistics, sponsor, author) → 200 with JWT
+          ✅ GET /api/abstracts as admin → 200 with 6 abstracts
+          ✅ technicalScoreAverage field still present in abstracts
+          
+          All backend endpoints working correctly. Email fire-and-forget implementation confirmed non-blocking. Notification pathway intact. All regressions pass.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
@@ -694,11 +724,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "GET /sponsorship-tiers now returns DB-backed tiers (auto-seeds 4 defaults on first call)"
-    - "POST /sponsorship-tiers, PUT /sponsorship-tiers/:id, DELETE /sponsorship-tiers/:id — Admin + Chief Logistics only (403 for others)"
-    - "REGRESSION: POST /sponsorship-requests still works (uses tier key)"
-    - "REGRESSION: GET /abstracts unaffected"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1355,3 +1381,50 @@ agent_communication:
       
       **Summary:**
       All sponsorship tiers CRUD operations working correctly. RBAC properly enforced (only SYSTEM_ADMIN and CHIEF_LOGISTICS can create/edit/delete). Auto-seeding works on first GET. Regressions pass - existing features unaffected.
+
+  - agent: "testing"
+    message: |
+      ✅ SMOKE TEST COMPLETE — Sponsorship Requests Email Fire-and-Forget (5/5 tests passed = 100%)
+      
+      **Review Request:** Verify small backend change - POST /api/sponsorship-requests now fires confirmation emails (fire-and-forget)
+      
+      **Test 1 — POST /api/sponsorship-requests with email fire-and-forget (✅ PASS):**
+      ✅ Login as sponsor@scms.io → 200 with JWT
+      ✅ GET /api/conferences → 200, grabbed featured conference ID (e01de36e-e09e-479f-bd53-c056b2a90436)
+      ✅ POST /api/sponsorship-requests with body {"conferenceId":"<id>","companyName":"Smoke Test Corp","industry":"Testing","sponsorTier":"GOLD","contactEmail":"sponsor@scms.io","message":"Verifying email flow","virtualBoothRequested":true} → 200
+      ✅ Response contains request object with:
+         - id: 199ee1a9-f688-4421-b1dc-5be064259dce
+         - status: PENDING
+         - sponsorTier: GOLD
+         - virtualBoothRequested: true
+         - createdAt: 2026-07-27T02:35:10.879Z
+      ✅ Email fire-and-forget code executed (wrapped in try/catch, non-blocking)
+      ✅ Supervisor logs confirm 3 emails sent via Resend:
+         - sponsor@scms.io: "Thank you for your sponsorship interest — FIFTH MEDICAL SCIENTIFIC CONFERENCE"
+         - chief.logistics@scms.io: "New sponsorship request — Smoke Test Corp — FIFTH MEDICAL SCIENTIFIC CONFERENCE"
+         - admin@scms.io: "New sponsorship request — Smoke Test Corp — FIFTH MEDICAL SCIENTIFIC CONFERENCE"
+      
+      **Test 2 — GET /api/notifications for chief.logistics (✅ PASS):**
+      ✅ Login as chief.logistics@scms.io → 200 with JWT
+      ✅ GET /api/notifications → 200
+      ✅ Found notification: "New sponsorship request from Smoke Test Corp"
+      ✅ Notification body: "Nadia Karim has requested to sponsor the conference (GOLD)."
+      ✅ Notification pathway confirmed working after adding email try/catch block
+      
+      **Test 3 — Regression: Unauthenticated POST /api/sponsorship-requests (✅ PASS):**
+      ✅ POST /api/sponsorship-requests with NO Authorization header → 401 (correctly denied)
+      
+      **Test 4 — Regression: Sponsorship tier CRUD (✅ PASS):**
+      ✅ Unauthenticated GET /api/sponsorship-tiers → 200 with 5 tiers (PLATINUM, GOLD, SILVER, BRONZE + 1 custom)
+      ✅ POST /api/sponsorship-tiers as admin@scms.io with SMOKE-VERIFY tier → 200
+      ✅ PUT /api/sponsorship-tiers/:id as admin@scms.io (price=1200, currency=KES) → 200
+      ✅ POST /api/sponsorship-tiers as author@scms.io → 403 (correctly denied)
+      ✅ DELETE /api/sponsorship-tiers/:id as admin@scms.io → 200
+      
+      **Test 5 — Regression: Auth + main endpoints (✅ PASS):**
+      ✅ POST /api/auth/login for all 4 accounts (admin, chief.logistics, sponsor, author) → 200 with JWT (all start with 'eyJ')
+      ✅ GET /api/abstracts as admin@scms.io → 200 with 6 abstracts
+      ✅ technicalScoreAverage field still present in abstracts (value: 7)
+      
+      **Summary:**
+      All backend endpoints working correctly. Email fire-and-forget implementation confirmed non-blocking and successfully sending emails via Resend. Notification pathway intact. All regressions pass. No code changes made - verification only.

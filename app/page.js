@@ -991,7 +991,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
 
   const nav = [
     // Dashboard is hidden for pure logistics or pure sponsor users — they have their
-    // own landing hub (Logistics Boardroom / Sponsors page).
+    // own landing hub (Logistics Boardroom / Sponsor Dashboard).
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: !isLogisticsOnly && !isSponsorOnly, group: 'core' },
     // Reviewer-focused (appears near top for reviewers)
     { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
@@ -1001,21 +1001,23 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
     // Logistics-focused
     { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
-    // Sponsor-focused — only shown to sponsors themselves plus admin & chief logistics for oversight
-    { key: 'sponsors', label: 'Sponsors', icon: Award, show: isSponsor || isAdmin || isChiefLogistics, group: 'general' },
-    // Author-focused (hidden for pure logistics/sponsor users — those roles don't submit)
-    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: !isLogisticsOnly && !isSponsorOnly, group: 'author' },
-    { key: 'submit', label: 'Submit new abstract', icon: Plus, show: !isLogisticsOnly && !isSponsorOnly, group: 'author' },
+    // Sponsor Dashboard (sponsors + admin + chief logistics)
+    { key: 'sponsors', label: 'Sponsor Dashboard', icon: Award, show: isSponsor || isAdmin || isChiefLogistics, group: 'general' },
+    // Virtual Exhibition Hall — sits right below Sponsor Dashboard for sponsors, chief logistics, and admin
+    { key: 'booths', label: 'Virtual Exhibition Hall', icon: Building2, show: isSponsor || isAdmin || isChiefLogistics, group: 'general' },
+    // Sponsorship Tiers admin — appears right after Sponsor Dashboard for admin + chief logistics
+    { key: 'sponsorship-tiers', label: 'Sponsorship Tiers', icon: Award, show: isAdmin || isChiefLogistics, group: 'general' },
+    // Author-focused — logistics committee members carry the AUTHOR role and can submit
+    { key: 'my-abstracts', label: 'My Abstracts', icon: FileText, show: !isSponsorOnly, group: 'author' },
+    { key: 'submit', label: 'Submit new abstract', icon: Plus, show: !isSponsorOnly, group: 'author' },
     // General
     { key: 'live', label: 'Live Conference', icon: Radio, show: true, group: 'general' },
     { key: 'programme', label: 'Programme', icon: GraduationCap, show: !isSponsorOnly, group: 'general' },
-    { key: 'booths', label: 'Virtual Exhibition', icon: Building2, show: isSponsorOnly, group: 'general' },
     { key: 'templates', label: 'Templates', icon: FileText, show: !isLogisticsOnly && !isSponsorOnly, group: 'general' },
     // Admin
     { key: 'conferences', label: 'Conferences', icon: Calendar, show: isAdmin, group: 'admin' },
     { key: 'conference-admin', label: 'Conference Admin', icon: Building2, show: isAdmin, group: 'admin' },
     { key: 'booth-admin', label: 'Exhibition Booths', icon: Building2, show: isAdmin || isEditor || isChiefLogistics, group: 'admin' },
-    { key: 'sponsorship-tiers', label: 'Sponsorship Tiers', icon: Award, show: isAdmin || isChiefLogistics, group: 'admin' },
     { key: 'programme-admin', label: 'Programme Admin', icon: Calendar, show: isAdmin || isEditor, group: 'admin' },
     { key: 'book-admin', label: 'Conference Book', icon: BookOpen, show: isAdmin || isEditor, group: 'admin' },
     { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor, group: 'admin' },
@@ -1080,12 +1082,21 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
 
       {/* Main */}
       <main className="flex-1 flex flex-col relative z-10">
-        <header className="h-16 border-b bg-white/95 backdrop-blur-sm flex items-center justify-between px-6 shadow-sm">
-          <div>
-            <div className="text-base font-bold tracking-tight">{confTitle}</div>
-            <div className="text-xs text-muted-foreground">{route.name === 'abstract' ? 'Abstract detail' : nav.find(n => n.key === route.name)?.label || 'SCMS'}</div>
+        <header className="h-16 border-b border-indigo-800/40 bg-gradient-to-r from-indigo-900 via-indigo-800 to-fuchsia-900 shadow-md flex items-center px-6 relative">
+          {/* Notifications bell — floats to the right */}
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
+            <NotificationsBell
+              notifs={notifs}
+              onOpen={(n) => { if (n.link?.startsWith('/abstracts/')) setRoute({ name: 'abstract', id: n.link.split('/')[2] }); api(`/notifications/${n.id}/read`, { method: 'POST' }).then(refreshNotifs) }}
+              onReadAll={() => api('/notifications/read-all', { method: 'POST' }).then(refreshNotifs)}
+              unread={unread}
+            />
           </div>
-          <NotificationsBell notifs={notifs} onOpen={(n) => { if (n.link?.startsWith('/abstracts/')) setRoute({ name: 'abstract', id: n.link.split('/')[2] }); api(`/notifications/${n.id}/read`, { method: 'POST' }).then(refreshNotifs) }} onReadAll={() => api('/notifications/read-all', { method: 'POST' }).then(refreshNotifs)} unread={unread} />
+          {/* Centred title block */}
+          <div className="flex-1 text-center text-white">
+            <div className="text-lg md:text-xl font-bold tracking-tight drop-shadow-sm truncate">{confTitle}</div>
+            <div className="text-[11px] uppercase tracking-widest text-white/75 mt-0.5">{route.name === 'abstract' ? 'Abstract detail' : nav.find(n => n.key === route.name)?.label || 'SCMS'}</div>
+          </div>
         </header>
         <div className="flex-1 overflow-auto">
           <ViewRouter route={route} setRoute={setRoute} user={user} setUser={setUser} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} featured={featured} />
@@ -4502,17 +4513,29 @@ function SponsorsPage({ user, featured, setRoute }) {
   }
   useEffect(() => { refresh() }, [])
 
+  const confName = featured?.name || 'the Scientific Conference'
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <Card className="border-0 shadow-md overflow-hidden">
-        <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 p-6 text-white">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex-1 min-w-[280px]">
-              <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Sponsorship</div>
-              <h1 className="text-2xl md:text-3xl font-bold leading-tight">Become a sponsor</h1>
-              <p className="text-white/90 text-sm mt-2 max-w-2xl">Support {featured?.name || 'the scientific conference'} and gain unparalleled reach with the delegates, editorial board and industry partners attending the event.</p>
+      {/* Welcome / Header */}
+      <Card className="border-0 shadow-lg overflow-hidden">
+        <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 p-6 md:p-8 text-white">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-3">
+              <Award className="h-3 w-3" /> Sponsor dashboard
             </div>
+            <h1 className="text-2xl md:text-3xl font-bold leading-tight mb-2">
+              Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
+            </h1>
+            <p className="text-white/95 text-base leading-relaxed">
+              We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>.
+              Your support helps us convene leading researchers, clinicians and industry innovators
+              to advance the science and practice at the heart of this event.
+            </p>
+            <p className="text-white/90 text-sm leading-relaxed mt-2">
+              Below you'll find our sponsorship categories with the corresponding benefits and pricing.
+              Choose a tier that best fits your organisation and complete the request form —
+              our Chief Logistics team will follow up with the next steps within a few working days.
+            </p>
           </div>
         </div>
       </Card>
@@ -4544,10 +4567,10 @@ function SponsorsPage({ user, featured, setRoute }) {
         </CardContent>
       </Card>
 
-      {/* Inline sponsorship request form (Task 6) */}
-      <SponsorshipRequestInline user={user} conferenceId={featured?.id} tiers={tiers} onSubmitted={refresh} />
+      {/* Inline sponsorship request form */}
+      <SponsorshipRequestInline user={user} conferenceId={featured?.id} tiers={tiers} confName={confName} onSubmitted={refresh} />
 
-      {/* Invitation to view exhibition booths (Task 6) */}
+      {/* Invitation to view exhibition booths */}
       <Card className="border-0 shadow-md overflow-hidden">
         <div className="bg-gradient-to-r from-indigo-50 via-fuchsia-50 to-rose-50 p-6 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -5072,97 +5095,99 @@ function ExhibitionBoothsPublic({ conf }) {
 
   return (
     <div className="bg-gradient-to-br from-slate-50 via-white to-indigo-50 min-h-screen">
-      <div className="container mx-auto px-6 py-10 max-w-6xl">
-        <div className="text-center mb-8">
-          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 mb-2">SPONSORS & EXHIBITORS</Badge>
-          <h1 className="text-4xl font-bold tracking-tight">Virtual Exhibition Hall</h1>
-          <p className="text-muted-foreground mt-2">Meet the industry partners powering {conf?.name || 'this conference'}</p>
+      <div className="container mx-auto px-4 py-4 max-w-6xl">
+        {/* Compact professional header */}
+        <div className="text-center mb-4">
+          <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 mb-2">
+            <Building2 className="h-3 w-3" /> Industry partners showcase
+          </div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-800">
+            Meet the industry partners powering {conf?.name || 'this conference'}
+          </h1>
         </div>
 
-        {/* Main rotating card */}
+        {/* Main rotating card — fits within window (no vertical scroll) */}
         <div className="relative" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-          <Card key={idx} className="overflow-hidden shadow-2xl border-0 ring-1 ring-slate-200 animate-in fade-in slide-in-from-right-6 duration-700">
-            <div className="relative">
-              {b.bannerPath ? (
-                <div className="w-full h-80 bg-slate-100 relative overflow-hidden">
-                  <img src={b.bannerPath} alt={b.sponsorName} className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-8 text-white">
-                    <div className="flex items-end gap-4">
-                      {b.logoPath && (
-                        <div className="h-20 w-20 bg-white rounded-lg p-2 shadow-lg shrink-0">
-                          <img src={b.logoPath} alt="" className="h-full w-full object-contain" />
-                        </div>
-                      )}
-                      <div className="flex-1">
-                        <Badge className="bg-white/25 border-white/40 text-white backdrop-blur-sm mb-2">{b.companyType || 'Sponsor'}</Badge>
-                        <h2 className="text-4xl font-bold drop-shadow-lg">{b.sponsorName}</h2>
-                      </div>
-                    </div>
+          <Card key={idx} className="overflow-hidden shadow-xl border-0 ring-1 ring-slate-200 animate-in fade-in slide-in-from-right-6 duration-700">
+            <CardContent className="p-0">
+              {/* Company title top strip */}
+              <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-fuchsia-600 px-6 py-4 text-white flex items-center gap-4">
+                {b.logoPath && (
+                  <div className="h-14 w-14 bg-white rounded-lg p-1.5 shadow-lg shrink-0">
+                    <img src={b.logoPath} alt="" className="h-full w-full object-contain" />
                   </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <Badge className="bg-white/20 border-white/30 text-white backdrop-blur-sm text-[10px] mb-1">{b.companyType || 'Industry Partner'}</Badge>
+                  <h2 className="text-xl md:text-2xl font-bold drop-shadow leading-tight truncate">{b.sponsorName}</h2>
                 </div>
-              ) : (
-                <div className="bg-gradient-to-br from-indigo-600 to-fuchsia-600 p-10 text-white">
-                  <h2 className="text-4xl font-bold">{b.sponsorName}</h2>
-                  {b.companyType && <div className="text-lg opacity-90 mt-1">{b.companyType}</div>}
-                </div>
-              )}
-            </div>
+              </div>
 
-            <CardContent className="p-8">
-              <div className="grid md:grid-cols-3 gap-8">
-                <div className="md:col-span-2 space-y-5">
+              {/* Body: image + text + links laid out horizontally to fit within viewport */}
+              <div className="grid md:grid-cols-5 gap-0">
+                {/* Left column: image / video */}
+                <div className="md:col-span-2 bg-slate-100 flex items-center justify-center">
+                  {b.bannerPath ? (
+                    <div className="w-full aspect-[4/3] md:aspect-auto md:h-full overflow-hidden">
+                      <img src={b.bannerPath} alt={b.sponsorName} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="w-full aspect-[4/3] md:aspect-auto md:h-full bg-gradient-to-br from-indigo-100 via-fuchsia-100 to-rose-100 flex items-center justify-center">
+                      <Building2 className="h-16 w-16 text-slate-300" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Right column: message + products + contact + links */}
+                <div className="md:col-span-3 p-5 md:p-6 space-y-3 max-h-[62vh] overflow-auto">
                   {b.message && (
                     <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-2">About</div>
-                      <p className="text-base leading-relaxed text-slate-700 whitespace-pre-wrap">{b.message}</p>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">About</div>
+                      <p className="text-sm md:text-base leading-relaxed text-slate-700 whitespace-pre-wrap">{b.message}</p>
                     </div>
                   )}
                   {b.products && (
-                    <div className="border-t pt-4">
-                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-2">Products & Services</div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Products &amp; Services</div>
                       <p className="text-sm text-slate-700 whitespace-pre-wrap">{b.products}</p>
                     </div>
                   )}
-                </div>
 
-                <div className="space-y-4">
-                  <div className="p-4 rounded-lg bg-slate-50 border">
-                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Get in touch</div>
-                    <div className="space-y-2 text-sm">
-                      {b.websiteUrl && (
-                        <a href={b.websiteUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-indigo-600 hover:text-indigo-800 hover:underline">
-                          <Globe className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{b.websiteUrl.replace(/^https?:\/\//, '')}</span>
-                        </a>
-                      )}
-                      {b.contactEmail && (
-                        <a href={`mailto:${b.contactEmail}`} className="flex items-center gap-2 text-indigo-600 hover:text-indigo-800 hover:underline">
-                          <Mail className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{b.contactEmail}</span>
-                        </a>
-                      )}
-                      {b.contactPhone && (
-                        <div className="flex items-center gap-2 text-slate-700">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h1.28a1 1 0 01.95.68l1.5 4.5a1 1 0 01-.5 1.21l-2.26 1.13a11 11 0 005.52 5.52l1.13-2.26a1 1 0 011.21-.5l4.5 1.5a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" /></svg>
-                          <span>{b.contactPhone}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {b.otherLinks && b.otherLinks.length > 0 && (
-                    <div className="p-4 rounded-lg bg-indigo-50 border border-indigo-100">
-                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-700 mb-3">Explore more</div>
-                      <div className="space-y-1.5">
-                        {b.otherLinks.map((l, i) => (
-                          <a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 hover:underline">
-                            <ChevronRight className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{l.label}</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t">
+                    <div className="p-3 rounded-md bg-slate-50 border">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Get in touch</div>
+                      <div className="space-y-1 text-xs">
+                        {b.websiteUrl && (
+                          <a href={b.websiteUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-indigo-600 hover:underline">
+                            <Globe className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{b.websiteUrl.replace(/^https?:\/\//, '')}</span>
                           </a>
-                        ))}
+                        )}
+                        {b.contactEmail && (
+                          <a href={`mailto:${b.contactEmail}`} className="flex items-center gap-1.5 text-indigo-600 hover:underline">
+                            <Mail className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{b.contactEmail}</span>
+                          </a>
+                        )}
+                        {b.contactPhone && (
+                          <div className="flex items-center gap-1.5 text-slate-700">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h1.28a1 1 0 01.95.68l1.5 4.5a1 1 0 01-.5 1.21l-2.26 1.13a11 11 0 005.52 5.52l1.13-2.26a1 1 0 011.21-.5l4.5 1.5a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" /></svg>
+                            <span>{b.contactPhone}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  )}
+                    {b.otherLinks && b.otherLinks.length > 0 && (
+                      <div className="p-3 rounded-md bg-indigo-50 border border-indigo-100">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-1.5">Explore more</div>
+                        <div className="space-y-1">
+                          {b.otherLinks.slice(0, 4).map((l, i) => (
+                            <a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-indigo-700 hover:underline">
+                              <ChevronRight className="h-3 w-3 shrink-0" /><span className="truncate">{l.label}</span>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </CardContent>
