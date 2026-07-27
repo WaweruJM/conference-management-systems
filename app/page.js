@@ -98,17 +98,26 @@ const ALLOWED_DOC_EXTS = ['.doc', '.docx']
 
 const countWords = (s) => (s || '').trim().split(/\s+/).filter(Boolean).length
 
-// Rotating hero carousel
+// Rotating hero carousel — uses object-cover with center focus so images fill the
+// hero area without pixel-level upscaling artefacts. High-quality images should be
+// at least 1920x800 for best results.
 function HeroCarousel({ images, height = 'h-[420px]' }) {
   const imgs = (images && images.length) ? images.map(p => p.startsWith('/api/') ? p : p) : DEFAULT_HERO_IMAGES
   const [idx, setIdx] = useState(0)
   useEffect(() => { const i = setInterval(() => setIdx(v => (v + 1) % imgs.length), 5000); return () => clearInterval(i) }, [imgs.length])
   return (
-    <div className={`relative w-full ${height} overflow-hidden`}>
+    <div className={`relative w-full ${height} overflow-hidden bg-slate-900`}>
       {imgs.map((src, i) => (
         <div key={i} className={`absolute inset-0 transition-opacity duration-1000 ${i === idx ? 'opacity-100' : 'opacity-0'}`}>
-          <img src={src} alt="" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60" />
+          <img
+            src={src}
+            alt=""
+            loading="eager"
+            decoding="async"
+            style={{ objectPosition: 'center center', imageRendering: 'auto' }}
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/25 to-black/60" />
         </div>
       ))}
     </div>
@@ -295,7 +304,7 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
     <div>
       {/* Hero section with rotating background */}
       <section className="relative">
-        <HeroCarousel images={heroImages} height="h-[560px]" />
+        <HeroCarousel images={heroImages} height="h-[440px]" />
         <div className="absolute inset-0 flex items-center">
           <div className="container mx-auto px-6">
             <div className="max-w-4xl text-white mx-auto text-center">
@@ -1181,12 +1190,14 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
   const [recent, setRecent] = useState([])
   const [assignments, setAssignments] = useState([])
   const [board, setBoard] = useState([])
+  const [boardLoading, setBoardLoading] = useState(true)
   useEffect(() => {
     if (isAdmin || isEditor) api('/analytics/dashboard').then(d => setStats(d)).catch(() => {})
     api('/abstracts?scope=mine').then(d => setRecent((d.abstracts || []).slice(0, 5))).catch(() => {})
     if (isReviewer) api('/reviewer/assignments').then(d => setAssignments(d.assignments || [])).catch(() => {})
     // Load editorial board members for editors / admin views (Chief Editor, Managing Editor, Committee Editors, Section Editors)
     if (isEditor || isAdmin) {
+      setBoardLoading(true)
       Promise.all([
         api('/users?role=CHIEF_EDITOR').catch(() => ({ users: [] })),
         api('/users?role=MANAGING_EDITOR').catch(() => ({ users: [] })),
@@ -1212,6 +1223,7 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
           return { ...u, primaryRole: primary, roles: rs }
         }).sort((a, b) => (priority[a.primaryRole] ?? 99) - (priority[b.primaryRole] ?? 99))
         setBoard(ordered)
+        setBoardLoading(false)
       })
     }
   }, [])
@@ -1382,7 +1394,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
             <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{board.length} member{board.length !== 1 ? 's' : ''}</Badge>
           </CardHeader>
           <CardContent className="pt-4">
-            {board.length === 0 ? (
+            {boardLoading ? (
+              <div className="py-6 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-indigo-500" /><div className="text-xs text-muted-foreground mt-1">Loading editorial board…</div></div>
+            ) : board.length === 0 ? (
               <div className="text-sm text-muted-foreground py-6 text-center">Editorial board is being populated.</div>
             ) : (
               <div className="grid md:grid-cols-2 gap-2">

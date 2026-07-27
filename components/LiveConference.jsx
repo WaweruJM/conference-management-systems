@@ -76,6 +76,26 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
     } catch (e) { toast.error(e.message) }
   }
 
+  // One-click for admin: mark conference live AND immediately join as host with camera.
+  const startBroadcast = async () => {
+    if (!authed) { if (onNeedsSignIn) onNeedsSignIn(); return }
+    setConnecting(true); setError('')
+    try {
+      // Flip live flag
+      const d = await api(`/conferences/${conf.id}/live`, { method: 'POST', body: JSON.stringify({ isLive: true }) })
+      setStatus({ isLive: !!d.conference.isLive, checked: true })
+      // Immediately fetch a host token and open the LiveKit room (camera enabled)
+      const t = await api('/livekit/token', { method: 'POST', body: JSON.stringify({ conferenceId: conf.id }) })
+      setTokenData(t)
+      toast.success('Broadcast started — camera & mic are live')
+    } catch (e) {
+      if (String(e.message || '').toLowerCase().includes('unauth')) {
+        setError('Your session has expired. Please sign in again.')
+        if (onNeedsSignIn) setTimeout(onNeedsSignIn, 1200)
+      } else setError(e.message)
+    } finally { setConnecting(false) }
+  }
+
   if (!status.checked) return <div className="p-8 text-center"><Loader2 className="animate-spin inline mr-2" /> Checking conference status…</div>
 
   // Offline fallback for viewers — show exhibition booths
@@ -117,8 +137,9 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
             </div>
             <div className="flex gap-2 flex-wrap">
               {isAdmin && !status.isLive && (
-                <Button onClick={() => toggleLive(true)} className="bg-white text-red-700 hover:bg-slate-100 shadow-lg font-semibold">
-                  <Radio className="h-4 w-4 mr-1" /> Start live broadcast
+                <Button onClick={startBroadcast} disabled={connecting} className="bg-white text-red-700 hover:bg-slate-100 shadow-lg font-semibold">
+                  {connecting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Radio className="h-4 w-4 mr-1" />}
+                  Start live broadcast (open camera)
                 </Button>
               )}
               {isAdmin && status.isLive && (
