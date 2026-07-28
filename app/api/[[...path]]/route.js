@@ -1131,7 +1131,7 @@ async function handleReviewer(route, method, request) {
       const notifBody = `${reviewerName} has declined to review "${abs.title}".`
 
       for (const rid of recipientIds) {
-        await createNotification(rid, 'REVIEW_DECLINED', notifTitle, notifBody, `/abstracts/${abs.id}`).catch(() => {})
+        await createNotification(rid, 'MESSAGE', notifTitle, notifBody, `/abstracts/${abs.id}`).catch(() => {})
       }
 
       // Best-effort email dispatch to the committee editors

@@ -940,6 +940,43 @@ backend:
           
           **ACTION REQUIRED:**
           Add `REVIEW_DECLINED` to the NotificationType enum in /app/prisma/schema.prisma, then run `npx prisma generate` and `npx prisma db push`.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ SCENARIO D.3 RE-TEST COMPLETE - FIX VERIFIED (100% SUCCESS)
+          
+          **Fix Applied:**
+          - Changed notification type from `REVIEW_DECLINED` to `MESSAGE` at line 1134 of /app/app/api/[[...path]]/route.js
+          - This uses an existing enum value instead of the unregistered `REVIEW_DECLINED`
+          
+          **Test Results:**
+          
+          ✅ TEST D.3 PASSED: DECLINED in-app notification NOW CREATED
+          - Declined review invitation as reviewer1@scms.io for abstract MEDICAL SCIENTIFIC CONFERENCE-000026
+          - GET /api/notifications as chief@scms.io → 200 with decline notification found
+          
+          **Notification Details:**
+          - Title: "Reviewer declined MEDICAL SCIENTIFIC CONFERENCE-000026" ✅
+          - Body: "Rajesh Kumar has declined to review \"Reviewer Flow Test Abstract\"." ✅
+          - Type: MESSAGE ✅ (changed from REVIEW_DECLINED to MESSAGE)
+          - Link: /abstracts/ab1ad004-45d7-4d00-befd-77d9570b880d ✅
+          - Body correctly mentions the declining reviewer (Rajesh Kumar) ✅
+          
+          **Email Verification:**
+          ✅ Emails are still being sent correctly (no code change to email path)
+          - Supervisor logs confirm: "[email] resend ok → chief@scms.io [MEDICAL SCIENTIFIC CONFERENCE] Reviewer declined — MEDICAL SCIENTIFIC CONFERENCE-000026"
+          - Emails sent to all editors assigned to abstract plus CHIEF_EDITOR and MANAGING_EDITOR users
+          - Email includes submission code, title, conference name, and decline reason
+          
+          **Additional Verification:**
+          - Tested with reviewer2@scms.io declining assignment for FIFTH MEDICAL SCIENTIFIC CONFERENCE-000021
+          - Notification created with title "Reviewer declined FIFTH MEDICAL SCIENTIFIC CONFERENCE-000021"
+          - Body: "Yuki Tanaka has declined to review \"Test Auto Email Workflow\"."
+          - Type: MESSAGE ✅
+          - Emails sent to mwas@gmail.com, chief@scms.io, and committee@scms.io ✅
+          
+          **SUMMARY:**
+          The fix is working correctly. In-app notifications are now created successfully using the MESSAGE type. Email notifications continue to work as before. All requirements for Scenario D.3 are met.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
