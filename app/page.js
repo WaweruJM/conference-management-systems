@@ -786,6 +786,15 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
   const [role, setRole] = useState(reviewerInvite ? 'EXTERNAL_REVIEWER' : 'AUTHOR')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [featuredConf, setFeaturedConf] = useState(null)
+
+  useEffect(() => {
+    if (mode === 'register' && !reviewerInvite) {
+      api('/public/config').then(d => setFeaturedConf(d.conference)).catch(() => {})
+    }
+  }, [mode, reviewerInvite])
+
+  const attendeeGateClosed = mode === 'register' && role === 'ATTENDEE' && featuredConf && !featuredConf.attendeeRegistrationOpen
 
   const isReviewerInvite = !!reviewerInvite
 
@@ -810,6 +819,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
       if (!firstName.trim()) return setError('Please enter your first name.')
       if (!lastName.trim()) return setError('Please enter your last name.')
       if (isReviewerInvite && !specialty.trim()) return setError('Please enter your area of specialty.')
+      if (attendeeGateClosed) return setError('Attendee registration is not yet open. Please choose Author or Sponsor / Industry / Pharma instead, or check back closer to the conference date.')
     }
     setLoading(true)
     try {
@@ -891,6 +901,17 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                     <p className="text-[11px] text-muted-foreground mt-1">
                       <span className="font-medium">Are you a peer reviewer?</span> External reviewers are added by invitation only. If you have received an email invitation, please use the link in that email.
                     </p>
+                    {attendeeGateClosed && (
+                      <div role="alert" className="mt-3 p-3 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-sm flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
+                        <div>
+                          <div className="font-semibold">Attendee registration is not yet open</div>
+                          <div className="text-xs mt-0.5">
+                            {featuredConf?.name ? `${featuredConf.name} organisers` : 'The organisers'} have not opened attendee registration yet. It typically opens approximately one month before the conference. Please choose <span className="font-medium">Author</span> or <span className="font-medium">Sponsor / Industry / Pharma</span>, or check back closer to the event.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -899,7 +920,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
             <div><Label>Password</Label><Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }} required /></div>
           </CardContent>
           <CardFooter className="flex-col gap-2 items-stretch">
-            <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700">
+            <Button type="submit" disabled={loading || attendeeGateClosed} className="bg-indigo-600 hover:bg-indigo-700">
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {mode === 'login' ? 'Sign in' : (isReviewerInvite ? 'Accept & create reviewer account' : 'Create account')}
             </Button>
@@ -3235,6 +3256,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
   const submit = async () => {
     setError('')
     if (type === 'ATTENDEE') {
+      if (!conf.attendeeRegistrationOpen) return setError('Attendee registration is not yet open. The organisers will open it approximately one month before the conference. Please try again later, or register as an Author or Sponsor.')
       if (!form.fullName || !form.rank || !form.unit || !form.affiliation) return setError('Full name, rank, unit and affiliation are required (used on certificate & name tag).')
     }
     if (type === 'SPONSOR') {
@@ -3358,7 +3380,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Complete registration</Button>
+          <Button onClick={submit} disabled={saving || (type === 'ATTENDEE' && !conf.attendeeRegistrationOpen)} className="bg-indigo-600 hover:bg-indigo-700">{saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Complete registration</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

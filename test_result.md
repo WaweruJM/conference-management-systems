@@ -739,6 +739,69 @@ backend:
           **SUMMARY:**
           The external reviewer flow is working end-to-end. The critical fix (abstractId persistence + auto-assignment on registration) is verified and working correctly. The 502 error on invitation is expected (Resend rejects example.com) but does not affect the flow since the invitation is created in the database before the email is attempted.
 
+  - task: "Attendee registration gate at POST /auth/register"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /auth/register now blocks role=ATTENDEE when featured conference has attendeeRegistrationOpen=false (returns 409 with friendly message). PUT /conferences/:id/attendee-registration toggles the gate (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR, CHIEF_LOGISTICS). Does not affect AUTHOR, INDUSTRY_PARTNER, or EXTERNAL_REVIEWER signups."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL ATTENDEE REGISTRATION GATE TESTS PASSED (8/8 = 100% SUCCESS RATE)
+          
+          **Test Scenarios:**
+          
+          **Step 1 — Baseline setup (PASS):**
+          ✅ Admin login as admin@scms.io → 200 with JWT token
+          ✅ GET /api/public/config → 200, featured conference: THE FIFTH MEDICAL SCIENTIFIC CONFERENCE 2027
+          ✅ PUT /api/conferences/{id}/attendee-registration with {"open": false} → 200
+          ✅ Conference.attendeeRegistrationOpen set to false
+          
+          **Step 2 — ATTENDEE signup blocked when gate closed (PASS):**
+          ✅ POST /api/auth/register with role=ATTENDEE → 409 (correctly blocked)
+          ✅ Error message: "Attendee registration is not yet open. The organisers will announce the opening date approximately one month before the conference. You can still register as an Author or Sponsor / Industry Partner in the meantime."
+          ✅ Error message contains expected text "Attendee registration is not yet open"
+          
+          **Step 3 — AUTHOR signup works when gate closed (PASS):**
+          ✅ POST /api/auth/register with role=AUTHOR → 200 with JWT token
+          ✅ Gate does NOT affect AUTHOR signups
+          
+          **Step 4 — INDUSTRY_PARTNER signup works when gate closed (PASS):**
+          ✅ POST /api/auth/register with role=INDUSTRY_PARTNER → 200 with JWT token
+          ✅ Gate does NOT affect INDUSTRY_PARTNER signups
+          
+          **Step 5 — Toggle gate ON (PASS):**
+          ✅ PUT /api/conferences/{id}/attendee-registration with {"open": true} → 200
+          ✅ Conference.attendeeRegistrationOpen set to true
+          
+          **Step 6 — ATTENDEE signup succeeds when gate open (PASS):**
+          ✅ POST /api/auth/register with role=ATTENDEE → 200 with JWT token
+          ✅ ATTENDEE signup works when gate is open
+          
+          **Step 7 — Reset gate to false (PASS):**
+          ✅ PUT /api/conferences/{id}/attendee-registration with {"open": false} → 200
+          ✅ Conference.attendeeRegistrationOpen reset to false
+          
+          **Step 8 — Regression: Conference-level registration gate (PASS):**
+          ✅ Created test user as AUTHOR → 200
+          ✅ POST /api/conferences/{id}/register with type=ATTENDEE → 409 (correctly blocked)
+          ✅ Error message: "Attendee registration is not yet open. It will be opened by the organisers around 18th February 2027 (one month before the conference)."
+          ✅ Existing conference-level registration gate still working correctly
+          
+          **SUMMARY:**
+          The attendee registration gate is working correctly at both levels:
+          1. POST /api/auth/register blocks ATTENDEE role signups when attendeeRegistrationOpen=false
+          2. POST /api/conferences/:id/register blocks ATTENDEE type registrations when attendeeRegistrationOpen=false
+          3. Gate does NOT affect AUTHOR, INDUSTRY_PARTNER, or EXTERNAL_REVIEWER signups
+          4. PUT /api/conferences/:id/attendee-registration toggle works correctly
+          5. Error messages are friendly and informative
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -803,9 +866,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Full external reviewer flow: POST /reviewer-invitations with abstractId → POST /auth/register with inviteToken → GET /reviewer/assignments returns the abstract → GET /abstracts/:id accessible → POST /assignments/:id/review submits report"
-    - "ReviewerInvitation now persists abstractId; ReviewAssignment auto-created on registration"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1576,3 +1637,50 @@ agent_communication:
       
       **Summary:**
       The external reviewer flow is working end-to-end. The critical fix (abstractId persistence + auto-assignment on registration) is verified and working correctly. All 6 steps of the flow passed, plus regressions. No code changes made - verification only.
+
+  - agent: "testing"
+    message: |
+      ✅ ATTENDEE REGISTRATION GATE VERIFICATION COMPLETE - ALL TESTS PASSED (8/8 = 100%)
+      
+      **Test Scope:** Verify the new attendee registration gate feature added to POST /api/auth/register.
+      
+      **Implementation verified:**
+      1. POST /api/auth/register now checks if role=ATTENDEE and featured conference has attendeeRegistrationOpen=false
+      2. If gate is closed, returns 409 with friendly error message
+      3. Gate does NOT affect AUTHOR, INDUSTRY_PARTNER, or EXTERNAL_REVIEWER signups
+      4. PUT /api/conferences/:id/attendee-registration toggles the gate (admin/chief roles only)
+      5. Existing conference-level registration gate at POST /api/conferences/:id/register still works
+      
+      **Test Results:**
+      
+      ✅ Step 1 — Baseline setup:
+         - Admin login → 200
+         - GET featured conference → THE FIFTH MEDICAL SCIENTIFIC CONFERENCE 2027
+         - PUT attendee-registration {"open": false} → 200
+      
+      ✅ Step 2 — ATTENDEE signup blocked when gate closed:
+         - POST /api/auth/register with role=ATTENDEE → 409
+         - Error: "Attendee registration is not yet open. The organisers will announce the opening date approximately one month before the conference. You can still register as an Author or Sponsor / Industry Partner in the meantime."
+      
+      ✅ Step 3 — AUTHOR signup works when gate closed:
+         - POST /api/auth/register with role=AUTHOR → 200 with JWT token
+      
+      ✅ Step 4 — INDUSTRY_PARTNER signup works when gate closed:
+         - POST /api/auth/register with role=INDUSTRY_PARTNER → 200 with JWT token
+      
+      ✅ Step 5 — Toggle gate ON:
+         - PUT attendee-registration {"open": true} → 200
+      
+      ✅ Step 6 — ATTENDEE signup succeeds when gate open:
+         - POST /api/auth/register with role=ATTENDEE → 200 with JWT token
+      
+      ✅ Step 7 — Reset gate to false:
+         - PUT attendee-registration {"open": false} → 200
+      
+      ✅ Step 8 — Regression: Conference-level registration gate:
+         - Created test user as AUTHOR → 200
+         - POST /api/conferences/:id/register with type=ATTENDEE → 409
+         - Error: "Attendee registration is not yet open. It will be opened by the organisers around 18th February 2027 (one month before the conference)."
+      
+      **Summary:**
+      The attendee registration gate is working correctly at both levels (auth/register and conferences/:id/register). Gate properly blocks ATTENDEE signups when closed, allows them when open, and does not affect other roles. Error messages are friendly and informative. No code changes made - verification only.

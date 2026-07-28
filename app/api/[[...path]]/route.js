@@ -44,6 +44,19 @@ async function handleAuth(route, method, request) {
       matchingInvite = await prisma.reviewerInvitation.findUnique({ where: { token: inviteToken } })
       if (matchingInvite) actualRole = 'EXTERNAL_REVIEWER'
     }
+    // Attendee gate: signing up as a Conference Attendee is only permitted when the
+    // organisers have opened attendee registration on the featured/latest conference.
+    if (actualRole === 'ATTENDEE') {
+      const gateConf = await prisma.conference.findFirst({ where: { isFeatured: true } })
+        || await prisma.conference.findFirst({ where: { status: { not: 'DRAFT' } }, orderBy: { updatedAt: 'desc' } })
+        || await prisma.conference.findFirst({ orderBy: { createdAt: 'desc' } })
+      if (!gateConf || !gateConf.attendeeRegistrationOpen) {
+        return err(
+          'Attendee registration is not yet open. The organisers will announce the opening date approximately one month before the conference. You can still register as an Author or Sponsor / Industry Partner in the meantime.',
+          409,
+        )
+      }
+    }
     const user = await prisma.user.create({
       data: {
         email,
