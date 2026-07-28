@@ -1680,7 +1680,8 @@ async function handleConferenceBook(route, method, request) {
   const cfgMatch = route.match(/^\/conferences\/([^\/]+)\/book-config$/)
   if (cfgMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // Reading is allowed for any editorial-side role (Committee Editors get a read-only view in the UI)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Forbidden', 403)
     let book = await prisma.conferenceBook.findUnique({ where: { conferenceId: cfgMatch[1] } })
     if (!book) {
       book = await prisma.conferenceBook.create({
@@ -1792,7 +1793,8 @@ async function handleSurveys(route, method, request) {
   const listMatch = route.match(/^\/conferences\/([^\/]+)\/surveys$/)
   if (listMatch && method === 'GET') {
     const user = await getCurrentUser(request)
-    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // Reading is allowed for any editorial role (Committee Editors get a read-only view in the UI)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return err('Forbidden', 403)
     const surveys = await prisma.feedbackSurvey.findMany({
       where: { conferenceId: listMatch[1] },
       include: { _count: { select: { responses: true } } },
@@ -2378,16 +2380,24 @@ async function handleAttendeeRegistrationToggle(route, method, request) {
         },
       })
     }
-    // Optional email broadcast (best-effort, non-blocking)
+    // Optional email broadcast (best-effort, non-blocking).
+    // Throttled to stay within Resend's 10 req/sec rate limit — batches of 8 with a
+    // 1.1s pause between batches. Runs asynchronously so the API response is not held up.
     try {
       const { sendEmail } = await import('@/lib/email')
       const { renderEmailHtml } = await import('@/lib/email-templates')
       const subject = `Attendee registration open — ${conf.name}`
       const bodyText = `Attendee registration for ${conf.name} is now open. Please log in to complete your registration.`
       const html = renderEmailHtml({ subject, body: bodyText, conferenceName: conf.name })
-      for (const u of allUsers) {
-        if (u.email) sendEmail({ to: u.email, subject, html, text: bodyText }).catch(() => {})
-      }
+      const BATCH = 8
+      const PAUSE_MS = 1100
+      ;(async () => {
+        for (let i = 0; i < allUsers.length; i += BATCH) {
+          const slice = allUsers.slice(i, i + BATCH).filter(u => u.email)
+          await Promise.all(slice.map(u => sendEmail({ to: u.email, subject, html, text: bodyText }).catch(() => {})))
+          if (i + BATCH < allUsers.length) await new Promise(r => setTimeout(r, PAUSE_MS))
+        }
+      })().catch(() => {})
     } catch (e) { /* non-fatal */ }
   }
   return ok({ conference: conf })

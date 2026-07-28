@@ -950,6 +950,12 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
   const isAdmin = roles.includes('SYSTEM_ADMIN')
   const isEditor = roles.some(r => ['MANAGING_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR'].includes(r))
   const isChiefEditor = roles.includes('CHIEF_EDITOR')
+  const isManagingEditor = roles.includes('MANAGING_EDITOR')
+  // A "committee editor only" user has ONLY COMMITTEE_EDITOR / COMMITTEE_MEMBER roles
+  // (with optional AUTHOR / reviewer) — NO chief-editor, managing-editor or system-admin escalation.
+  // Both COMMITTEE_EDITOR and COMMITTEE_MEMBER surface as "Committee Editor" in the UI (ROLE_LABELS).
+  const hasCommitteeRole = roles.includes('COMMITTEE_EDITOR') || roles.includes('COMMITTEE_MEMBER')
+  const isCommitteeEditorOnly = hasCommitteeRole && !isChiefEditor && !isManagingEditor && !roles.includes('SYSTEM_ADMIN')
   const isLogistics = roles.some(r => ['CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r))
   const isChiefLogistics = roles.includes('CHIEF_LOGISTICS')
   const isSponsor = roles.includes('INDUSTRY_PARTNER')
@@ -1014,12 +1020,12 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     // Dashboard is hidden for pure logistics or pure sponsor users — they have their
     // own landing hub (Logistics Boardroom / Sponsor Dashboard).
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, show: !isLogisticsOnly && !isSponsorOnly, group: 'core' },
-    // Reviewer-focused (appears near top for reviewers)
-    { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
     // Editor-focused
     { key: 'editorial', label: 'Editorial Office', icon: ClipboardCheck, show: isEditor || isAdmin, group: 'editorial' },
     { key: 'announcements', label: 'Editors\' Chat', icon: MessageSquare, show: isEditor || isAdmin, badge: chatUnread, group: 'editorial' },
     { key: 'workspace', label: 'My Editor Workspace', icon: Briefcase, show: isEditor || isAdmin, group: 'editorial' },
+    // Reviewer-focused — placed AFTER My Editor Workspace per editor sidebar preference
+    { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
     // Logistics-focused
     { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
     // Sponsor Dashboard (sponsors + admin + chief logistics)
@@ -1044,8 +1050,8 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     { key: 'surveys', label: 'Feedback Surveys', icon: ListChecks, show: isAdmin || isEditor, group: 'admin' },
     { key: 'analytics', label: 'Analytics', icon: BarChartIcon, show: isEditor || isAdmin, group: 'admin' },
     { key: 'users', label: 'User Management', icon: Users, show: isAdmin, group: 'admin' },
-    // Delegates hidden from pure logistics users
-    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isEditor, group: 'admin' },
+    // Delegates: System Admin + Chief Editor only (hidden from Managing/Committee Editors per role policy)
+    { key: 'delegates', label: 'Delegates', icon: Users, show: isAdmin || isChiefEditor, group: 'admin' },
     { key: 'audit', label: 'Audit Log', icon: ShieldCheck, show: isAdmin, group: 'admin' },
   ]
 
@@ -1120,7 +1126,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
           </div>
         </header>
         <div className="flex-1 overflow-auto">
-          <ViewRouter route={route} setRoute={setRoute} user={user} setUser={setUser} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} featured={featured} />
+          <ViewRouter route={route} setRoute={setRoute} user={user} setUser={setUser} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} isCommitteeEditorOnly={isCommitteeEditorOnly} featured={featured} />
         </div>
         {/* App footer with conference theme */}
         <footer className="border-t bg-slate-900 text-slate-200 px-6 py-3 text-center text-sm italic">
@@ -1166,7 +1172,7 @@ function NotificationsBell({ notifs, onOpen, onReadAll, unread }) {
 }
 
 // ============ VIEW ROUTER ============
-function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isReviewer, featured }) {
+function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isReviewer, isCommitteeEditorOnly, featured }) {
   if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} user={user} featured={featured} />
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} />
@@ -1177,9 +1183,9 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'conferences') return <Conferences />
   if (route.name === 'conference-admin') return <ConferenceAdmin />
   if (route.name === 'booth-admin') return <BoothAdmin />
-  if (route.name === 'programme-admin') return <ProgrammeAdmin />
-  if (route.name === 'book-admin') return <ConferenceBookAdmin />
-  if (route.name === 'surveys') return <SurveyAdmin />
+  if (route.name === 'programme-admin') return <ProgrammeAdmin readOnly={isCommitteeEditorOnly} />
+  if (route.name === 'book-admin') return <ConferenceBookAdmin readOnly={isCommitteeEditorOnly} />
+  if (route.name === 'surveys') return <SurveyAdmin readOnly={isCommitteeEditorOnly} />
   if (route.name === 'programme') return <Programme />
   if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
   if (route.name === 'announcements') return <AnnouncementsBoard user={user} channel="EDITORIAL" />
@@ -1309,8 +1315,56 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         </Card>
       )}
 
-      {/* Reviewer summary + assigned abstracts (shown ABOVE recent submissions if reviewer) */}
-      {isReviewer && (
+      {/* Editorial Board — visible on editor dashboard (excludes System Admin). Moved to
+          appear IMMEDIATELY after the welcome header per editorial layout preference. */}
+      {isEditorView && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 bg-gradient-to-r from-indigo-50 to-white flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-indigo-600" />
+              <div>
+                <CardTitle className="text-lg">Editorial Board</CardTitle>
+                <CardDescription>Chief Editor, Committee Editors and other editorial roles</CardDescription>
+              </div>
+            </div>
+            <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{board.length} member{board.length !== 1 ? 's' : ''}</Badge>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {boardLoading ? (
+              <div className="py-6 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-indigo-500" /><div className="text-xs text-muted-foreground mt-1">Loading editorial board…</div></div>
+            ) : board.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center">Editorial board is being populated.</div>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-2">
+                {board.map(m => {
+                  const rColor = m.primaryRole === 'CHIEF_EDITOR' ? 'bg-fuchsia-600'
+                    : m.primaryRole === 'MANAGING_EDITOR' ? 'bg-indigo-600'
+                    : m.primaryRole === 'COMMITTEE_EDITOR' || m.primaryRole === 'COMMITTEE_MEMBER' ? 'bg-teal-600'
+                    : 'bg-slate-600'
+                  return (
+                    <div key={m.id} className="flex items-center gap-3 border rounded-lg p-3 bg-white hover:shadow-sm transition">
+                      <div className={`h-10 w-10 rounded-full ${rColor} text-white flex items-center justify-center font-semibold shrink-0`}>
+                        {(m.firstName?.[0] || '').toUpperCase()}{(m.lastName?.[0] || '').toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">
+                          {m.title ? m.title + ' ' : ''}{m.firstName} {m.lastName}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">{m.institution?.name || m.affiliation || m.email}</div>
+                      </div>
+                      <Badge className={`${rColor} text-white text-[10px] shrink-0`}>{roleLabel(m.primaryRole)}</Badge>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Reviewer summary + assigned abstracts — only for PURE reviewers (not editors).
+          Editors have their assignments on "My Editor Workspace" instead. */}
+      {isReviewer && !isEditorView && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatBadge label="Pending invitations" value={pendingInv} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
@@ -1390,52 +1444,6 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
           <StatCard icon={ClipboardCheck} label="Reviews completed" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="text-emerald-600" />
           <StatCard icon={Calendar} label="Registrations" value={stats.totalRegs} color="text-amber-600" />
         </div>
-      )}
-
-      {/* Editorial Board — visible on editor dashboard (excludes System Admin) */}
-      {isEditorView && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-3 bg-gradient-to-r from-indigo-50 to-white flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-indigo-600" />
-              <div>
-                <CardTitle className="text-lg">Editorial Board</CardTitle>
-                <CardDescription>Chief Editor, Committee Editors and other editorial roles</CardDescription>
-              </div>
-            </div>
-            <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{board.length} member{board.length !== 1 ? 's' : ''}</Badge>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {boardLoading ? (
-              <div className="py-6 text-center"><Loader2 className="h-6 w-6 mx-auto animate-spin text-indigo-500" /><div className="text-xs text-muted-foreground mt-1">Loading editorial board…</div></div>
-            ) : board.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-6 text-center">Editorial board is being populated.</div>
-            ) : (
-              <div className="grid md:grid-cols-2 gap-2">
-                {board.map(m => {
-                  const rColor = m.primaryRole === 'CHIEF_EDITOR' ? 'bg-fuchsia-600'
-                    : m.primaryRole === 'MANAGING_EDITOR' ? 'bg-indigo-600'
-                    : m.primaryRole === 'COMMITTEE_EDITOR' || m.primaryRole === 'COMMITTEE_MEMBER' ? 'bg-teal-600'
-                    : 'bg-slate-600'
-                  return (
-                    <div key={m.id} className="flex items-center gap-3 border rounded-lg p-3 bg-white hover:shadow-sm transition">
-                      <div className={`h-10 w-10 rounded-full ${rColor} text-white flex items-center justify-center font-semibold shrink-0`}>
-                        {(m.firstName?.[0] || '').toUpperCase()}{(m.lastName?.[0] || '').toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">
-                          {m.title ? m.title + ' ' : ''}{m.firstName} {m.lastName}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground truncate">{m.institution?.name || m.affiliation || m.email}</div>
-                      </div>
-                      <Badge className={`${rColor} text-white text-[10px] shrink-0`}>{roleLabel(m.primaryRole)}</Badge>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       )}
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -5391,7 +5399,7 @@ function BoothEditDialog({ booth, onClose, onDone }) {
 }
 
 // ============ CONFERENCE BOOK ADMIN ============
-function ConferenceBookAdmin() {
+function ConferenceBookAdmin({ readOnly = false }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   const [book, setBook] = useState(null)
@@ -5455,9 +5463,16 @@ function ConferenceBookAdmin() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2"><BookOpen className="h-7 w-7 text-indigo-600" /> Conference Book</h1>
           <p className="text-muted-foreground">Configure sections and generate the official conference book PDF (cover, messages, programme, abstracts, sponsors).</p>
+          {readOnly && (
+            <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[11px] px-2 py-1">
+              <AlertCircle className="h-3 w-3" /> Read-only view — Committee Editors can review and download the book but cannot edit it.
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button>
+          {!readOnly && (
+            <Button variant="outline" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button>
+          )}
           <Button onClick={generate} disabled={downloading} className="bg-indigo-600 hover:bg-indigo-700">
             {downloading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />} Generate PDF
           </Button>
@@ -5480,11 +5495,11 @@ function ConferenceBookAdmin() {
             {(book.sections || []).map((s, i) => (
               <div key={s.key} className="flex items-center gap-2 p-2 border rounded">
                 <div className="flex flex-col">
-                  <button onClick={() => moveSection(i, -1)} className="text-xs text-slate-400 hover:text-slate-700" disabled={i === 0}>▲</button>
-                  <button onClick={() => moveSection(i, 1)} className="text-xs text-slate-400 hover:text-slate-700" disabled={i === book.sections.length - 1}>▼</button>
+                  <button onClick={() => moveSection(i, -1)} className="text-xs text-slate-400 hover:text-slate-700 disabled:opacity-40" disabled={readOnly || i === 0}>▲</button>
+                  <button onClick={() => moveSection(i, 1)} className="text-xs text-slate-400 hover:text-slate-700 disabled:opacity-40" disabled={readOnly || i === book.sections.length - 1}>▼</button>
                 </div>
                 <div className="flex-1 text-sm">{s.label}</div>
-                <input type="checkbox" checked={!!s.enabled} onChange={() => toggleSection(s.key)} className="h-4 w-4" />
+                <input type="checkbox" checked={!!s.enabled} onChange={() => toggleSection(s.key)} className="h-4 w-4" disabled={readOnly} />
               </div>
             ))}
           </CardContent>
@@ -5495,35 +5510,35 @@ function ConferenceBookAdmin() {
           <Card>
             <CardHeader><CardTitle className="text-base">Cover</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              <div><Label>Cover title</Label><Input value={book.coverTitle || ''} onChange={e => update('coverTitle', e.target.value)} placeholder="Overrides conference name on the cover" /></div>
-              <div><Label>Cover subtitle</Label><Input value={book.coverSubtitle || ''} onChange={e => update('coverSubtitle', e.target.value)} /></div>
+              <div><Label>Cover title</Label><Input value={book.coverTitle || ''} onChange={e => update('coverTitle', e.target.value)} placeholder="Overrides conference name on the cover" readOnly={readOnly} disabled={readOnly} /></div>
+              <div><Label>Cover subtitle</Label><Input value={book.coverSubtitle || ''} onChange={e => update('coverSubtitle', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle className="text-base">Chief Guest</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Name</Label><Input value={book.chiefGuestName || ''} onChange={e => update('chiefGuestName', e.target.value)} placeholder="e.g. Prof. Jane Doe" /></div>
-                <div><Label>Title / Designation</Label><Input value={book.chiefGuestTitle || ''} onChange={e => update('chiefGuestTitle', e.target.value)} placeholder="e.g. President, World Medical Society" /></div>
+                <div><Label>Name</Label><Input value={book.chiefGuestName || ''} onChange={e => update('chiefGuestName', e.target.value)} placeholder="e.g. Prof. Jane Doe" readOnly={readOnly} disabled={readOnly} /></div>
+                <div><Label>Title / Designation</Label><Input value={book.chiefGuestTitle || ''} onChange={e => update('chiefGuestTitle', e.target.value)} placeholder="e.g. President, World Medical Society" readOnly={readOnly} disabled={readOnly} /></div>
               </div>
-              <div><Label>Message</Label><Textarea rows={5} value={book.chiefGuestMessage || ''} onChange={e => update('chiefGuestMessage', e.target.value)} /></div>
+              <div><Label>Message</Label><Textarea rows={5} value={book.chiefGuestMessage || ''} onChange={e => update('chiefGuestMessage', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle className="text-base">Conference Chair</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Name</Label><Input value={book.chairName || ''} onChange={e => update('chairName', e.target.value)} /></div>
-                <div><Label>Title</Label><Input value={book.chairTitle || ''} onChange={e => update('chairTitle', e.target.value)} /></div>
+                <div><Label>Name</Label><Input value={book.chairName || ''} onChange={e => update('chairName', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
+                <div><Label>Title</Label><Input value={book.chairTitle || ''} onChange={e => update('chairTitle', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
               </div>
-              <div><Label>Message</Label><Textarea rows={5} value={book.chairMessage || ''} onChange={e => update('chairMessage', e.target.value)} /></div>
+              <div><Label>Message</Label><Textarea rows={5} value={book.chairMessage || ''} onChange={e => update('chairMessage', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle className="text-base">Foreword & Acknowledgements</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              <div><Label>Foreword</Label><Textarea rows={4} value={book.foreword || ''} onChange={e => update('foreword', e.target.value)} /></div>
-              <div><Label>Acknowledgements</Label><Textarea rows={4} value={book.acknowledgements || ''} onChange={e => update('acknowledgements', e.target.value)} /></div>
+              <div><Label>Foreword</Label><Textarea rows={4} value={book.foreword || ''} onChange={e => update('foreword', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
+              <div><Label>Acknowledgements</Label><Textarea rows={4} value={book.acknowledgements || ''} onChange={e => update('acknowledgements', e.target.value)} readOnly={readOnly} disabled={readOnly} /></div>
             </CardContent>
           </Card>
           <Card className="bg-indigo-50/50">
@@ -5544,7 +5559,7 @@ function ConferenceBookAdmin() {
 }
 
 // ============ SURVEY ADMIN ============
-function SurveyAdmin() {
+function SurveyAdmin({ readOnly = false }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   const [surveys, setSurveys] = useState([])
@@ -5586,8 +5601,15 @@ function SurveyAdmin() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2"><ListChecks className="h-7 w-7 text-indigo-600" /> Feedback Surveys</h1>
           <p className="text-muted-foreground">Create daily feedback surveys (up to 10 questions) and email them to delegates.</p>
+          {readOnly && (
+            <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[11px] px-2 py-1">
+              <AlertCircle className="h-3 w-3" /> Read-only view — Committee Editors can review surveys and results but cannot create, send or edit them.
+            </div>
+          )}
         </div>
-        <Button onClick={create} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New survey</Button>
+        {!readOnly && (
+          <Button onClick={create} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New survey</Button>
+        )}
       </div>
 
       <div className="mb-4">
@@ -5614,15 +5636,19 @@ function SurveyAdmin() {
                 </div>
               </div>
               <div className="flex flex-col gap-1 w-40">
-                <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                {!readOnly && <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>}
                 <Button size="sm" variant="outline" onClick={() => setViewingAnalytics(s)}><BarChart3 className="h-3 w-3 mr-1" />Results</Button>
-                <Button size="sm" variant="outline" onClick={() => sendTest(s)} disabled={sendingId === s.id + ':test'}>
-                  {sendingId === s.id + ':test' ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Mail className="h-3 w-3 mr-1" />}Send test
-                </Button>
-                <Button size="sm" onClick={() => send(s)} disabled={sendingId === s.id} className="bg-indigo-600 hover:bg-indigo-700">
-                  {sendingId === s.id ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Sending…</> : <><Send className="h-3 w-3 mr-1" />Send to all</>}
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => remove(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                {!readOnly && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => sendTest(s)} disabled={sendingId === s.id + ':test'}>
+                      {sendingId === s.id + ':test' ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Mail className="h-3 w-3 mr-1" />}Send test
+                    </Button>
+                    <Button size="sm" onClick={() => send(s)} disabled={sendingId === s.id} className="bg-indigo-600 hover:bg-indigo-700">
+                      {sendingId === s.id ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Sending…</> : <><Send className="h-3 w-3 mr-1" />Send to all</>}
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => remove(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -5947,7 +5973,7 @@ function PublicSurveyPage({ token, onDone }) {
 }
 
 // ============ PROGRAMME ADMIN ============
-function ProgrammeAdmin() {
+function ProgrammeAdmin({ readOnly = false }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
   const [sessions, setSessions] = useState([])
@@ -6000,20 +6026,31 @@ function ProgrammeAdmin() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Calendar className="h-7 w-7 text-indigo-600" /> Programme Admin</h1>
           <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts to build the daily programme.</p>
+          {readOnly && (
+            <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[11px] px-2 py-1">
+              <AlertCircle className="h-3 w-3" /> Read-only view — Committee Editors can review the programme but cannot create or edit sessions.
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Select value={confId} onValueChange={setConfId}>
             <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
             <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button onClick={createSession} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New session</Button>
+          {!readOnly && (
+            <Button onClick={createSession} disabled={!confId} className="bg-indigo-600 hover:bg-indigo-700"><Plus className="h-4 w-4 mr-1" /> New session</Button>
+          )}
         </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-6">
           {loading && <div className="text-center py-6"><Loader2 className="animate-spin inline" /></div>}
-          {!loading && sessions.length === 0 && <EmptyState label="No sessions scheduled yet" onAction={createSession} actionLabel="Create first session" />}
+          {!loading && sessions.length === 0 && (
+            readOnly
+              ? <EmptyState label="No sessions scheduled yet" />
+              : <EmptyState label="No sessions scheduled yet" onAction={createSession} actionLabel="Create first session" />
+          )}
           {days.map(([key, g]) => (
             <div key={key}>
               <div className="mb-2 pb-1 border-b border-indigo-200 flex items-baseline gap-3">
@@ -6036,9 +6073,13 @@ function ProgrammeAdmin() {
                           </div>
                         </div>
                         <div className="flex gap-1">
-                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
-                          <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3" /></Button>
-                          <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                          {!readOnly && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                              <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3" /></Button>
+                              <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                            </>
+                          )}
                         </div>
                       </div>
                       {(s.items || []).length > 0 && (
@@ -6051,7 +6092,9 @@ function ProgrammeAdmin() {
                                 <div className="text-sm">{i.abstract.title} <span className="text-xs text-muted-foreground">({i.abstract.submissionCode})</span></div>
                                 <div className="text-[10px] text-muted-foreground">{(i.abstract.authors || []).map(a => a.fullName).join(', ')}</div>
                               </div>
-                              <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
+                              {!readOnly && (
+                                <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
+                              )}
                             </div>
                           ))}
                         </div>
