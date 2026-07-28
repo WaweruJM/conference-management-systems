@@ -1394,10 +1394,17 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
                 <div className="grid gap-2">
                   {assignments.slice(0, 5).map(a => {
                     const isPending = a.invitationStatus === 'PENDING'
+                    const isDeclined = a.invitationStatus === 'DECLINED'
                     const done = !!a.report
+                    // Only navigate to the abstract detail once the reviewer has ACCEPTED
+                    const canOpen = !isPending && !isDeclined
                     return (
-                      <div key={a.id} className={`border rounded-lg p-3 flex items-center gap-3 hover:shadow-sm transition cursor-pointer ${isPending ? 'bg-amber-50/60 border-amber-200' : done ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`} onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>
-                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
+                      <div
+                        key={a.id}
+                        className={`border rounded-lg p-3 flex items-center gap-3 transition ${canOpen ? 'hover:shadow-sm cursor-pointer' : 'cursor-default opacity-90'} ${isPending ? 'bg-amber-50/60 border-amber-200' : isDeclined ? 'bg-rose-50/50 border-rose-200' : done ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`}
+                        onClick={() => { if (canOpen) setRoute({ name: 'abstract', id: a.abstract.id }) }}
+                      >
+                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : isDeclined ? 'bg-rose-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
                           <Award className="h-5 w-5" />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1405,6 +1412,7 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
                             <span className="text-xs font-mono font-semibold text-slate-500">{a.abstract.submissionCode}</span>
                             <Badge variant="outline" className="text-[10px]">{a.reviewType?.replace('_', ' ')}</Badge>
                             {isPending ? <Badge className="bg-amber-500 text-white text-[10px]">INVITATION PENDING</Badge>
+                              : isDeclined ? <Badge className="bg-rose-500 text-white text-[10px]">YOU DECLINED</Badge>
                               : done ? <Badge className="bg-emerald-600 text-[10px]">SUBMITTED</Badge>
                               : <Badge className="bg-purple-600 text-[10px]">ACCEPTED — REVIEW DUE</Badge>}
                           </div>
@@ -1414,8 +1422,14 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
                             {a.dueDate && ` · Due ${formatDate(a.dueDate)}`}
                             {a.completedAt && ` · Completed ${formatDate(a.completedAt)}`}
                           </div>
+                          {isPending && (
+                            <div className="text-[10px] text-amber-800 mt-1">Respond in "My Review workspace" to view the abstract.</div>
+                          )}
+                          {isDeclined && (
+                            <div className="text-[10px] text-rose-800 mt-1">You declined this invitation — editors have been notified.</div>
+                          )}
                         </div>
-                        <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />
+                        {canOpen && <ChevronRight className="h-5 w-5 text-slate-400 shrink-0" />}
                       </div>
                     )
                   })}
@@ -3043,13 +3057,14 @@ function ReviewerWorkspace({ setRoute }) {
         <div className="grid gap-3">
           {visible.map(a => {
             const isPending = a.invitationStatus === 'PENDING'
+            const isDeclined = a.invitationStatus === 'DECLINED'
             const done = !!a.report
             return (
-              <Card key={a.id} className={`overflow-hidden ${isPending ? 'ring-1 ring-amber-200' : done ? 'ring-1 ring-emerald-200' : ''}`}>
+              <Card key={a.id} className={`overflow-hidden ${isPending ? 'ring-1 ring-amber-200' : isDeclined ? 'ring-1 ring-rose-200 opacity-80' : done ? 'ring-1 ring-emerald-200' : ''}`}>
                 <CardContent className="p-5">
                   <div className="flex justify-between items-start gap-3 flex-wrap">
                     <div className="flex gap-3 flex-1 min-w-[300px]">
-                      <div className={`h-12 w-12 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
+                      <div className={`h-12 w-12 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : isDeclined ? 'bg-rose-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
                         <Award className="h-6 w-6" />
                       </div>
                       <div className="flex-1">
@@ -3058,6 +3073,7 @@ function ReviewerWorkspace({ setRoute }) {
                           <Badge variant="outline" className="text-[10px]">{a.reviewType.replace('_', ' ')}</Badge>
                           <Badge className={`text-[10px] border ${STATE_COLORS[a.abstract.currentState] || ''}`}>{stateLabel(a.abstract.currentState)}</Badge>
                           {isPending ? <Badge className="bg-amber-500 text-white text-[10px]">INVITATION PENDING</Badge>
+                            : isDeclined ? <Badge className="bg-rose-500 text-white text-[10px]">YOU DECLINED</Badge>
                             : done ? <Badge className="bg-emerald-600 text-[10px]">SUBMITTED</Badge>
                             : <Badge className="bg-purple-600 text-[10px]">ACCEPTED — REVIEW DUE</Badge>}
                         </div>
@@ -3067,16 +3083,38 @@ function ReviewerWorkspace({ setRoute }) {
                           {a.dueDate && ` · Due ${formatDate(a.dueDate)}`}
                           {a.completedAt && ` · Completed ${formatDate(a.completedAt)}`}
                         </div>
+                        {isPending && (
+                          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2 inline-block">
+                            Please accept the invitation to view the abstract.
+                          </div>
+                        )}
+                        {isDeclined && (
+                          <div className="text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded px-2 py-1 mt-2 inline-block">
+                            You declined this review. The editorial office has been notified.
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       {isPending && (
                         <>
-                          <Button size="sm" variant="outline" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'DECLINED' }) }); refresh() }}>Decline</Button>
-                          <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={async () => { await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'ACCEPTED' }) }); refresh() }}>Accept</Button>
+                          <Button size="sm" variant="outline" onClick={async () => {
+                            if (!confirm('Decline this review invitation? The committee editor will be notified and you will no longer have access to this abstract.')) return
+                            await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'DECLINED' }) })
+                            toast.success('Invitation declined. Editors have been notified.')
+                            refresh()
+                          }}>Decline</Button>
+                          <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={async () => {
+                            await api(`/reviewer/assignments/${a.id}/respond`, { method: 'POST', body: JSON.stringify({ status: 'ACCEPTED' }) })
+                            toast.success('Invitation accepted. You can now view the abstract.')
+                            refresh()
+                          }}>Accept</Button>
                         </>
                       )}
-                      <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>Open abstract</Button>
+                      {/* Abstract is viewable only AFTER acceptance */}
+                      {!isPending && !isDeclined && (
+                        <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>Open abstract</Button>
+                      )}
                       {a.invitationStatus === 'ACCEPTED' && !a.report && (
                         <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setActive(a)}>Submit review</Button>
                       )}

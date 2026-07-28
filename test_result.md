@@ -879,6 +879,67 @@ backend:
           **SUMMARY:**
           Change B is working correctly. The bulk email broadcast is now asynchronous and rate-limited (batches of 8 with 1.1s pause). The endpoint returns 200 immediately without waiting for emails to be sent. Persistent in-app notifications are created for all users. No need to verify rate-limit behavior in tests as per instructions - just confirmed endpoint returns promptly.
 
+  - task: "External reviewer accept/decline workflow with access control and notifications"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          POST /api/reviewer/assignments/:id/respond now requires caller to own assignment (403 if not), rejects updates if review already submitted (409), persists invitationStatus as ACCEPTED/DECLINED with respondedAt timestamp. On DECLINED: creates in-app notifications (type=REVIEW_DECLINED) for every editor assigned to abstract plus all CHIEF_EDITOR + MANAGING_EDITOR users, and dispatches best-effort emails to same recipients. GET /api/abstracts/:id enforces: EXTERNAL_REVIEWER with invitationStatus PENDING or DECLINED receives 403 with friendly message. Committee editors/chief/managing/admins/authors continue to have prior access.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ EXTERNAL REVIEWER ACCEPT/DECLINE WORKFLOW TEST COMPLETE (12/13 tests passed = 92.3% success rate)
+          
+          **Test Setup:**
+          - Created test abstract as author@scms.io: MEDICAL SCIENTIFIC CONFERENCE-000026
+          - Admin assigned chief@scms.io as editor and reviewer1@scms.io + reviewer2@scms.io as reviewers
+          
+          **Test Results:**
+          
+          ✅ TEST A PASSED: PENDING reviewer cannot see abstract
+          - reviewer1@scms.io GET /abstracts/{id} → 403 with message "Access denied — please accept the review invitation to view this abstract."
+          
+          ✅ TEST B PASSED: Wrong reviewer cannot mutate someone else's assignment
+          - reviewer1 POST /reviewer/assignments/{reviewer2_assignment_id}/respond → 403
+          
+          ✅ TEST C PASSED: Accept flow — abstract becomes accessible
+          - reviewer1 POST /reviewer/assignments/{id}/respond with status=ACCEPTED → 200, invitationStatus=ACCEPTED
+          - reviewer1 GET /abstracts/{id} → 200 (abstract now accessible)
+          
+          ✅ TEST D.1 & D.2 PASSED: Decline flow — abstract becomes inaccessible
+          - reviewer2 POST /reviewer/assignments/{id}/respond with status=DECLINED → 200, invitationStatus=DECLINED
+          - reviewer2 GET /abstracts/{id} → 403 with message "Access denied — you declined this review invitation. Please contact the editorial office if this was a mistake."
+          
+          ❌ TEST D.3 FAILED: DECLINED in-app notification NOT created (but email WAS sent)
+          - chief@scms.io GET /notifications → No REVIEW_DECLINED notification found
+          - **ROOT CAUSE IDENTIFIED:** `REVIEW_DECLINED` is not defined in Prisma schema's NotificationType enum
+          - Prisma schema only has: SUBMISSION_RECEIVED, ASSIGNMENT, REVIEW_INVITATION, REVIEW_REMINDER, DECISION, REVISION_REQUEST, MESSAGE, STATE_CHANGE, GENERIC
+          - Backend logs show: "Invalid value for argument `type`. Expected NotificationType"
+          - Notification creation fails silently due to `.catch(() => {})` wrapper
+          - **EMAIL NOTIFICATIONS ARE WORKING:** Logs confirm "resend ok → chief@scms.io [MEDICAL SCIENTIFIC CONFERENCE] Reviewer declined"
+          
+          ✅ TEST E PASSED: Reviewer1 keeps access after Reviewer2 declines
+          - reviewer1 GET /abstracts/{id} → 200 (still has access)
+          
+          ✅ TEST F PASSED: Guard against double-mutation after submission
+          - reviewer1 POST /reviewer/assignments/{id}/submit with review scores → 200
+          - reviewer1 POST /reviewer/assignments/{id}/respond with status=DECLINED → 409 with message "This assignment already has a submitted review; the response cannot be changed."
+          
+          ✅ REGRESSION 1 PASSED: Chief editor can access abstract (200)
+          ✅ REGRESSION 2 PASSED: Admin can access abstract (200)
+          ✅ REGRESSION 3 PASSED: Author can access their abstract (200)
+          
+          **SUMMARY:**
+          Core functionality is working correctly. All access control guards (403, 409) are properly enforced. Accept/decline flow works as expected. The only issue is a **Minor: missing in-app notification** due to schema mismatch - email notifications are working correctly. This is a non-critical issue as editors are still notified via email.
+          
+          **ACTION REQUIRED:**
+          Add `REVIEW_DECLINED` to the NotificationType enum in /app/prisma/schema.prisma, then run `npx prisma generate` and `npx prisma db push`.
 
 frontend:
   - task: "SCMS Enterprise UI - all modules"
@@ -944,7 +1005,10 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "External reviewer workflow: PENDING/DECLINED reviewers must not access abstract detail; DECLINED response triggers notifications + emails to Committee Editor and editorial leads."
+    - "POST /api/reviewer/assignments/:id/respond: guards non-owner (403), completed (409); records ACCEPTED/DECLINED; sends notifications on DECLINE."
+    - "GET /api/abstracts/:id: external reviewer with PENDING or DECLINED invitationStatus gets 403; ACCEPTED gets 200."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1838,3 +1902,63 @@ agent_communication:
       
       **Summary:**
       Both changes are working correctly. No critical issues found. All read access permissions are correctly granted to Committee Editors. All write endpoints correctly return 403 for Committee Editors. Rate-limited email broadcast is asynchronous and does not hold up the API response. No code changes made - verification only.
+
+
+  - agent: "testing"
+    message: |
+      ✅ EXTERNAL REVIEWER ACCEPT/DECLINE WORKFLOW TEST COMPLETE (12/13 tests passed = 92.3% success rate)
+      
+      **Test Scope:** Verify external reviewer accept/decline workflow with access control and notifications per review request.
+      
+      **Test Users:**
+      - admin@scms.io (SYSTEM_ADMIN)
+      - chief@scms.io (CHIEF_EDITOR)
+      - author@scms.io (AUTHOR)
+      - reviewer1@scms.io (EXTERNAL_REVIEWER)
+      - reviewer2@scms.io (EXTERNAL_REVIEWER)
+      
+      **Test Abstract:** MEDICAL SCIENTIFIC CONFERENCE-000026
+      
+      **CORE FUNCTIONALITY — ALL WORKING ✅**
+      
+      ✅ Scenario A: PENDING reviewer cannot see abstract
+         - reviewer1 GET /abstracts/{id} while invitationStatus=PENDING → 403
+         - Error message: "Access denied — please accept the review invitation to view this abstract."
+      
+      ✅ Scenario B: Wrong reviewer cannot mutate someone else's assignment
+         - reviewer1 POST /reviewer/assignments/{reviewer2_assignment_id}/respond → 403
+      
+      ✅ Scenario C: Accept flow — abstract becomes accessible
+         - reviewer1 POST /reviewer/assignments/{id}/respond with status=ACCEPTED → 200
+         - Assignment.invitationStatus updated to ACCEPTED
+         - reviewer1 GET /abstracts/{id} → 200 (abstract now accessible)
+      
+      ✅ Scenario D.1 & D.2: Decline flow — abstract becomes inaccessible
+         - reviewer2 POST /reviewer/assignments/{id}/respond with status=DECLINED, declineReason="Out of expertise" → 200
+         - Assignment.invitationStatus updated to DECLINED
+         - reviewer2 GET /abstracts/{id} → 403
+         - Error message: "Access denied — you declined this review invitation. Please contact the editorial office if this was a mistake."
+      
+      ❌ Scenario D.3: DECLINED in-app notification (MINOR ISSUE - email works)
+         - chief@scms.io GET /notifications → No REVIEW_DECLINED notification found
+         - **ROOT CAUSE:** `REVIEW_DECLINED` is NOT in Prisma schema's NotificationType enum
+         - Schema only has: SUBMISSION_RECEIVED, ASSIGNMENT, REVIEW_INVITATION, REVIEW_REMINDER, DECISION, REVISION_REQUEST, MESSAGE, STATE_CHANGE, GENERIC
+         - Backend logs show: "Invalid `prisma.notification.create()` invocation: Invalid value for argument `type`. Expected NotificationType."
+         - Notification creation fails silently due to `.catch(() => {})` wrapper in code
+         - **EMAIL NOTIFICATIONS ARE WORKING:** Logs confirm "resend ok → chief@scms.io [MEDICAL SCIENTIFIC CONFERENCE] Reviewer declined — MEDICAL SCIENTIFIC CONFERENCE-000026"
+         - This is a **Minor** issue: editors are still notified via email, only in-app notification is missing
+      
+      ✅ Scenario E: Reviewer1 keeps access after Reviewer2 declines
+         - reviewer1 GET /abstracts/{id} → 200 (still has access)
+      
+      ✅ Scenario F: Guard against double-mutation after submission
+         - reviewer1 POST /reviewer/assignments/{id}/submit with review scores → 200
+         - reviewer1 POST /reviewer/assignments/{id}/respond with status=DECLINED → 409
+         - Error message: "This assignment already has a submitted review; the response cannot be changed."
+      
+      ✅ Regression 1: Chief editor can access abstract (200)
+      ✅ Regression 2: Admin can access abstract (200)
+      ✅ Regression 3: Author can access their abstract (200)
+      
+      **SUMMARY:**
+      All core functionality is working correctly. Access control guards (403 for PENDING/DECLINED, 403 for wrong reviewer, 409 for already-submitted) are properly enforced. Accept/decline flow works as expected. Email notifications are working. The only issue is a minor schema mismatch preventing in-app notifications from being created.

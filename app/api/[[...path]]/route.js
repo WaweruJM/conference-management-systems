@@ -711,9 +711,26 @@ async function handleAbstracts(route, method, request) {
     if (!abstract) return err('Not found', 404)
     // Access control: authors can see own, editors/reviewers can see if assigned, admin all
     const isOwner = abstract.submittedById === user.id
-    const isAssigned = abstract.reviewAssignments.some(r => r.reviewerId === user.id) || abstract.editorAssignments.some(e => e.editorId === user.id)
+    const myReviewerAssignment = abstract.reviewAssignments.find(r => r.reviewerId === user.id)
+    // An external reviewer can only read the abstract AFTER accepting the invitation.
+    // If they have DECLINED (or are still pending), access is denied — they only see
+    // metadata on their reviewer workspace, not the full abstract body.
+    const isAcceptedReviewer = !!myReviewerAssignment && myReviewerAssignment.invitationStatus === 'ACCEPTED'
+    const isAssignedEditor = abstract.editorAssignments.some(e => e.editorId === user.id)
+    const isAssigned = isAcceptedReviewer || isAssignedEditor
     const isPrivileged = hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')
-    if (!isOwner && !isAssigned && !isPrivileged && !hasRole(user, 'COMMITTEE_MEMBER', 'COMMITTEE_EDITOR')) {
+    // Committee editors / committee members with a broad review remit still see abstracts
+    // (they act as editorial reviewers), but a PURE EXTERNAL_REVIEWER without acceptance
+    // must not get in.
+    const isCommitteeInsider = hasRole(user, 'COMMITTEE_MEMBER', 'COMMITTEE_EDITOR')
+    const isPendingOrDeclinedExternal = !!myReviewerAssignment && myReviewerAssignment.invitationStatus !== 'ACCEPTED' && hasRole(user, 'EXTERNAL_REVIEWER') && !isPrivileged && !isCommitteeInsider && !isOwner
+    if (isPendingOrDeclinedExternal) {
+      const msg = myReviewerAssignment.invitationStatus === 'DECLINED'
+        ? 'Access denied — you declined this review invitation. Please contact the editorial office if this was a mistake.'
+        : 'Access denied — please accept the review invitation to view this abstract.'
+      return err(msg, 403)
+    }
+    if (!isOwner && !isAssigned && !isPrivileged && !isCommitteeInsider) {
       return err('Forbidden', 403)
     }
     // Double-blind: hide author identity from reviewers if enabled
@@ -1075,10 +1092,75 @@ async function handleReviewer(route, method, request) {
   const respMatch = route.match(/^\/reviewer\/assignments\/([^\/]+)\/respond$/)
   if (respMatch && method === 'POST') {
     const body = await request.json()
+    // Load the existing assignment to guard against wrong reviewer + surface abstract context
+    const existing = await prisma.reviewAssignment.findUnique({
+      where: { id: respMatch[1] },
+      include: { abstract: { include: { conference: true } } },
+    })
+    if (!existing || existing.reviewerId !== user.id) return err('Forbidden', 403)
+    if (existing.completedAt) return err('This assignment already has a submitted review; the response cannot be changed.', 409)
+
+    const newStatus = body.status === 'ACCEPTED' ? 'ACCEPTED' : 'DECLINED'
     const a = await prisma.reviewAssignment.update({
       where: { id: respMatch[1] },
-      data: { invitationStatus: body.status, respondedAt: new Date() },
+      data: {
+        invitationStatus: newStatus,
+        respondedAt: new Date(),
+      },
     })
+    await logAudit({ actorId: user.id, action: `REVIEWER_${newStatus}`, entityType: 'ReviewAssignment', entityId: respMatch[1] })
+
+    if (newStatus === 'DECLINED') {
+      // Notify every editor assigned to the abstract, plus editorial leadership fallbacks
+      const abs = existing.abstract
+      const editorAssignments = await prisma.editorAssignment.findMany({
+        where: { abstractId: abs.id, active: true },
+        select: { editorId: true },
+      })
+      const editorLeads = await prisma.user.findMany({
+        where: {
+          roles: { some: { role: { in: ['CHIEF_EDITOR', 'MANAGING_EDITOR'] } } },
+        },
+        select: { id: true, email: true },
+      })
+      const recipientIds = new Set(editorAssignments.map(e => e.editorId))
+      editorLeads.forEach(e => recipientIds.add(e.id))
+
+      const reviewerName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email
+      const notifTitle = `Reviewer declined ${abs.submissionCode}`
+      const notifBody = `${reviewerName} has declined to review "${abs.title}".`
+
+      for (const rid of recipientIds) {
+        await createNotification(rid, 'REVIEW_DECLINED', notifTitle, notifBody, `/abstracts/${abs.id}`).catch(() => {})
+      }
+
+      // Best-effort email dispatch to the committee editors
+      try {
+        const { sendEmail } = await import('@/lib/email')
+        const { renderEmailHtml } = await import('@/lib/email-templates')
+        const subject = `[${abs.conference.code}] Reviewer declined — ${abs.submissionCode}`
+        const declineNote = (body.declineReason || body.message || '').toString().trim()
+        const bodyText = [
+          `Dear Editor,`,
+          ``,
+          `${reviewerName} (${user.email}) has DECLINED to review the following abstract:`,
+          ``,
+          `Submission: ${abs.submissionCode}`,
+          `Title: ${abs.title}`,
+          `Conference: ${abs.conference.name}`,
+          declineNote ? `\nReviewer note: ${declineNote}` : '',
+          ``,
+          `Please reassign the review or invite an alternative peer reviewer at your earliest convenience.`,
+        ].filter(Boolean).join('\n')
+        const html = renderEmailHtml({ subject, body: bodyText, conferenceName: abs.conference.name })
+        // Fetch emails for recipients
+        const editorUsers = await prisma.user.findMany({ where: { id: { in: [...recipientIds] } }, select: { email: true } })
+        for (const eu of editorUsers) {
+          if (eu.email) sendEmail({ to: eu.email, subject, html, text: bodyText }).catch(() => {})
+        }
+      } catch (e) { /* non-fatal */ }
+    }
+
     return ok({ assignment: a })
   }
 
