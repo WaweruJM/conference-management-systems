@@ -308,14 +308,14 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
         <div className="absolute inset-0 flex items-center">
           <div className="container mx-auto px-6">
             <div className="max-w-4xl text-white mx-auto text-center">
-              {featured?.code && <Badge className="mb-3 bg-indigo-600 hover:bg-indigo-600 text-white border-0">{featured.code}</Badge>}
               <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-tight drop-shadow-lg">
                 {featured?.name || 'Scientific Conference Management System'}
               </h1>
-              {featured?.subtitle && <p className="mt-2 text-lg md:text-xl opacity-95">{featured.subtitle}</p>}
-              <p className="mt-3 text-base md:text-lg opacity-90 max-w-2xl mx-auto drop-shadow">
-                {featured?.description || 'The complete lifecycle for scientific conferences — submission, peer review, revisions, programme scheduling and long-term archive.'}
-              </p>
+              {featured?.mainTheme && (
+                <p className="mt-4 text-lg md:text-2xl font-semibold opacity-95 drop-shadow max-w-3xl mx-auto">
+                  {featured.mainTheme}
+                </p>
+              )}
               <div className="mt-6 flex gap-3 justify-center">
                 <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
                   Register / Submit abstract <ChevronRight className="ml-1 h-4 w-4" />
@@ -336,14 +336,6 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
       {/* Info strip */}
       {featured && (
         <section className="bg-white border-b">
-          {featured.mainTheme && (
-            <div className="container mx-auto px-6 pt-6">
-              <div className="rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-fuchsia-50 p-4 text-center">
-                <div className="text-[10px] uppercase tracking-widest font-semibold text-indigo-600 mb-1">Main scientific theme</div>
-                <div className="text-lg md:text-xl font-bold text-slate-800">{featured.mainTheme}</div>
-              </div>
-            </div>
-          )}
           <div className="container mx-auto px-6 py-6 grid md:grid-cols-4 gap-4 text-center">
             <div><div className="text-2xl font-bold text-indigo-600">{featured.themes?.length || 0}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Sub-themes</div></div>
             <div><div className="text-2xl font-bold text-indigo-600">{featured.submissionClose ? formatDate(featured.submissionClose) : '—'}</div><div className="text-xs uppercase tracking-wider text-muted-foreground">Submission Deadline</div></div>
@@ -693,7 +685,6 @@ function PublicThemes({ conf }) {
               The main theme will be published shortly by the editorial committee.
             </h2>
           )}
-          {conf?.subtitle && <p className="mt-4 text-lg text-white/90 max-w-3xl mx-auto">{conf.subtitle}</p>}
         </div>
       </Card>
 
