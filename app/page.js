@@ -129,6 +129,9 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
   const title = conf?.name || 'Scientific Conference'
   const code = conf?.code || ''
   const themeText = conf?.theme || conf?.subtitle || conf?.description || 'Advancing Science Through Rigorous Peer Review'
+  // Header logos: Kenyan flag is the default on the left; right side is optional (institutional emblem)
+  const leftLogo = conf?.headerLogoLeft || '/kenya-flag.svg'
+  const rightLogo = conf?.headerLogoRight || null
 
   const navItems = [
     { key: 'home', label: 'Home' },
@@ -142,28 +145,66 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Fixed header */}
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b shadow-sm">
-        <div className="container mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <button onClick={() => setPublicView && setPublicView('home')} className="flex items-center gap-3 text-left">
-            <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center text-white font-bold text-lg">S</div>
-            <div>
-              <div className="font-bold tracking-tight text-lg leading-tight">{title}</div>
-              {code && <div className="text-[11px] text-muted-foreground -mt-0.5">{code} · Scientific Conference Management System</div>}
+      {/* Fixed header — professional white / dark-blue treatment with symmetric side icons */}
+      <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
+        <div className="container mx-auto px-6 py-3">
+          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-4">
+            {/* LEFT: flag icon (Kenyan flag by default) */}
+            <div className="flex items-center">
+              {leftLogo && (
+                <img
+                  src={leftLogo}
+                  alt="National / left header emblem"
+                  className="h-10 w-14 object-contain rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.15)] border border-slate-200 bg-white"
+                />
+              )}
             </div>
-          </button>
-          <div className="flex gap-2 items-center">
-            {onSignIn && <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>}
-            {onRegister && <Button size="sm" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">Get started</Button>}
+
+            {/* CENTER: conference title, dark blue, centered */}
+            <button
+              onClick={() => setPublicView && setPublicView('home')}
+              className="text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b2a5b]/40 rounded"
+              aria-label="Go to home"
+            >
+              <div className="font-serif font-bold tracking-tight text-[#0b2a5b] text-lg md:text-xl leading-tight uppercase">
+                {title}
+              </div>
+              {code && (
+                <div className="text-[10px] md:text-[11px] font-medium text-slate-500 tracking-wider uppercase mt-0.5">
+                  {code} · Scientific Conference Management System
+                </div>
+              )}
+            </button>
+
+            {/* RIGHT: optional emblem + auth actions */}
+            <div className="flex items-center gap-3 justify-end">
+              {rightLogo ? (
+                <img
+                  src={rightLogo}
+                  alt="Institution / right header emblem"
+                  className="h-10 w-14 object-contain rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.15)] border border-slate-200 bg-white hidden sm:block"
+                />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="h-10 w-14 rounded-sm border border-dashed border-slate-200 bg-slate-50 hidden md:block"
+                  title="Right header emblem placeholder — upload from Conference Admin"
+                />
+              )}
+              <div className="flex gap-2 items-center">
+                {onSignIn && <Button variant="ghost" size="sm" onClick={onSignIn} className="text-[#0b2a5b] hover:bg-slate-100">Sign in</Button>}
+                {onRegister && <Button size="sm" onClick={onRegister} className="bg-[#0b2a5b] hover:bg-[#0a2450] text-white">Get started</Button>}
+              </div>
+            </div>
           </div>
         </div>
         {/* Nav bar */}
         <nav className="border-t bg-slate-50">
-          <div className="container mx-auto px-6 flex flex-wrap gap-1">
+          <div className="container mx-auto px-6 flex flex-wrap gap-1 justify-center">
             {navItems.map(n => (
               <button key={n.key}
                 onClick={() => setPublicView && setPublicView(n.key)}
-                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'}`}>
+                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-[#0b2a5b] text-[#0b2a5b]' : 'border-transparent text-slate-600 hover:text-[#0b2a5b] hover:border-slate-300'}`}>
                 {n.label}
               </button>
             ))}
@@ -3874,6 +3915,7 @@ function ConferenceAdmin() {
   const [editing, setEditing] = useState(null)
   const [themeConfId, setThemeConfId] = useState(null)
   const [heroConfId, setHeroConfId] = useState(null)
+  const [headerConfId, setHeaderConfId] = useState(null)
   const refresh = () => api('/conferences').then(d => setList(d.conferences || []))
   useEffect(() => { refresh() }, [])
 
@@ -3922,6 +3964,7 @@ function ConferenceAdmin() {
                     <Button size="sm" variant="outline" onClick={() => { setEditing(c); setOpen(true) }}>Edit</Button>
                     <Button size="sm" variant="outline" onClick={() => setThemeConfId(c.id)}>+ Theme</Button>
                     <Button size="sm" variant="outline" onClick={() => setHeroConfId(c.id)}>Hero images</Button>
+                    <Button size="sm" variant="outline" onClick={() => setHeaderConfId(c.id)}>Header logos</Button>
                     <Button size="sm" variant={c.attendeeRegistrationOpen ? 'default' : 'outline'}
                       className={c.attendeeRegistrationOpen ? 'bg-amber-600 hover:bg-amber-700' : ''}
                       onClick={async () => {
@@ -3960,6 +4003,7 @@ function ConferenceAdmin() {
       {open && <ConferenceDialog editing={editing} onClose={() => setOpen(false)} onDone={() => { setOpen(false); refresh() }} />}
       {themeConfId && <ThemeDialog conferenceId={themeConfId} onClose={() => setThemeConfId(null)} onDone={() => { setThemeConfId(null); refresh() }} />}
       {heroConfId && <HeroImagesDialog conference={list.find(x => x.id === heroConfId)} onClose={() => setHeroConfId(null)} onDone={() => { setHeroConfId(null); refresh() }} />}
+      {headerConfId && <HeaderLogosDialog conference={list.find(x => x.id === headerConfId)} onClose={() => setHeaderConfId(null)} onDone={() => { setHeaderConfId(null); refresh() }} />}
     </div>
   )
 }
@@ -4033,6 +4077,99 @@ function HeroImagesDialog({ conference, onClose, onDone }) {
     </Dialog>
   )
 }
+
+function HeaderLogosDialog({ conference, onClose, onDone }) {
+  const [leftLogo, setLeftLogo] = useState(conference?.headerLogoLeft || '')
+  const [rightLogo, setRightLogo] = useState(conference?.headerLogoRight || '')
+  const [uploading, setUploading] = useState(null)
+
+  const upload = async (side, e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { toast.error('Only image files allowed'); return }
+    if (file.size > 2 * 1024 * 1024) { toast.error('Icon exceeds 2 MB limit'); return }
+    setUploading(side)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('side', side)
+      const d = await apiUpload(`/conferences/${conference.id}/header-logo`, fd)
+      if (side === 'left') setLeftLogo(d.conference.headerLogoLeft || '')
+      else setRightLogo(d.conference.headerLogoRight || '')
+      toast.success(`${side === 'left' ? 'Left' : 'Right'} header icon updated`)
+    } catch (e) { toast.error(e.message) }
+    finally { setUploading(null); e.target.value = '' }
+  }
+
+  const clear = async (side) => {
+    if (!confirm(`Reset the ${side} header icon to the default?`)) return
+    try {
+      const res = await fetch(`/api/conferences/${conference.id}/header-logo`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+        body: JSON.stringify({ side }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error)
+      if (side === 'left') setLeftLogo('')
+      else setRightLogo('')
+      toast.success(`${side === 'left' ? 'Left' : 'Right'} header icon reset`)
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const renderSlot = (side, current) => (
+    <div className="border rounded-lg p-4 bg-slate-50">
+      <div className="flex items-center justify-between mb-3">
+        <div className="font-semibold text-sm capitalize">{side} header icon</div>
+        <Badge variant="outline" className="text-[10px]">{side === 'left' ? 'Default: Kenyan flag' : 'Optional emblem'}</Badge>
+      </div>
+      <div className="flex items-center gap-4">
+        <div className="h-14 w-20 border rounded bg-white flex items-center justify-center overflow-hidden">
+          {current ? (
+            <img src={current} alt={`${side} icon preview`} className="max-h-full max-w-full object-contain" />
+          ) : side === 'left' ? (
+            <img src="/kenya-flag.svg" alt="Kenya flag (default)" className="max-h-full max-w-full object-contain" />
+          ) : (
+            <span className="text-[10px] text-slate-400">Empty</span>
+          )}
+        </div>
+        <div className="flex-1 space-y-2">
+          <label className="block text-xs text-muted-foreground">Upload replacement (PNG/JPG/SVG, max 2 MB)</label>
+          <input type="file" accept="image/*,image/svg+xml" onChange={(e) => upload(side, e)} disabled={uploading === side} className="text-xs" />
+          {current && (
+            <Button variant="outline" size="sm" onClick={() => clear(side)} disabled={uploading === side}>
+              <Trash2 className="h-3 w-3 mr-1" /> Reset to default
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Fixed header icons</DialogTitle>
+          <DialogDescription>
+            The public site header shows a small icon on each side of the centered conference title.
+            The <span className="font-medium">left</span> slot defaults to the Kenyan flag; the <span className="font-medium">right</span> slot is a placeholder for an institutional / sponsor emblem.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {renderSlot('left', leftLogo)}
+          {renderSlot('right', rightLogo)}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          <Button onClick={onDone}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 
 function ConferenceDialog({ editing, onClose, onDone }) {
   const [form, setForm] = useState({

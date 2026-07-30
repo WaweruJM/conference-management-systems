@@ -978,6 +978,85 @@ backend:
           **SUMMARY:**
           The fix is working correctly. In-app notifications are now created successfully using the MESSAGE type. Email notifications continue to work as before. All requirements for Scenario D.3 are met.
 
+
+  - task: "Conference header logo upload and management (POST/DELETE /api/conferences/:id/header-logo)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/conferences/:id/header-logo accepts multipart file + side='left'|'right', uploads header icon (max 2 MB), persists to Conference.headerLogoLeft/headerLogoRight. DELETE /api/conferences/:id/header-logo with JSON body {side} clears the field. Both require SYSTEM_ADMIN, MANAGING_EDITOR, or CHIEF_EDITOR. GET /api/public/config surfaces headerLogoLeft/headerLogoRight fields."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL HEADER LOGO ENDPOINT TESTS PASSED (13/13 = 100% SUCCESS RATE)
+          
+          **Test Results:**
+          
+          ✅ Step 1: Login as admin@scms.io and get featured conference ID (e01de36e-e09e-479f-bd53-c056b2a90436)
+          
+          ✅ Step 2: Baseline read - GET /api/public/config
+          - Conference object contains headerLogoLeft and headerLogoRight fields ✅
+          
+          ✅ Step 3: Upload LEFT logo
+          - POST /api/conferences/{id}/header-logo with side='left' and ~20KB PNG → 200 ✅
+          - Response includes conference, imagePath, side='left' ✅
+          - imagePath format correct: /api/uploads/header/{confId}/header_left_{timestamp}_{random}_{filename} ✅
+          - GET /api/public/config confirms headerLogoLeft updated ✅
+          
+          ✅ Step 4: Upload RIGHT logo
+          - POST /api/conferences/{id}/header-logo with side='right' and ~25KB PNG → 200 ✅
+          - Response includes conference, imagePath, side='right' ✅
+          - imagePath format correct: /api/uploads/header/{confId}/header_right_{timestamp}_{random}_{filename} ✅
+          - GET /api/public/config confirms headerLogoRight updated ✅
+          
+          ✅ Step 5: Reject oversize file (>2 MB)
+          - POST with ~3MB PNG file → 400 ✅
+          - Error message: "Icon image too large (max 2 MB). Please upload a compressed image." ✅
+          
+          ✅ Step 6: Reject invalid side
+          - POST with side='center' → 400 ✅
+          - Error message: "side must be \"left\" or \"right\"" ✅
+          
+          ✅ Step 7a: Reject non-privileged user (author@scms.io)
+          - POST as author@scms.io → 403 ✅
+          
+          ✅ Step 7b: Reject non-privileged user (committee@scms.io)
+          - POST as committee@scms.io → 403 ✅
+          
+          ✅ Step 8: Clear LEFT logo
+          - DELETE /api/conferences/{id}/header-logo with {"side":"left"} → 200 ✅
+          - Response conference.headerLogoLeft === null ✅
+          
+          ✅ Step 9: Clear RIGHT logo
+          - DELETE /api/conferences/{id}/header-logo with {"side":"right"} → 200 ✅
+          - Response conference.headerLogoRight === null ✅
+          
+          ✅ Step 10: DELETE with bad side
+          - DELETE with {"side":""} → 400 ✅
+          - Error message: "side must be \"left\" or \"right\"" ✅
+          
+          ✅ Step 11: DELETE reject non-privileged user
+          - DELETE as author@scms.io → 403 ✅
+          
+          ✅ Step 12a: Chief editor can POST
+          - POST as chief@scms.io with side='left' → 200 ✅
+          
+          ✅ Step 12b: Chief editor can DELETE
+          - DELETE as chief@scms.io with {"side":"left"} → 200 ✅
+          
+          ✅ Step 13: Regression check
+          - GET /api/public/config returns 200 with well-formed conference object ✅
+          - heroImages array intact with 5 items ✅
+          - headerLogoLeft and headerLogoRight fields present (both null after cleanup) ✅
+          
+          **SUMMARY:**
+          All header logo endpoints working correctly. File upload with multipart form data works. File size validation (max 2 MB) enforced. Side parameter validation ('left' or 'right' only) enforced. RBAC properly enforced (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR allowed; AUTHOR, COMMITTEE_MEMBER denied). DELETE endpoint clears fields correctly. GET /api/public/config surfaces both fields. No regressions - heroImages array intact.
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -1038,14 +1117,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "External reviewer workflow: PENDING/DECLINED reviewers must not access abstract detail; DECLINED response triggers notifications + emails to Committee Editor and editorial leads."
-    - "POST /api/reviewer/assignments/:id/respond: guards non-owner (403), completed (409); records ACCEPTED/DECLINED; sends notifications on DECLINE."
-    - "GET /api/abstracts/:id: external reviewer with PENDING or DECLINED invitationStatus gets 403; ACCEPTED gets 200."
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1999,3 +2075,80 @@ agent_communication:
       
       **SUMMARY:**
       All core functionality is working correctly. Access control guards (403 for PENDING/DECLINED, 403 for wrong reviewer, 409 for already-submitted) are properly enforced. Accept/decline flow works as expected. Email notifications are working. The only issue is a minor schema mismatch preventing in-app notifications from being created.
+
+
+  - agent: "testing"
+    message: |
+      ✅ HEADER LOGO ENDPOINTS VERIFICATION COMPLETE - ALL TESTS PASSED (13/13 = 100% SUCCESS RATE)
+      
+      **Test Scope:** Verify new header logo upload and management endpoints per review request.
+      
+      **Endpoints Tested:**
+      - POST /api/conferences/:id/header-logo (multipart file + side='left'|'right')
+      - DELETE /api/conferences/:id/header-logo (JSON body {side:'left'|'right'})
+      - GET /api/public/config (verify headerLogoLeft/headerLogoRight fields)
+      
+      **Test Results:**
+      
+      ✅ Step 1: Login as admin@scms.io and get featured conference
+         - Featured conference ID: e01de36e-e09e-479f-bd53-c056b2a90436
+         - Conference name: THE FIFTH MEDICAL SCIENTIFIC CONFERENCE 2027
+      
+      ✅ Step 2: Baseline read - GET /api/public/config
+         - Conference object contains headerLogoLeft and headerLogoRight fields ✅
+         - Both fields present in response (may be null initially)
+      
+      ✅ Step 3: Upload LEFT logo
+         - POST /api/conferences/{id}/header-logo with side='left' and ~20KB PNG → 200 ✅
+         - Response includes conference, imagePath, side='left' ✅
+         - imagePath format: /api/uploads/header/{confId}/header_left_{timestamp}_{random}_{filename} ✅
+         - GET /api/public/config confirms headerLogoLeft updated ✅
+      
+      ✅ Step 4: Upload RIGHT logo
+         - POST /api/conferences/{id}/header-logo with side='right' and ~25KB PNG → 200 ✅
+         - Response includes conference, imagePath, side='right' ✅
+         - imagePath format: /api/uploads/header/{confId}/header_right_{timestamp}_{random}_{filename} ✅
+         - GET /api/public/config confirms headerLogoRight updated ✅
+      
+      ✅ Step 5: Reject oversize file (>2 MB)
+         - POST with ~3MB PNG file → 400 ✅
+         - Error message: "Icon image too large (max 2 MB). Please upload a compressed image." ✅
+      
+      ✅ Step 6: Reject invalid side
+         - POST with side='center' → 400 ✅
+         - Error message: "side must be \"left\" or \"right\"" ✅
+      
+      ✅ Step 7a: Reject non-privileged user (author@scms.io)
+         - POST as author@scms.io → 403 ✅
+      
+      ✅ Step 7b: Reject non-privileged user (committee@scms.io)
+         - POST as committee@scms.io → 403 ✅
+      
+      ✅ Step 8: Clear LEFT logo
+         - DELETE /api/conferences/{id}/header-logo with {"side":"left"} → 200 ✅
+         - Response conference.headerLogoLeft === null ✅
+      
+      ✅ Step 9: Clear RIGHT logo
+         - DELETE /api/conferences/{id}/header-logo with {"side":"right"} → 200 ✅
+         - Response conference.headerLogoRight === null ✅
+      
+      ✅ Step 10: DELETE with bad side
+         - DELETE with {"side":""} → 400 ✅
+         - Error message: "side must be \"left\" or \"right\"" ✅
+      
+      ✅ Step 11: DELETE reject non-privileged user
+         - DELETE as author@scms.io → 403 ✅
+      
+      ✅ Step 12a: Chief editor can POST
+         - POST as chief@scms.io with side='left' → 200 ✅
+      
+      ✅ Step 12b: Chief editor can DELETE
+         - DELETE as chief@scms.io with {"side":"left"} → 200 ✅
+      
+      ✅ Step 13: Regression check
+         - GET /api/public/config returns 200 with well-formed conference object ✅
+         - heroImages array intact with 5 items ✅
+         - headerLogoLeft and headerLogoRight fields present (both null after cleanup) ✅
+      
+      **Summary:**
+      All header logo endpoints working correctly. File upload with multipart form data works. File size validation (max 2 MB) enforced. Side parameter validation ('left' or 'right' only) enforced. RBAC properly enforced (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR allowed; AUTHOR, COMMITTEE_MEMBER denied). DELETE endpoint clears fields correctly. GET /api/public/config surfaces both fields. No regressions - heroImages array intact. All logos cleaned up at end of test.

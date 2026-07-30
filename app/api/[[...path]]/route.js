@@ -515,6 +515,42 @@ async function handleConferences(route, method, request) {
     return ok({ conference: updated })
   }
 
+  // Header logo upload (left or right side icon on the fixed public header)
+  // POST with multipart body {file, side: 'left'|'right'} → replaces existing
+  // DELETE with body {side} → clears (reverts to default)
+  const headerLogoMatch = route.match(/^\/conferences\/([^\/]+)\/header-logo$/)
+  if (headerLogoMatch && method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const formData = await request.formData()
+    const file = formData.get('file')
+    const side = (formData.get('side') || 'left').toString().toLowerCase()
+    if (!['left', 'right'].includes(side)) return err('side must be "left" or "right"')
+    if (!file) return err('No file')
+    if (file.size > 2 * 1024 * 1024) return err('Icon image too large (max 2 MB). Please upload a compressed image.')
+    const buf = Buffer.from(await file.arrayBuffer())
+    const safeName = `header_${side}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const dir = path.join(UPLOAD_DIR, 'header', headerLogoMatch[1])
+    await fs.mkdir(dir, { recursive: true })
+    const filePath = path.join(dir, safeName)
+    await fs.writeFile(filePath, buf)
+    const publicPath = `/api/uploads/header/${headerLogoMatch[1]}/${safeName}`
+    const data = side === 'left' ? { headerLogoLeft: publicPath } : { headerLogoRight: publicPath }
+    const conf = await prisma.conference.update({ where: { id: headerLogoMatch[1] }, data })
+    await logAudit({ actorId: user.id, action: 'UPDATE_HEADER_LOGO', entityType: 'Conference', entityId: headerLogoMatch[1], metadata: { side } })
+    return ok({ conference: conf, imagePath: publicPath, side })
+  }
+  if (headerLogoMatch && method === 'DELETE') {
+    const user = await getCurrentUser(request)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    const body = await request.json()
+    const side = (body.side || '').toString().toLowerCase()
+    if (!['left', 'right'].includes(side)) return err('side must be "left" or "right"')
+    const data = side === 'left' ? { headerLogoLeft: null } : { headerLogoRight: null }
+    const conf = await prisma.conference.update({ where: { id: headerLogoMatch[1] }, data })
+    return ok({ conference: conf })
+  }
+
   // Hotel/venue image upload
   const hotelMatch = route.match(/^\/conferences\/([^\/]+)\/hotel-image$/)
   if (hotelMatch && method === 'POST') {

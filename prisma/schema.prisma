@@ -121,6 +121,8 @@ model Conference {
   status           ConferenceStatus @default(DRAFT)
   websiteBanner    String?
   heroImages       String[] @default([])
+  headerLogoLeft   String?  // Small icon shown on the LEFT of the fixed public header (default: Kenyan flag)
+  headerLogoRight  String?  // Small icon shown on the RIGHT of the fixed public header (institution / sponsor emblem)
   hotelImagePath   String?  // Uploaded venue hotel image path or external URL
   mapUrl           String?  // Google Maps embed/place URL
   mapAddress       String?  // Address string used to auto-build Google Maps embed

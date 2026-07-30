@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200" role="img" aria-label="Flag of Kenya">
+  <!-- Horizontal bands: black, thin white, red, thin white, green -->
+  <rect width="300" height="200" fill="#ffffff"/>
+  <rect y="0" width="300" height="60" fill="#000000"/>
+  <rect y="65" width="300" height="70" fill="#BB0000"/>
+  <rect y="140" width="300" height="60" fill="#006600"/>
+
+  <!-- Crossed spears (behind shield) -->
+  <g stroke="#8B4513" stroke-width="4" stroke-linecap="round">
+    <line x1="115" y1="55" x2="185" y2="145"/>
+    <line x1="185" y1="55" x2="115" y2="145"/>
+  </g>
+  <!-- Spear heads -->
+  <polygon points="110,53 122,50 118,60" fill="#c0c0c0" stroke="#333" stroke-width="1"/>
+  <polygon points="190,53 178,50 182,60" fill="#c0c0c0" stroke="#333" stroke-width="1"/>
+  <polygon points="110,147 122,150 118,140" fill="#c0c0c0" stroke="#333" stroke-width="1"/>
+  <polygon points="190,147 178,150 182,140" fill="#c0c0c0" stroke="#333" stroke-width="1"/>
+
+  <!-- Maasai shield (simplified oval) -->
+  <ellipse cx="150" cy="100" rx="28" ry="42" fill="#ffffff" stroke="#000" stroke-width="2"/>
+  <ellipse cx="150" cy="100" rx="24" ry="38" fill="#BB0000"/>
+  <path d="M 126 100 A 24 38 0 0 1 174 100 L 174 82 A 24 20 0 0 0 126 82 Z" fill="#000000"/>
+  <path d="M 126 100 A 24 38 0 0 0 174 100 L 174 118 A 24 20 0 0 1 126 118 Z" fill="#006600"/>
+  <ellipse cx="150" cy="100" rx="6" ry="14" fill="#ffffff"/>
+  <ellipse cx="150" cy="100" rx="3" ry="10" fill="#BB0000"/>
+</svg>
