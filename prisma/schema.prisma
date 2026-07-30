@@ -123,6 +123,7 @@ model Conference {
   heroImages       String[] @default([])
   headerLogoLeft   String?  // Small icon shown on the LEFT of the fixed public header (default: Kenyan flag)
   headerLogoRight  String?  // Small icon shown on the RIGHT of the fixed public header (institution / sponsor emblem)
+  headerBackground String?  // Optional background image behind the fixed public header
   hotelImagePath   String?  // Uploaded venue hotel image path or external URL
   mapUrl           String?  // Google Maps embed/place URL
   mapAddress       String?  // Address string used to auto-build Google Maps embed

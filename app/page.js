@@ -127,11 +127,10 @@ function HeroCarousel({ images, height = 'h-[420px]' }) {
 // Fixed public site chrome (header + nav + footer)
 function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPublicView }) {
   const title = conf?.name || 'Scientific Conference'
-  const code = conf?.code || ''
-  const themeText = conf?.theme || conf?.subtitle || conf?.description || 'Advancing Science Through Rigorous Peer Review'
   // Header logos: Kenyan flag is the default on the left; right side is optional (institutional emblem)
   const leftLogo = conf?.headerLogoLeft || '/kenya-flag.svg'
   const rightLogo = conf?.headerLogoRight || null
+  const headerBg = conf?.headerBackground || null
 
   const navItems = [
     { key: 'home', label: 'Home' },
@@ -145,66 +144,72 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Fixed header — professional white / dark-blue treatment with symmetric side icons */}
-      <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
-        <div className="container mx-auto px-6 py-3">
-          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-4">
+      {/* Fixed header — full-width bright blue with optional background image behind for texture */}
+      <header className="sticky top-0 z-50 border-b border-blue-900/40 shadow-md relative bg-[#1e5df0]">
+        {/* Optional background image with dark blue tint overlay to keep title readable */}
+        {headerBg && (
+          <>
+            <div
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url(${headerBg})` }}
+              aria-hidden="true"
+            />
+            {/* Overlay: darker on the sides so title stays legible even on busy imagery */}
+            <div className="absolute inset-0 bg-gradient-to-r from-[#0a3fbf]/85 via-[#1e5df0]/70 to-[#0a3fbf]/85" aria-hidden="true" />
+          </>
+        )}
+
+        <div className="relative w-full px-4 md:px-8 py-4">
+          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-6 w-full">
             {/* LEFT: flag icon (Kenyan flag by default) */}
-            <div className="flex items-center">
+            <div className="flex items-center shrink-0">
               {leftLogo && (
                 <img
                   src={leftLogo}
                   alt="National / left header emblem"
-                  className="h-10 w-14 object-contain rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.15)] border border-slate-200 bg-white"
+                  className="h-14 w-20 object-contain rounded-sm shadow-[0_2px_6px_rgba(0,0,0,0.35)] border border-white/30 bg-white/95"
                 />
               )}
             </div>
 
-            {/* CENTER: conference title, dark blue, centered */}
+            {/* CENTER: conference title, white on bright blue, centered — fills available width */}
             <button
               onClick={() => setPublicView && setPublicView('home')}
-              className="text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b2a5b]/40 rounded"
+              className="text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded w-full"
               aria-label="Go to home"
             >
-              <div className="font-serif font-bold tracking-tight text-[#0b2a5b] text-lg md:text-xl leading-tight uppercase">
+              <div
+                className="font-serif font-bold tracking-tight text-white text-xl md:text-2xl lg:text-3xl leading-tight uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
+              >
                 {title}
               </div>
-              {code && (
-                <div className="text-[10px] md:text-[11px] font-medium text-slate-500 tracking-wider uppercase mt-0.5">
-                  {code} · Scientific Conference Management System
-                </div>
-              )}
             </button>
 
-            {/* RIGHT: optional emblem + auth actions */}
-            <div className="flex items-center gap-3 justify-end">
+            {/* RIGHT: optional emblem (no auth buttons — those live in the interactive window) */}
+            <div className="flex items-center justify-end shrink-0">
               {rightLogo ? (
                 <img
                   src={rightLogo}
                   alt="Institution / right header emblem"
-                  className="h-10 w-14 object-contain rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.15)] border border-slate-200 bg-white hidden sm:block"
+                  className="h-14 w-20 object-contain rounded-sm shadow-[0_2px_6px_rgba(0,0,0,0.35)] border border-white/30 bg-white/95"
                 />
               ) : (
                 <div
                   aria-hidden="true"
-                  className="h-10 w-14 rounded-sm border border-dashed border-slate-200 bg-slate-50 hidden md:block"
+                  className="h-14 w-20 rounded-sm border border-dashed border-white/40 bg-white/10 hidden md:block"
                   title="Right header emblem placeholder — upload from Conference Admin"
                 />
               )}
-              <div className="flex gap-2 items-center">
-                {onSignIn && <Button variant="ghost" size="sm" onClick={onSignIn} className="text-[#0b2a5b] hover:bg-slate-100">Sign in</Button>}
-                {onRegister && <Button size="sm" onClick={onRegister} className="bg-[#0b2a5b] hover:bg-[#0a2450] text-white">Get started</Button>}
-              </div>
             </div>
           </div>
         </div>
         {/* Nav bar */}
-        <nav className="border-t bg-slate-50">
-          <div className="container mx-auto px-6 flex flex-wrap gap-1 justify-center">
+        <nav className="relative border-t border-white/10 bg-[#0a3fbf]">
+          <div className="w-full px-4 md:px-8 flex flex-wrap gap-1 justify-center">
             {navItems.map(n => (
               <button key={n.key}
                 onClick={() => setPublicView && setPublicView(n.key)}
-                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-[#0b2a5b] text-[#0b2a5b]' : 'border-transparent text-slate-600 hover:text-[#0b2a5b] hover:border-slate-300'}`}>
+                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-white text-white' : 'border-transparent text-white/75 hover:text-white hover:border-white/50'}`}>
                 {n.label}
               </button>
             ))}
@@ -220,9 +225,9 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
           <div>
             <div className="flex items-center gap-2 mb-2">
               <div className="h-8 w-8 rounded bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold">S</div>
-              <div className="font-bold">{code || 'SCMS'}</div>
+              <div className="font-bold">{conf?.name || 'Scientific Conference'}</div>
             </div>
-            <div className="text-sm text-slate-300 italic">"{themeText}"</div>
+            <div className="text-sm text-slate-300 italic">"{conf?.theme || conf?.subtitle || 'Advancing Science Through Rigorous Peer Review'}"</div>
           </div>
           <div>
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Quick Links</div>
@@ -1239,7 +1244,7 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'users') return <UserManagement />
   if (route.name === 'delegates') return <DelegatesPage />
   if (route.name === 'audit') return <AuditView />
-  if (route.name === 'abstract') return <AbstractDetail id={route.id} user={user} isEditor={isEditor} isAdmin={isAdmin} setRoute={setRoute} />
+  if (route.name === 'abstract') return <AbstractDetail id={route.id} route={route} user={user} isEditor={isEditor} isAdmin={isAdmin} isReviewer={isReviewer} setRoute={setRoute} />
   return <div className="p-6">Not found</div>
 }
 
@@ -1443,7 +1448,7 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
                       <div
                         key={a.id}
                         className={`border rounded-lg p-3 flex items-center gap-3 transition ${canOpen ? 'hover:shadow-sm cursor-pointer' : 'cursor-default opacity-90'} ${isPending ? 'bg-amber-50/60 border-amber-200' : isDeclined ? 'bg-rose-50/50 border-rose-200' : done ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`}
-                        onClick={() => { if (canOpen) setRoute({ name: 'abstract', id: a.abstract.id }) }}
+                        onClick={() => { if (canOpen) setRoute({ name: 'abstract', id: a.abstract.id, from: 'reviews' }) }}
                       >
                         <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${isPending ? 'bg-amber-500' : isDeclined ? 'bg-rose-500' : done ? 'bg-emerald-600' : 'bg-purple-600'} text-white`}>
                           <Award className="h-5 w-5" />
@@ -2009,7 +2014,7 @@ function SubmitAbstract({ setRoute, user }) {
 }
 
 // ============ ABSTRACT DETAIL ============
-function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
+function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRoute }) {
   const [abs, setAbs] = useState(null)
   const [tab, setTab] = useState('overview')
   const refresh = () => api(`/abstracts/${id}`).then(d => setAbs(d.abstract)).catch(e => toast.error(e.message))
@@ -2018,10 +2023,20 @@ function AbstractDetail({ id, user, isEditor, isAdmin, setRoute }) {
 
   const isOwner = abs.submittedById === user.id
   const currentStateIndex = TIMELINE_STAGES.findIndex(s => s.key === abs.currentState || s.altKeys?.includes(abs.currentState))
+  // Prefer the explicit `from` route hint captured when navigating here; fall back to
+  // role-based defaults so editorial users don't get dumped on "My abstracts".
+  const backTarget = route?.from
+    || (isEditor || isAdmin ? 'editorial'
+      : isReviewer ? 'reviews'
+      : 'my-abstracts')
+  const backLabel = backTarget === 'editorial' ? 'Editorial Office'
+    : backTarget === 'reviews' ? 'My review workspace'
+    : backTarget === 'workspace' ? 'My editor workspace'
+    : 'My abstracts'
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <button className="text-sm text-muted-foreground hover:text-foreground mb-3" onClick={() => setRoute({ name: 'my-abstracts' })}>← Back</button>
+      <button className="text-sm text-muted-foreground hover:text-foreground mb-3" onClick={() => setRoute({ name: backTarget })}>← Back to {backLabel}</button>
       <div className="flex justify-between items-start gap-4 mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -2907,7 +2922,7 @@ function EditorialOffice({ setRoute }) {
           <EditorialAbstractRow
             key={a.id}
             a={a}
-            onOpen={() => setRoute({ name: 'abstract', id: a.id })}
+            onOpen={() => setRoute({ name: 'abstract', id: a.id, from: 'editorial' })}
             committeeEditors={committeeEditors}
             canAssignEditor={canAssignEditor}
             onAssignEditor={(editorId) => assignCommitteeEditor(a.id, editorId)}
@@ -3154,7 +3169,7 @@ function ReviewerWorkspace({ setRoute }) {
                       )}
                       {/* Abstract is viewable only AFTER acceptance */}
                       {!isPending && !isDeclined && (
-                        <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id })}>Open abstract</Button>
+                        <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id, from: 'reviews' })}>Open abstract</Button>
                       )}
                       {a.invitationStatus === 'ACCEPTED' && !a.report && (
                         <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setActive(a)}>Submit review</Button>
@@ -4081,13 +4096,15 @@ function HeroImagesDialog({ conference, onClose, onDone }) {
 function HeaderLogosDialog({ conference, onClose, onDone }) {
   const [leftLogo, setLeftLogo] = useState(conference?.headerLogoLeft || '')
   const [rightLogo, setRightLogo] = useState(conference?.headerLogoRight || '')
+  const [background, setBackground] = useState(conference?.headerBackground || '')
   const [uploading, setUploading] = useState(null)
 
   const upload = async (side, e) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) { toast.error('Only image files allowed'); return }
-    if (file.size > 2 * 1024 * 1024) { toast.error('Icon exceeds 2 MB limit'); return }
+    const limit = side === 'background' ? 5 : 2
+    if (file.size > limit * 1024 * 1024) { toast.error(`Image exceeds ${limit} MB limit`); return }
     setUploading(side)
     try {
       const fd = new FormData()
@@ -4095,14 +4112,15 @@ function HeaderLogosDialog({ conference, onClose, onDone }) {
       fd.append('side', side)
       const d = await apiUpload(`/conferences/${conference.id}/header-logo`, fd)
       if (side === 'left') setLeftLogo(d.conference.headerLogoLeft || '')
-      else setRightLogo(d.conference.headerLogoRight || '')
-      toast.success(`${side === 'left' ? 'Left' : 'Right'} header icon updated`)
+      else if (side === 'right') setRightLogo(d.conference.headerLogoRight || '')
+      else setBackground(d.conference.headerBackground || '')
+      toast.success(`${side.charAt(0).toUpperCase() + side.slice(1)} header image updated`)
     } catch (e) { toast.error(e.message) }
     finally { setUploading(null); e.target.value = '' }
   }
 
   const clear = async (side) => {
-    if (!confirm(`Reset the ${side} header icon to the default?`)) return
+    if (!confirm(`Reset the ${side} header image to the default?`)) return
     try {
       const res = await fetch(`/api/conferences/${conference.id}/header-logo`, {
         method: 'DELETE',
@@ -4113,21 +4131,22 @@ function HeaderLogosDialog({ conference, onClose, onDone }) {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error)
       if (side === 'left') setLeftLogo('')
-      else setRightLogo('')
-      toast.success(`${side === 'left' ? 'Left' : 'Right'} header icon reset`)
+      else if (side === 'right') setRightLogo('')
+      else setBackground('')
+      toast.success(`${side.charAt(0).toUpperCase() + side.slice(1)} header image reset`)
     } catch (e) { toast.error(e.message) }
   }
 
-  const renderSlot = (side, current) => (
+  const renderSlot = (side, current, opts = {}) => (
     <div className="border rounded-lg p-4 bg-slate-50">
       <div className="flex items-center justify-between mb-3">
-        <div className="font-semibold text-sm capitalize">{side} header icon</div>
-        <Badge variant="outline" className="text-[10px]">{side === 'left' ? 'Default: Kenyan flag' : 'Optional emblem'}</Badge>
+        <div className="font-semibold text-sm capitalize">{opts.label || `${side} header icon`}</div>
+        <Badge variant="outline" className="text-[10px]">{opts.badge || (side === 'left' ? 'Default: Kenyan flag' : side === 'right' ? 'Optional emblem' : 'Optional background')}</Badge>
       </div>
       <div className="flex items-center gap-4">
-        <div className="h-14 w-20 border rounded bg-white flex items-center justify-center overflow-hidden">
+        <div className={`${side === 'background' ? 'h-16 w-32' : 'h-14 w-20'} border rounded bg-white flex items-center justify-center overflow-hidden`}>
           {current ? (
-            <img src={current} alt={`${side} icon preview`} className="max-h-full max-w-full object-contain" />
+            <img src={current} alt={`${side} preview`} className={side === 'background' ? 'h-full w-full object-cover' : 'max-h-full max-w-full object-contain'} />
           ) : side === 'left' ? (
             <img src="/kenya-flag.svg" alt="Kenya flag (default)" className="max-h-full max-w-full object-contain" />
           ) : (
@@ -4135,7 +4154,7 @@ function HeaderLogosDialog({ conference, onClose, onDone }) {
           )}
         </div>
         <div className="flex-1 space-y-2">
-          <label className="block text-xs text-muted-foreground">Upload replacement (PNG/JPG/SVG, max 2 MB)</label>
+          <label className="block text-xs text-muted-foreground">Upload replacement (PNG/JPG/SVG, max {side === 'background' ? 5 : 2} MB)</label>
           <input type="file" accept="image/*,image/svg+xml" onChange={(e) => upload(side, e)} disabled={uploading === side} className="text-xs" />
           {current && (
             <Button variant="outline" size="sm" onClick={() => clear(side)} disabled={uploading === side}>
@@ -4149,15 +4168,17 @@ function HeaderLogosDialog({ conference, onClose, onDone }) {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Fixed header icons</DialogTitle>
+          <DialogTitle>Fixed header assets</DialogTitle>
           <DialogDescription>
-            The public site header shows a small icon on each side of the centered conference title.
-            The <span className="font-medium">left</span> slot defaults to the Kenyan flag; the <span className="font-medium">right</span> slot is a placeholder for an institutional / sponsor emblem.
+            The public site header shows a small icon on each side of the centered conference title and an optional
+            background image. The <span className="font-medium">left</span> slot defaults to the Kenyan flag; the{' '}
+            <span className="font-medium">right</span> slot is a placeholder for an institutional emblem.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {renderSlot('background', background, { label: 'Header background image', badge: 'Optional (max 5 MB)' })}
           {renderSlot('left', leftLogo)}
           {renderSlot('right', rightLogo)}
         </div>
@@ -4242,8 +4263,7 @@ function ConferenceDialog({ editing, onClose, onDone }) {
           <DialogDescription>Fill in the conference details. Themes can be added after saving.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>Code *</Label><Input value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="CONF2027" /></div>
+          <div className="grid grid-cols-1 gap-2">
             <div><Label>Status</Label>
               <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -4255,7 +4275,6 @@ function ConferenceDialog({ editing, onClose, onDone }) {
           <div><Label>Subtitle / tagline</Label><Input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })} placeholder="Shown under title on the public site" /></div>
           <div><Label>Conference theme (shown in footer)</Label><Input value={form.theme} onChange={e => setForm({ ...form, theme: e.target.value })} placeholder="e.g. Advancing Health Through Innovation" /></div>
           <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 5)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
-          <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           <div className="grid grid-cols-3 gap-2">
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
             <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
@@ -6482,7 +6501,7 @@ function EditorWorkspace({ setRoute, user }) {
                   <span className="text-xs text-muted-foreground">{abs.length} paper{abs.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="grid gap-3">
-                  {abs.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} inWorkspace />)}
+                  {abs.map(a => <EditorialAbstractRow key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id, from: 'workspace' })} inWorkspace />)}
                 </div>
               </div>
             ))}

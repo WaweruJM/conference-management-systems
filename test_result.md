@@ -1057,6 +1057,75 @@ backend:
           **SUMMARY:**
           All header logo endpoints working correctly. File upload with multipart form data works. File size validation (max 2 MB) enforced. Side parameter validation ('left' or 'right' only) enforced. RBAC properly enforced (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR allowed; AUTHOR, COMMITTEE_MEMBER denied). DELETE endpoint clears fields correctly. GET /api/public/config surfaces both fields. No regressions - heroImages array intact.
 
+  - task: "Extended header assets endpoint with background support (POST/DELETE /api/conferences/:id/header-logo side='background')"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Extended POST /api/conferences/:id/header-logo to support side='background' in addition to 'left'/'right'. Background images can be up to 5 MB (vs 2 MB for icons). Persists to Conference.headerBackground field. DELETE with side='background' clears the field. GET /api/public/config surfaces headerBackground field. RBAC unchanged (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR)."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL EXTENDED HEADER ASSETS TESTS PASSED (10/10 = 100% SUCCESS RATE)
+          
+          **Test Results:**
+          
+          ✅ Test 1: Verify /public/config returns headerBackground field
+          - GET /api/public/config returns conference object with headerBackground field (initially null) ✅
+          
+          ✅ Test 2: Upload ~1 MB PNG with side='background'
+          - POST with side='background' and ~1 MB PNG → 200 ✅
+          - Response includes conference, imagePath, side='background' ✅
+          - imagePath format: /api/uploads/header/{confId}/header_background_{timestamp}_{random}_{filename} ✅
+          - GET /api/public/config confirms headerBackground updated ✅
+          
+          ✅ Test 3: Upload ~6 MB image with side='background' (expect 400)
+          - POST with ~6 MB PNG → 400 ✅
+          - Error message: "Image too large (max 5 MB). Please upload a compressed image." ✅
+          
+          ✅ Test 4: Upload ~3 MB image with side='left' (expect 400)
+          - POST with ~3 MB PNG and side='left' → 400 ✅
+          - Error message: "Image too large (max 2 MB). Please upload a compressed image." ✅
+          - Icons still capped at 2 MB as expected ✅
+          
+          ✅ Test 5: Upload with side='middle' (expect 400)
+          - POST with invalid side='middle' → 400 ✅
+          - Error message: "side must be \"left\", \"right\" or \"background\"" ✅
+          - Message correctly references all three valid sides ✅
+          
+          ✅ Test 6: DELETE with side='background'
+          - DELETE with {"side":"background"} → 200 ✅
+          - Response conference.headerBackground === null ✅
+          - GET /api/public/config confirms headerBackground now null ✅
+          
+          ✅ Test 7: DELETE with side='invalid' (expect 400)
+          - DELETE with {"side":"invalid"} → 400 ✅
+          - Error message: "side must be \"left\", \"right\" or \"background\"" ✅
+          
+          ✅ Test 8: POST as author@scms.io (expect 403)
+          - POST with valid file and side='background' as author → 403 ✅
+          - RBAC correctly enforced ✅
+          
+          ✅ Test 9: POST and DELETE as chief@scms.io
+          - POST with ~500 KB PNG and side='background' as chief editor → 200 ✅
+          - DELETE with {"side":"background"} as chief editor → 200 ✅
+          - CHIEF_EDITOR has correct permissions ✅
+          
+          ✅ Test 10: Regression - upload side='left'
+          - POST with ~50 KB PNG and side='left' → 200 ✅
+          - GET /api/public/config confirms headerLogoLeft updated ✅
+          - headerBackground remains null (unaffected by left upload) ✅
+          - Cleanup: All logos (left, right, background) deleted successfully ✅
+          
+          **SUMMARY:**
+          All extended header assets endpoint tests passed. Background image support working correctly with 5 MB limit. Icon uploads (left/right) still enforce 2 MB limit. Side parameter validation includes all three options ('left', 'right', 'background'). RBAC unchanged and properly enforced. DELETE endpoint clears background field correctly. GET /api/public/config surfaces headerBackground field. No regressions - existing left/right functionality intact.
+
+
 frontend:
   - task: "SCMS Enterprise UI - all modules"
     implemented: true
@@ -1117,11 +1186,13 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Header assets endpoint now supports side='background' in addition to left/right. POST accepts up to 5 MB for background (2 MB for icons). DELETE with side='background' clears the field. GET /api/public/config surfaces `headerBackground`."
+    - "Regression: existing left/right upload/delete flows still work with same 2 MB limit and RBAC (SYSTEM_ADMIN/MANAGING_EDITOR/CHIEF_EDITOR)."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2152,3 +2223,65 @@ agent_communication:
       
       **Summary:**
       All header logo endpoints working correctly. File upload with multipart form data works. File size validation (max 2 MB) enforced. Side parameter validation ('left' or 'right' only) enforced. RBAC properly enforced (SYSTEM_ADMIN, MANAGING_EDITOR, CHIEF_EDITOR allowed; AUTHOR, COMMITTEE_MEMBER denied). DELETE endpoint clears fields correctly. GET /api/public/config surfaces both fields. No regressions - heroImages array intact. All logos cleaned up at end of test.
+
+  - agent: "testing"
+    message: |
+      ✅ EXTENDED HEADER ASSETS ENDPOINT VERIFICATION COMPLETE - ALL TESTS PASSED (10/10 = 100% SUCCESS RATE)
+      
+      **Test Scope:** Verify extended header assets endpoint with background support per review request.
+      
+      **Feature:** POST/DELETE /api/conferences/:id/header-logo now supports side='background' in addition to 'left'/'right'.
+      Background images can be up to 5 MB (vs 2 MB for icons). Persists to Conference.headerBackground field.
+      
+      **Test Results:**
+      
+      ✅ Test 1: Verify /public/config returns headerBackground field
+         - GET /api/public/config returns conference object with headerBackground field (initially null) ✅
+      
+      ✅ Test 2: Upload ~1 MB PNG with side='background'
+         - POST with side='background' and ~1 MB PNG → 200 ✅
+         - Response includes conference, imagePath, side='background' ✅
+         - imagePath format: /api/uploads/header/{confId}/header_background_{timestamp}_{random}_{filename} ✅
+         - GET /api/public/config confirms headerBackground updated ✅
+      
+      ✅ Test 3: Upload ~6 MB image with side='background' (expect 400)
+         - POST with ~6 MB PNG → 400 ✅
+         - Error message: "Image too large (max 5 MB). Please upload a compressed image." ✅
+      
+      ✅ Test 4: Upload ~3 MB image with side='left' (expect 400)
+         - POST with ~3 MB PNG and side='left' → 400 ✅
+         - Error message: "Image too large (max 2 MB). Please upload a compressed image." ✅
+         - Icons still capped at 2 MB as expected ✅
+      
+      ✅ Test 5: Upload with side='middle' (expect 400)
+         - POST with invalid side='middle' → 400 ✅
+         - Error message: "side must be \"left\", \"right\" or \"background\"" ✅
+         - Message correctly references all three valid sides ✅
+      
+      ✅ Test 6: DELETE with side='background'
+         - DELETE with {"side":"background"} → 200 ✅
+         - Response conference.headerBackground === null ✅
+         - GET /api/public/config confirms headerBackground now null ✅
+      
+      ✅ Test 7: DELETE with side='invalid' (expect 400)
+         - DELETE with {"side":"invalid"} → 400 ✅
+         - Error message: "side must be \"left\", \"right\" or \"background\"" ✅
+      
+      ✅ Test 8: POST as author@scms.io (expect 403)
+         - POST with valid file and side='background' as author → 403 ✅
+         - RBAC correctly enforced ✅
+      
+      ✅ Test 9: POST and DELETE as chief@scms.io
+         - POST with ~500 KB PNG and side='background' as chief editor → 200 ✅
+         - DELETE with {"side":"background"} as chief editor → 200 ✅
+         - CHIEF_EDITOR has correct permissions ✅
+      
+      ✅ Test 10: Regression - upload side='left'
+         - POST with ~50 KB PNG and side='left' → 200 ✅
+         - GET /api/public/config confirms headerLogoLeft updated ✅
+         - headerBackground remains null (unaffected by left upload) ✅
+         - Cleanup: All logos (left, right, background) deleted successfully ✅
+      
+      **Summary:**
+      All extended header assets endpoint tests passed. Background image support working correctly with 5 MB limit. Icon uploads (left/right) still enforce 2 MB limit. Side parameter validation includes all three options ('left', 'right', 'background'). RBAC unchanged and properly enforced. DELETE endpoint clears background field correctly. GET /api/public/config surfaces headerBackground field. No regressions - existing left/right functionality intact.
+

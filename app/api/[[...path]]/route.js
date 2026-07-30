@@ -515,8 +515,8 @@ async function handleConferences(route, method, request) {
     return ok({ conference: updated })
   }
 
-  // Header logo upload (left or right side icon on the fixed public header)
-  // POST with multipart body {file, side: 'left'|'right'} → replaces existing
+  // Header logo upload (left/right/background side icon on the fixed public header)
+  // POST with multipart body {file, side: 'left'|'right'|'background'} → replaces existing
   // DELETE with body {side} → clears (reverts to default)
   const headerLogoMatch = route.match(/^\/conferences\/([^\/]+)\/header-logo$/)
   if (headerLogoMatch && method === 'POST') {
@@ -525,9 +525,11 @@ async function handleConferences(route, method, request) {
     const formData = await request.formData()
     const file = formData.get('file')
     const side = (formData.get('side') || 'left').toString().toLowerCase()
-    if (!['left', 'right'].includes(side)) return err('side must be "left" or "right"')
+    if (!['left', 'right', 'background'].includes(side)) return err('side must be "left", "right" or "background"')
     if (!file) return err('No file')
-    if (file.size > 2 * 1024 * 1024) return err('Icon image too large (max 2 MB). Please upload a compressed image.')
+    // background can be larger (up to 5 MB), icons stay small
+    const sizeLimit = side === 'background' ? 5 * 1024 * 1024 : 2 * 1024 * 1024
+    if (file.size > sizeLimit) return err(`Image too large (max ${sizeLimit / 1024 / 1024} MB). Please upload a compressed image.`)
     const buf = Buffer.from(await file.arrayBuffer())
     const safeName = `header_${side}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
     const dir = path.join(UPLOAD_DIR, 'header', headerLogoMatch[1])
@@ -535,7 +537,9 @@ async function handleConferences(route, method, request) {
     const filePath = path.join(dir, safeName)
     await fs.writeFile(filePath, buf)
     const publicPath = `/api/uploads/header/${headerLogoMatch[1]}/${safeName}`
-    const data = side === 'left' ? { headerLogoLeft: publicPath } : { headerLogoRight: publicPath }
+    const data = side === 'left' ? { headerLogoLeft: publicPath }
+               : side === 'right' ? { headerLogoRight: publicPath }
+               : { headerBackground: publicPath }
     const conf = await prisma.conference.update({ where: { id: headerLogoMatch[1] }, data })
     await logAudit({ actorId: user.id, action: 'UPDATE_HEADER_LOGO', entityType: 'Conference', entityId: headerLogoMatch[1], metadata: { side } })
     return ok({ conference: conf, imagePath: publicPath, side })
@@ -545,8 +549,10 @@ async function handleConferences(route, method, request) {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const side = (body.side || '').toString().toLowerCase()
-    if (!['left', 'right'].includes(side)) return err('side must be "left" or "right"')
-    const data = side === 'left' ? { headerLogoLeft: null } : { headerLogoRight: null }
+    if (!['left', 'right', 'background'].includes(side)) return err('side must be "left", "right" or "background"')
+    const data = side === 'left' ? { headerLogoLeft: null }
+               : side === 'right' ? { headerLogoRight: null }
+               : { headerBackground: null }
     const conf = await prisma.conference.update({ where: { id: headerLogoMatch[1] }, data })
     return ok({ conference: conf })
   }
