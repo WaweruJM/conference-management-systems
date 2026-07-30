@@ -159,15 +159,15 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
           </>
         )}
 
-        <div className="relative w-full px-4 md:px-8 py-4">
-          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-6 w-full">
+        <div className="relative w-full px-3 md:px-6 py-1.5">
+          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-4 w-full">
             {/* LEFT: flag icon (Kenyan flag by default) */}
             <div className="flex items-center shrink-0">
               {leftLogo && (
                 <img
                   src={leftLogo}
                   alt="National / left header emblem"
-                  className="h-14 w-20 object-contain rounded-sm shadow-[0_2px_6px_rgba(0,0,0,0.35)] border border-white/30 bg-white/95"
+                  className="h-9 w-14 object-contain rounded-sm shadow-[0_2px_4px_rgba(0,0,0,0.3)] border border-white/30 bg-white/95"
                 />
               )}
             </div>
@@ -175,11 +175,11 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
             {/* CENTER: conference title, white on bright blue, centered — fills available width */}
             <button
               onClick={() => setPublicView && setPublicView('home')}
-              className="text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded w-full"
+              className="text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded w-full py-0.5"
               aria-label="Go to home"
             >
               <div
-                className="font-serif font-bold tracking-tight text-white text-xl md:text-2xl lg:text-3xl leading-tight uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.4)]"
+                className="font-serif font-bold tracking-tight text-white text-sm md:text-base lg:text-lg leading-tight uppercase drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
               >
                 {title}
               </div>
@@ -191,12 +191,12 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
                 <img
                   src={rightLogo}
                   alt="Institution / right header emblem"
-                  className="h-14 w-20 object-contain rounded-sm shadow-[0_2px_6px_rgba(0,0,0,0.35)] border border-white/30 bg-white/95"
+                  className="h-9 w-14 object-contain rounded-sm shadow-[0_2px_4px_rgba(0,0,0,0.3)] border border-white/30 bg-white/95"
                 />
               ) : (
                 <div
                   aria-hidden="true"
-                  className="h-14 w-20 rounded-sm border border-dashed border-white/40 bg-white/10 hidden md:block"
+                  className="h-9 w-14 rounded-sm border border-dashed border-white/40 bg-white/10 hidden md:block"
                   title="Right header emblem placeholder — upload from Conference Admin"
                 />
               )}
@@ -205,11 +205,11 @@ function PublicChrome({ conf, children, onSignIn, onRegister, currentView, setPu
         </div>
         {/* Nav bar */}
         <nav className="relative border-t border-white/10 bg-[#0a3fbf]">
-          <div className="w-full px-4 md:px-8 flex flex-wrap gap-1 justify-center">
+          <div className="w-full px-3 md:px-6 flex flex-wrap gap-0.5 justify-center">
             {navItems.map(n => (
               <button key={n.key}
                 onClick={() => setPublicView && setPublicView(n.key)}
-                className={`px-4 py-2.5 text-sm font-medium border-b-2 transition ${currentView === n.key ? 'border-white text-white' : 'border-transparent text-white/75 hover:text-white hover:border-white/50'}`}>
+                className={`px-3 py-1.5 text-xs md:text-[13px] font-medium border-b-2 transition ${currentView === n.key ? 'border-white text-white' : 'border-transparent text-white/75 hover:text-white hover:border-white/50'}`}>
                 {n.label}
               </button>
             ))}
