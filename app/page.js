@@ -887,7 +887,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
             <span className="font-bold text-xl">SCMS</span>
           </div>
           <CardTitle>{mode === 'login' ? 'Sign in to your account' : (isReviewerInvite ? 'Accept Reviewer Invitation' : 'Create your account')}</CardTitle>
-          <CardDescription>{isReviewerInvite ? 'Register as an External Peer Reviewer' : 'Enterprise scientific conference platform'}</CardDescription>
+          <CardDescription>{isReviewerInvite ? 'Register as an External Peer Reviewer' : 'Scientific Conference Management System'}</CardDescription>
         </CardHeader>
         <form onSubmit={submit}>
           <CardContent className="space-y-3">
@@ -5297,7 +5297,7 @@ function ExhibitionBoothsPublic({ conf }) {
 
   useEffect(() => {
     if (booths.length < 2 || paused) return
-    const t = setInterval(() => goTo((idx + 1) % booths.length), 8000)
+    const t = setInterval(() => goTo((idx + 1) % booths.length), 5000)
     return () => clearInterval(t)
   }, [booths.length, paused, idx])
 
@@ -5319,36 +5319,49 @@ function ExhibitionBoothsPublic({ conf }) {
   return (
     <div className="bg-gradient-to-br from-slate-50 via-white to-indigo-50 min-h-screen">
       <div className="container mx-auto px-4 py-4 max-w-6xl">
-        {/* Compact professional header */}
-        <div className="text-center mb-4">
-          <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 mb-2">
-            <Building2 className="h-3 w-3" /> Industry partners showcase
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-800">
-            Meet the industry partners powering {conf?.name || 'this conference'}
-          </h1>
-        </div>
-
-        {/* Main rotating card — fits within window (no vertical scroll) */}
+        {/* Main rotating card — begins immediately, no page header */}
         <div className="relative" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-          <Card key={idx} className="overflow-hidden shadow-xl border-0 ring-1 ring-slate-200 animate-in fade-in slide-in-from-right-6 duration-700">
+          <Card key={idx} className="overflow-hidden shadow-2xl border-0 ring-1 ring-slate-200 animate-in fade-in slide-in-from-right-6 duration-700">
             <CardContent className="p-0">
-              {/* Company title top strip */}
-              <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-fuchsia-600 px-6 py-4 text-white flex items-center gap-4">
-                {b.logoPath && (
-                  <div className="h-14 w-14 bg-white rounded-lg p-1.5 shadow-lg shrink-0">
-                    <img src={b.logoPath} alt="" className="h-full w-full object-contain" />
+              {/* Top strip: company name + tier badge — prominent, professional */}
+              <div
+                className="relative px-6 md:px-8 py-4 md:py-5 text-white overflow-hidden"
+                style={{
+                  background: (() => {
+                    const tier = (b.tier || b.companyType || '').toLowerCase()
+                    if (tier.includes('platinum')) return 'linear-gradient(135deg, #4b5563 0%, #1f2937 50%, #0f172a 100%)'
+                    if (tier.includes('gold')) return 'linear-gradient(135deg, #d97706 0%, #b45309 50%, #78350f 100%)'
+                    if (tier.includes('silver')) return 'linear-gradient(135deg, #94a3b8 0%, #64748b 50%, #334155 100%)'
+                    if (tier.includes('bronze')) return 'linear-gradient(135deg, #a16207 0%, #713f12 50%, #451a03 100%)'
+                    if (tier.includes('diamond')) return 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 50%, #0369a1 100%)'
+                    return 'linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #a21caf 100%)'
+                  })(),
+                }}
+              >
+                <div className="absolute inset-0 opacity-10 mix-blend-overlay" style={{ backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.5), transparent 60%)' }} />
+                <div className="relative flex items-center gap-4">
+                  {b.logoPath && (
+                    <div className="h-16 w-16 md:h-20 md:w-20 bg-white rounded-xl p-2 shadow-2xl shrink-0 ring-2 ring-white/40">
+                      <img src={b.logoPath} alt="" className="h-full w-full object-contain" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                      <Badge className="bg-white text-slate-900 border-0 px-3 py-0.5 text-[11px] font-bold uppercase tracking-widest shadow">
+                        {b.tier || b.companyType || 'Industry Partner'}
+                      </Badge>
+                      <span className="text-[11px] text-white/70 uppercase tracking-wider font-medium">Sponsor</span>
+                    </div>
+                    <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold drop-shadow-md leading-tight truncate">
+                      {b.sponsorName}
+                    </h2>
                   </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <Badge className="bg-white/20 border-white/30 text-white backdrop-blur-sm text-[10px] mb-1">{b.companyType || 'Industry Partner'}</Badge>
-                  <h2 className="text-xl md:text-2xl font-bold drop-shadow leading-tight truncate">{b.sponsorName}</h2>
                 </div>
               </div>
 
-              {/* Body: image + text + links laid out horizontally to fit within viewport */}
-              <div className="grid md:grid-cols-5 gap-0">
-                {/* Left column: image / video */}
+              {/* Body: image + text laid out horizontally to fit within one screen */}
+              <div className="grid md:grid-cols-5 gap-0 bg-white">
+                {/* Left column: banner image */}
                 <div className="md:col-span-2 bg-slate-100 flex items-center justify-center">
                   {b.bannerPath ? (
                     <div className="w-full aspect-[4/3] md:aspect-auto md:h-full overflow-hidden">
@@ -5356,28 +5369,28 @@ function ExhibitionBoothsPublic({ conf }) {
                     </div>
                   ) : (
                     <div className="w-full aspect-[4/3] md:aspect-auto md:h-full bg-gradient-to-br from-indigo-100 via-fuchsia-100 to-rose-100 flex items-center justify-center">
-                      <Building2 className="h-16 w-16 text-slate-300" />
+                      <Building2 className="h-20 w-20 text-slate-300" />
                     </div>
                   )}
                 </div>
 
-                {/* Right column: message + products + contact + links */}
-                <div className="md:col-span-3 p-5 md:p-6 space-y-3 max-h-[62vh] overflow-auto">
+                {/* Right column: about + products + contacts */}
+                <div className="md:col-span-3 p-5 md:p-6 flex flex-col gap-3 min-h-0">
                   {b.message && (
                     <div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">About</div>
-                      <p className="text-sm md:text-base leading-relaxed text-slate-700 whitespace-pre-wrap">{b.message}</p>
+                      <p className="text-sm md:text-[15px] leading-relaxed text-slate-700 whitespace-pre-wrap line-clamp-4">{b.message}</p>
                     </div>
                   )}
                   {b.products && (
                     <div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Products &amp; Services</div>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{b.products}</p>
+                      <p className="text-sm text-slate-700 whitespace-pre-wrap line-clamp-3">{b.products}</p>
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t">
-                    <div className="p-3 rounded-md bg-slate-50 border">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-auto pt-3 border-t">
+                    <div className="p-3 rounded-md bg-gradient-to-br from-slate-50 to-white border shadow-sm">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Get in touch</div>
                       <div className="space-y-1 text-xs">
                         {b.websiteUrl && (
@@ -5399,10 +5412,10 @@ function ExhibitionBoothsPublic({ conf }) {
                       </div>
                     </div>
                     {b.otherLinks && b.otherLinks.length > 0 && (
-                      <div className="p-3 rounded-md bg-indigo-50 border border-indigo-100">
+                      <div className="p-3 rounded-md bg-gradient-to-br from-indigo-50 to-fuchsia-50 border border-indigo-100 shadow-sm">
                         <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-1.5">Explore more</div>
                         <div className="space-y-1">
-                          {b.otherLinks.slice(0, 4).map((l, i) => (
+                          {b.otherLinks.slice(0, 3).map((l, i) => (
                             <a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-indigo-700 hover:underline">
                               <ChevronRight className="h-3 w-3 shrink-0" /><span className="truncate">{l.label}</span>
                             </a>
@@ -5438,7 +5451,7 @@ function ExhibitionBoothsPublic({ conf }) {
             </div>
           )}
           <div className="text-center text-xs text-muted-foreground mb-3">
-            Booth {idx + 1} of {booths.length} · {paused ? 'Paused (hovering)' : 'Auto-rotates every 8 seconds'}
+            Booth {idx + 1} of {booths.length} · {paused ? 'Paused (hovering)' : 'Auto-rotates every 5 seconds'}
           </div>
           <div className="flex justify-center gap-2 flex-wrap">
             {booths.map((booth, i) => (
