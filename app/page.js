@@ -2148,6 +2148,13 @@ function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRou
 
   const isOwner = abs.submittedById === user.id
   const currentStateIndex = TIMELINE_STAGES.findIndex(s => s.key === abs.currentState || s.altKeys?.includes(abs.currentState))
+  // Reviewer context — pick best (ACCEPTED > PENDING > DECLINED) of this reviewer's rows
+  const myReviewerAsns = (abs.reviewAssignments || []).filter(r => r.reviewerId === user.id)
+  const _priority = { ACCEPTED: 0, PENDING: 1, DECLINED: 2 }
+  const myReviewerAssignment = myReviewerAsns.sort((a, b) => (_priority[a.invitationStatus] ?? 9) - (_priority[b.invitationStatus] ?? 9))[0]
+  const isPureReviewer = !!myReviewerAssignment && !isEditor && !isAdmin && !isOwner
+  const canWriteReview = isPureReviewer && myReviewerAssignment.invitationStatus === 'ACCEPTED' && !myReviewerAssignment.report
+
   // Prefer the explicit `from` route hint captured when navigating here; fall back to
   // role-based defaults so editorial users don't get dumped on "My abstracts".
   const backTarget = route?.from
@@ -2176,7 +2183,9 @@ function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRou
         </div>
       </div>
 
-      {/* Editorial Process Tracker */}
+      {/* Editorial Process Tracker — hidden for pure reviewers (they only need
+          the abstract content + review inputs, not the workflow state chips). */}
+      {!isPureReviewer && (
       <Card className="mb-6 overflow-hidden border-0 shadow-md">
         <CardContent className="p-6 bg-gradient-to-br from-white via-indigo-50/40 to-fuchsia-50/40">
           <div className="flex items-center justify-between mb-4">
@@ -2230,6 +2239,11 @@ function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRou
           </div>
         </CardContent>
       </Card>
+      )}
+
+      {/* Inline review submission for a pure reviewer with an ACCEPTED, not-yet-submitted assignment.
+          Replaces the modal so reviewers see the abstract in full and provide comments directly on the page. */}
+      {canWriteReview && <InlineReviewForm abstract={abs} assignmentId={myReviewerAssignment.id} onDone={refresh} />}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="grid grid-cols-6">
@@ -3297,7 +3311,7 @@ function ReviewerWorkspace({ setRoute }) {
                         <Button size="sm" variant="outline" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id, from: 'reviews' })}>Open abstract</Button>
                       )}
                       {a.invitationStatus === 'ACCEPTED' && !a.report && (
-                        <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setActive(a)}>Submit review</Button>
+                        <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setRoute({ name: 'abstract', id: a.abstract.id, from: 'reviews' })}>Open &amp; review</Button>
                       )}
                     </div>
                   </div>
@@ -3503,6 +3517,138 @@ function ReviewForm({ assignment, onClose, onDone }) {
     </Dialog>
   )
 }
+
+// Inline peer-review submission — used on the AbstractDetail page for pure reviewers
+// with an ACCEPTED, not-yet-submitted assignment. Renders below the abstract content
+// so the reviewer sees the full paper while writing the review.
+function InlineReviewForm({ abstract, assignmentId, onDone }) {
+  const [scores, setScores] = useState({ originalityScore: 7, significanceScore: 7, methodologyScore: 7, clarityScore: 7, overallScore: 7 })
+  const [recommendation, setRecommendation] = useState('MINOR_REVISION')
+  const [reviewComments, setReviewComments] = useState('')
+  const [confidentialNotes, setConfidentialNotes] = useState('')
+  const [files, setFiles] = useState([])
+  const [submitting, setSubmitting] = useState(false)
+
+  const addFiles = (e) => {
+    const list = Array.from(e.target.files || [])
+    const oversized = list.find(f => f.size > 25 * 1024 * 1024)
+    if (oversized) { toast.error(`File "${oversized.name}" is over 25MB`); return }
+    setFiles([...files, ...list])
+    e.target.value = ''
+  }
+  const removeFile = (i) => setFiles(files.filter((_, j) => j !== i))
+
+  const submit = async () => {
+    if (!reviewComments.trim()) return toast.error('Review comments are required')
+    setSubmitting(true)
+    try {
+      for (const f of files) {
+        const fd = new FormData()
+        fd.append('file', f)
+        fd.append('category', 'REVIEWER_ANNOTATION')
+        await apiUpload(`/abstracts/${abstract.id}/documents`, fd)
+      }
+      await api(`/reviewer/assignments/${assignmentId}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...scores,
+          recommendation,
+          commentsToAuthor: reviewComments,
+          commentsToEditor: confidentialNotes || null,
+        }),
+      })
+      toast.success('Review submitted to the committee editor')
+      onDone && onDone()
+    } catch (e) {
+      toast.error(e.message || 'Failed to submit review')
+    } finally { setSubmitting(false) }
+  }
+
+  return (
+    <Card className="mb-6 border-2 border-indigo-300 shadow-md">
+      <CardHeader className="bg-gradient-to-r from-indigo-50 via-white to-fuchsia-50">
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-md bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center">
+            <Award className="h-4 w-4 text-white" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Your peer review</CardTitle>
+            <CardDescription>Complete the fields below — your review, comments and any attached files are delivered directly to the committee editor.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-4">
+        <div className="p-2.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2">
+          <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
+          <span><strong>Double-blind:</strong> author identities are hidden. You never correspond with the author — everything you submit here goes to the committee editor.</span>
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Scores (1–10)</Label>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-1">
+            {['originalityScore','significanceScore','methodologyScore','clarityScore','overallScore'].map(k => (
+              <div key={k}>
+                <Label className="text-[10px] text-muted-foreground">{k.replace('Score','').replace(/^./, c => c.toUpperCase())}</Label>
+                <Input type="number" min={1} max={10} value={scores[k]} onChange={e => setScores({ ...scores, [k]: parseInt(e.target.value) || 0 })} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Recommendation</Label>
+          <Select value={recommendation} onValueChange={setRecommendation}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="MINOR_REVISION">Minor revision</SelectItem>
+              <SelectItem value="MAJOR_REVISION">Major revision</SelectItem>
+              <SelectItem value="TRANSFER">Transfer</SelectItem>
+              <SelectItem value="ACCEPT">Accept</SelectItem>
+              <SelectItem value="REJECT">Reject</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Review comments <span className="text-red-500">*</span></Label>
+          <p className="text-[11px] text-muted-foreground mb-1">Detailed critique of the abstract — delivered to the committee editor.</p>
+          <Textarea rows={8} value={reviewComments} onChange={e => setReviewComments(e.target.value)} placeholder="Strengths, weaknesses, methodology observations, suggestions for improvement…" />
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Confidential notes to the committee editor (optional)</Label>
+          <p className="text-[11px] text-muted-foreground mb-1">Only visible to the editorial team — never shared with the author.</p>
+          <Textarea rows={3} value={confidentialNotes} onChange={e => setConfidentialNotes(e.target.value)} placeholder="Concerns, conflicts of interest, or context for the editor…" />
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Supporting files (optional)</Label>
+          <p className="text-[11px] text-muted-foreground mb-1">Annotated abstract, marked-up PDFs or supplementary materials sent to the committee editor (max 25 MB each).</p>
+          <input type="file" multiple onChange={addFiles} className="text-xs" />
+          {files.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {files.map((f, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs p-1.5 rounded bg-slate-50 border">
+                  <FileText className="h-3 w-3 text-indigo-600 shrink-0" />
+                  <span className="truncate flex-1">{f.name}</span>
+                  <span className="text-muted-foreground">{Math.round(f.size / 1024)} KB</span>
+                  <button type="button" onClick={() => removeFile(i)} className="text-red-500 hover:text-red-700">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end">
+          <Button onClick={submit} disabled={submitting} className="bg-indigo-600 hover:bg-indigo-700">
+            {submitting && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send review to committee editor
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 
 // ============ CONFERENCES (public/attendee page with registration dialog) ============
 function Conferences() {
