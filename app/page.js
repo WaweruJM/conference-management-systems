@@ -1308,12 +1308,11 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
       {isReviewerOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 px-6 py-4 text-white">
-            {/* Row 1 — badge + welcome inline, action button on the far right */}
+            {/* Row 1 — welcome inline, action button on the far right */}
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Award className="h-3 w-3 mr-1" />Reviewer dashboard</Badge>
-                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
-              </div>
+              <h1 className="text-xl md:text-2xl font-bold leading-tight flex items-center gap-2">
+                <Award className="h-5 w-5 opacity-90" /> Welcome{user?.firstName ? ', ' + user.firstName : ''}
+              </h1>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'reviews' })} className="bg-white text-purple-700 hover:bg-slate-100 shadow"><Award className="h-4 w-4 mr-1" />Open review workspace</Button>
               </div>
@@ -1327,10 +1326,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 px-6 py-4 text-white">
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><FileText className="h-3 w-3 mr-1" />Author dashboard</Badge>
-                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
-              </div>
+              <h1 className="text-xl md:text-2xl font-bold leading-tight flex items-center gap-2">
+                <FileText className="h-5 w-5 opacity-90" /> Welcome{user?.firstName ? ', ' + user.firstName : ''}
+              </h1>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'my-abstracts' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><FileText className="h-4 w-4 mr-1" />Track my abstracts</Button>
                 <Button size="sm" onClick={() => setRoute({ name: 'submit' })} className="bg-white text-fuchsia-700 hover:bg-slate-100 shadow"><Plus className="h-4 w-4 mr-1" />Submit new abstract</Button>
@@ -1344,10 +1342,9 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 px-6 py-4 text-white">
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><ClipboardCheck className="h-3 w-3 mr-1" />Editor dashboard</Badge>
-                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
-              </div>
+              <h1 className="text-xl md:text-2xl font-bold leading-tight flex items-center gap-2">
+                <ClipboardCheck className="h-5 w-5 opacity-90" /> Welcome back{user?.firstName ? ', ' + user.firstName : ''}
+              </h1>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'editorial' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><ClipboardCheck className="h-4 w-4 mr-1" />Open Editorial Office</Button>
                 <Button size="sm" onClick={() => setRoute({ name: 'workspace' })} className="bg-white/10 border border-white/40 text-white hover:bg-white/20"><Briefcase className="h-4 w-4 mr-1" />My workspace</Button>
@@ -1487,20 +1484,20 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
       {/* Editor summary stat cards (mirrors Editorial Office header) */}
       {isEditorView && stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatBadge label="Total papers" value={stats.totalAbstracts} color="from-slate-600 to-slate-700" icon={FileText} />
+          <StatBadge label="Total abstracts" value={stats.totalAbstracts} color="from-fuchsia-500 to-rose-500" icon={FileText} />
+          <StatBadge label="Completed reviews" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="from-emerald-500 to-teal-600" icon={ClipboardCheck} />
+          <StatBadge label="Attendees registrations" value={stats.totalRegs} color="from-amber-500 to-orange-600" icon={Calendar} />
           <StatBadge label="Total users" value={stats.totalUsers} color="from-indigo-500 to-fuchsia-500" icon={Users} />
-          <StatBadge label="Reviews" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="from-emerald-500 to-teal-600" icon={ClipboardCheck} />
-          <StatBadge label="Registrations" value={stats.totalRegs} color="from-amber-500 to-orange-600" icon={Calendar} />
         </div>
       )}
 
       {/* Non-editor stat cards (kept as-is for admins) */}
       {!isEditorView && stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={Users} label="Total users" value={stats.totalUsers} color="text-indigo-600" />
           <StatCard icon={FileText} label="Total abstracts" value={stats.totalAbstracts} color="text-fuchsia-600" />
-          <StatCard icon={ClipboardCheck} label="Reviews completed" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="text-emerald-600" />
-          <StatCard icon={Calendar} label="Registrations" value={stats.totalRegs} color="text-amber-600" />
+          <StatCard icon={ClipboardCheck} label="Completed reviews" value={`${stats.reviews.completed}/${stats.reviews.total}`} color="text-emerald-600" />
+          <StatCard icon={Calendar} label="Attendees registrations" value={stats.totalRegs} color="text-amber-600" />
+          <StatCard icon={Users} label="Total users" value={stats.totalUsers} color="text-indigo-600" />
         </div>
       )}
 
@@ -4750,10 +4747,9 @@ function LogisticsBoardroom({ user }) {
       <Card className="border-0 shadow-md overflow-hidden">
         <div className="bg-gradient-to-br from-amber-600 via-orange-600 to-rose-600 px-6 py-4 text-white">
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Building2 className="h-3 w-3 mr-1" />Logistics committee</Badge>
-              <h1 className="text-xl md:text-2xl font-bold leading-tight">Logistics Boardroom</h1>
-            </div>
+            <h1 className="text-xl md:text-2xl font-bold leading-tight flex items-center gap-2">
+              <Building2 className="h-5 w-5 opacity-90" /> Logistics Boardroom
+            </h1>
             <div className="flex flex-wrap gap-2">
               <Badge className="bg-white/20 text-white border-white/30">{members.length} member{members.length !== 1 ? 's' : ''}</Badge>
               <Badge className="bg-amber-100 text-amber-900 border-0">{pendingRequests.length} pending request{pendingRequests.length !== 1 ? 's' : ''}</Badge>
@@ -4878,14 +4874,9 @@ function SponsorsPage({ user, featured, setRoute }) {
       {/* Welcome / Header */}
       <Card className="border-0 shadow-lg overflow-hidden">
         <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 px-6 py-4 md:px-8 md:py-5 text-white">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Award className="h-3 w-3 mr-1" />Sponsor dashboard</Badge>
-              <h1 className="text-xl md:text-2xl font-bold leading-tight">
-                Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
-              </h1>
-            </div>
-          </div>
+          <h1 className="text-xl md:text-2xl font-bold leading-tight flex items-center gap-2">
+            <Award className="h-5 w-5 opacity-90" /> Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
+          </h1>
           <p className="text-white/95 text-sm mt-3 leading-snug w-full">
             We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>. Your support helps convene the leading researchers, clinicians and innovators driving this event.
           </p>
