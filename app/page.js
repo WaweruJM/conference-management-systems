@@ -706,26 +706,15 @@ function PublicVenue({ conf }) {
 function PublicThemes({ conf }) {
   const subthemes = conf?.themes || []
   return (
-    <div className="container mx-auto px-6 py-12 max-w-6xl">
-      {/* Header */}
-      <div className="text-center mb-10">
-        <div className="text-[10px] uppercase tracking-widest font-semibold text-indigo-600 mb-2">Scientific Programme</div>
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-3">Conference themes</h1>
-        <p className="text-muted-foreground max-w-2xl mx-auto">
-          The scientific programme is organised around an overarching main theme,
-          expanded into focused sub-themes that guide the abstract submissions and
-          the panel discussions.
-        </p>
-      </div>
-
-      {/* Main theme card */}
+    <div className="container mx-auto px-6 py-8 max-w-4xl">
+      {/* Main theme card — first thing on the page */}
       <Card className="border-0 shadow-lg overflow-hidden mb-10">
-        <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 text-white p-8 md:p-10 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-4">
-            <Award className="h-3 w-3" /> Main theme
+        <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 text-white p-8 md:p-12 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-5 py-2 text-base md:text-lg uppercase tracking-widest font-bold mb-5">
+            <Award className="h-5 w-5" /> Main theme
           </div>
           {conf?.mainTheme ? (
-            <h2 className="text-2xl md:text-4xl font-bold leading-tight max-w-4xl mx-auto">{conf.mainTheme}</h2>
+            <h2 className="text-3xl md:text-5xl font-bold leading-tight max-w-4xl mx-auto">{conf.mainTheme}</h2>
           ) : (
             <h2 className="text-xl md:text-2xl font-medium text-white/80 max-w-3xl mx-auto italic">
               The main theme will be published shortly by the editorial committee.
@@ -734,10 +723,10 @@ function PublicThemes({ conf }) {
         </div>
       </Card>
 
-      {/* Sub-themes */}
-      <div className="mb-6 flex items-baseline justify-between">
-        <h2 className="text-2xl font-bold tracking-tight">Sub-themes</h2>
-        <span className="text-sm text-muted-foreground">{subthemes.length} area{subthemes.length !== 1 ? 's' : ''} of focus</span>
+      {/* Sub-themes — single column, numbered, centered */}
+      <div className="mb-6 text-center">
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Sub-themes</h2>
+        <div className="text-sm text-muted-foreground mt-1">{subthemes.length} area{subthemes.length !== 1 ? 's' : ''} of focus</div>
       </div>
 
       {subthemes.length === 0 ? (
@@ -749,7 +738,7 @@ function PublicThemes({ conf }) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <ol className="max-w-3xl mx-auto space-y-3">
           {subthemes.map((t, idx) => {
             const gradients = [
               'from-indigo-500 to-blue-500',
@@ -761,32 +750,36 @@ function PublicThemes({ conf }) {
             ]
             const g = gradients[idx % gradients.length]
             return (
-              <Card key={t.id} className="hover:shadow-lg transition overflow-hidden border-0 shadow-sm">
-                <div className={`h-1.5 bg-gradient-to-r ${g}`} />
-                <CardContent className="p-5">
-                  <div className="flex items-start gap-3 mb-2">
-                    <div className={`h-9 w-9 rounded-lg bg-gradient-to-br ${g} text-white flex items-center justify-center font-bold shrink-0`}>
-                      {String(idx + 1).padStart(2, '0')}
+              <li key={t.id}>
+                <Card className="hover:shadow-lg transition overflow-hidden border-0 shadow-sm">
+                  <div className={`h-1.5 bg-gradient-to-r ${g}`} />
+                  <CardContent className="p-5">
+                    <div className="flex items-start gap-4">
+                      <div className={`h-11 w-11 rounded-lg bg-gradient-to-br ${g} text-white flex items-center justify-center font-bold text-lg shrink-0`}>
+                        {String(idx + 1).padStart(2, '0')}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg md:text-xl font-bold leading-tight">{t.name}</h3>
+                        {t.description && <p className="text-sm text-muted-foreground leading-relaxed mt-1">{t.description}</p>}
+                        {t.keywords?.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-1">
+                            {t.keywords.map(k => (
+                              <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{k}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <h3 className="text-lg font-bold leading-tight">{t.name}</h3>
-                  </div>
-                  {t.description && <p className="text-sm text-muted-foreground leading-relaxed">{t.description}</p>}
-                  {t.keywords?.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {t.keywords.map(k => (
-                        <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{k}</span>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </li>
             )
           })}
-        </div>
+        </ol>
       )}
 
       {/* Footer note */}
-      <div className="mt-10 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4 text-center text-sm text-slate-600">
+      <div className="mt-10 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4 text-center text-sm text-slate-600 max-w-3xl mx-auto">
         Authors are asked to align their abstract with one of the sub-themes above during submission.
       </div>
     </div>
