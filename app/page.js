@@ -579,13 +579,7 @@ function PublicVenue({ conf }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-white">
-      <div className="container mx-auto px-6 py-10 max-w-6xl">
-        <div className="text-center mb-10">
-          <Badge className="bg-blue-100 text-blue-700 border-blue-200 mb-3">GET READY</Badge>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-blue-900">Venue & Dates</h1>
-          <p className="text-slate-600 mt-3 max-w-2xl mx-auto">Everything you need to plan your attendance at {conf.name}</p>
-        </div>
-
+      <div className="container mx-auto px-6 py-6 max-w-6xl">
         {/* Hotel image + info cards */}
         <div className="grid lg:grid-cols-5 gap-6 mb-8">
           {/* Hotel image */}
