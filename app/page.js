@@ -2241,10 +2241,15 @@ function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRou
       </Card>
       )}
 
-      {/* Inline review submission for a pure reviewer with an ACCEPTED, not-yet-submitted assignment.
-          Replaces the modal so reviewers see the abstract in full and provide comments directly on the page. */}
+      {/* Inline review flow for a pure reviewer with an ACCEPTED, not-yet-submitted assignment.
+          Abstract content is shown FIRST (clearly labelled), then the review inputs below. */}
+      {isPureReviewer && (
+        <ReviewerAbstractView abstract={abs} />
+      )}
       {canWriteReview && <InlineReviewForm abstract={abs} assignmentId={myReviewerAssignment.id} onDone={refresh} />}
 
+      {/* Editorial tabs — hidden for pure reviewers (they only need abstract + inputs) */}
+      {!isPureReviewer && (
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="grid grid-cols-6">
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -2390,6 +2395,7 @@ function AbstractDetail({ id, route, user, isEditor, isAdmin, isReviewer, setRou
           </Card>
         </TabsContent>
       </Tabs>
+      )}
     </div>
   )
 }
@@ -3515,6 +3521,67 @@ function ReviewForm({ assignment, onClose, onDone }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Full-view abstract card for a pure reviewer — clearly labelled "Abstract"
+// and rendered ABOVE the review-input card on AbstractDetail.
+function ReviewerAbstractView({ abstract }) {
+  const latest = abstract?.versions?.[0]
+  const authorDocs = (abstract?.documents || []).filter(d =>
+    ['ABSTRACT', 'FIGURE', 'SUPPLEMENTARY', 'COVER_LETTER'].includes(d.category)
+  )
+  return (
+    <Card className="mb-6 border-2 border-slate-200 shadow-md">
+      <CardHeader className="bg-gradient-to-r from-slate-50 to-white pb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge className="bg-slate-800 text-white text-[10px] uppercase tracking-widest">Abstract to review</Badge>
+          <span className="text-xs font-mono text-slate-500">{abstract.submissionCode}</span>
+          {latest && <Badge variant="outline" className="text-[10px]">v{latest.versionNumber}</Badge>}
+          {abstract?.theme && <Badge variant="outline" className="text-[10px]">{abstract.theme.name}</Badge>}
+          {abstract?.reportType && <Badge variant="outline" className="text-[10px]">{abstract.reportType.replace(/_/g, ' ')}</Badge>}
+        </div>
+        <CardTitle className="text-xl leading-snug mt-1">{abstract.title}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-4">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-1">Abstract body</div>
+          <div className="p-4 border rounded bg-slate-50 text-sm whitespace-pre-wrap leading-relaxed">
+            {latest?.body || <em className="text-muted-foreground">No body content provided.</em>}
+          </div>
+        </div>
+        {latest?.keywords?.length > 0 && (
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-1">Keywords</div>
+            <div className="flex flex-wrap gap-1">
+              {latest.keywords.map(k => (
+                <span key={k} className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700">{k}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        {authorDocs.length > 0 && (
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-1">Author-uploaded documents</div>
+            <div className="space-y-1">
+              {authorDocs.map(d => (
+                <a
+                  key={d.id}
+                  href={d.storagePath || d.url || `/api/uploads/${d.filePath}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 text-sm"
+                >
+                  <FileText className="h-4 w-4 text-indigo-600 shrink-0" />
+                  <span className="flex-1 truncate">{d.fileName}</span>
+                  <Badge variant="outline" className="text-[10px]">{d.category}</Badge>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
