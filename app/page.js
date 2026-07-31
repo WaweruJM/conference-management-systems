@@ -1909,43 +1909,70 @@ function SubmitAbstract({ setRoute, user, draftId }) {
       </Card>
 
       <div className="space-y-5">
-        {/* Section 1: Conference details */}
-        <Card className="border-0 shadow-sm">
+        {/* Section 1: Study design & aligning sub-theme */}
+        <Card className="border-0 shadow-sm overflow-hidden">
           <CardHeader className="pb-3 bg-gradient-to-r from-indigo-50 to-white">
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-md bg-indigo-600 text-white font-bold text-xs flex items-center justify-center">1</div>
-              <CardTitle className="text-lg">Conference & category</CardTitle>
+              <CardTitle className="text-lg">Study design &amp; aligning sub-theme</CardTitle>
             </div>
           </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid md:grid-cols-3 gap-3">
-              <div>
-                <Label>Conference *</Label>
-                <Select value={conferenceId} onValueChange={setConferenceId}>
-                  <SelectTrigger><SelectValue placeholder="Choose conference" /></SelectTrigger>
-                  <SelectContent>{conferences.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Sub-theme *</Label>
-                <Select value={themeId} onValueChange={setThemeId}>
-                  <SelectTrigger><SelectValue placeholder="Choose sub-theme" /></SelectTrigger>
-                  <SelectContent>{themes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Report type</Label>
-                <Select value={reportType} onValueChange={setReportType}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ORIGINAL_RESEARCH">Original research</SelectItem>
-                    <SelectItem value="CASE_REPORT">Case report</SelectItem>
-                    <SelectItem value="CASE_SERIES">Case series</SelectItem>
-                    <SelectItem value="REVIEW">Review</SelectItem>
-                    <SelectItem value="OTHER">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          <CardContent className="pt-4 space-y-4">
+            {/* Reminder banner — the main theme the conference is centred on */}
+            {(() => {
+              const activeConf = conferences.find(c => c.id === conferenceId) || conferences[0]
+              const mainTheme = activeConf?.mainTheme
+              return (
+                <div className="rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50 via-fuchsia-50 to-white p-4">
+                  <div className="text-[10px] uppercase tracking-widest font-semibold text-indigo-700 flex items-center gap-1 mb-1">
+                    <Award className="h-3 w-3" /> Main conference theme
+                  </div>
+                  {mainTheme ? (
+                    <p className="text-sm md:text-base font-semibold text-slate-800 leading-snug">{mainTheme}</p>
+                  ) : (
+                    <p className="text-sm italic text-muted-foreground">The organisers have not yet published the main theme.</p>
+                  )}
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Please choose the study design that best describes your work, then align your abstract with one of the sub-themes below.
+                  </p>
+                </div>
+              )
+            })()}
+
+            {/* Study Design (report type) first — full-width professional select */}
+            <div>
+              <Label className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 mb-1.5">
+                <FileText className="h-4 w-4 text-indigo-600" /> Study design *
+              </Label>
+              <Select value={reportType} onValueChange={setReportType}>
+                <SelectTrigger className="h-11"><SelectValue placeholder="Select the study design that fits your work" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ORIGINAL_RESEARCH">Original research</SelectItem>
+                  <SelectItem value="CASE_REPORT">Case report</SelectItem>
+                  <SelectItem value="CASE_SERIES">Case series</SelectItem>
+                  <SelectItem value="REVIEW">Review</SelectItem>
+                  <SelectItem value="OTHER">Other</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Original research covers randomised trials, cohort / cross-sectional studies and other empirical work. Choose "Other" only if none of the categories apply.
+              </p>
+            </div>
+
+            {/* Aligning sub-theme */}
+            <div>
+              <Label className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 mb-1.5">
+                <Award className="h-4 w-4 text-fuchsia-600" /> Aligning sub-theme *
+              </Label>
+              <Select value={themeId} onValueChange={setThemeId}>
+                <SelectTrigger className="h-11"><SelectValue placeholder="Select the sub-theme your abstract fits under" /></SelectTrigger>
+                <SelectContent>
+                  {themes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                The editorial committee routes reviewers by sub-theme, so picking the closest match improves peer-review quality.
+              </p>
             </div>
           </CardContent>
         </Card>
