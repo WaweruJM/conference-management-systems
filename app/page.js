@@ -1308,55 +1308,53 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
       {isReviewerOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 px-6 py-4 text-white">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="flex-1 min-w-[280px]">
-                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Reviewer dashboard</div>
+            {/* Row 1 — badge + welcome inline, action button on the far right */}
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Award className="h-3 w-3 mr-1" />Reviewer dashboard</Badge>
                 <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
-                <p className="text-white/90 text-sm mt-2 leading-snug">Your peer-review queue — assess assigned abstracts and submit blind reviews for {confTitle}.</p>
-                <p className="text-white/90 text-sm mt-1 leading-snug">Author identities remain hidden throughout the process.</p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'reviews' })} className="bg-white text-purple-700 hover:bg-slate-100 shadow"><Award className="h-4 w-4 mr-1" />Open review workspace</Button>
               </div>
             </div>
+            {/* Row 2 & 3 — paragraphs span the full width */}
+            <p className="text-white/90 text-sm mt-3 leading-snug w-full">Your peer-review queue — assess assigned abstracts and submit blind reviews for {confTitle}.</p>
+            <p className="text-white/90 text-sm mt-1 leading-snug w-full">Author identities remain hidden throughout the process.</p>
           </div>
         </Card>
       ) : isAuthorOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 px-6 py-4 text-white">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="flex-1 min-w-[280px]">
-                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1">Author dashboard</div>
-                <h1 className="text-xl md:text-2xl font-bold leading-tight">Thank you for your consideration to submit to "{confTitle}".</h1>
-                <p className="text-white/90 text-sm mt-2 leading-snug">Track each abstract editorial process from this dashboard.</p>
-                <p className="text-white/90 text-sm mt-1 leading-snug">Submit a new abstract or inbox the editor at any time.</p>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><FileText className="h-3 w-3 mr-1" />Author dashboard</Badge>
+                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'my-abstracts' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><FileText className="h-4 w-4 mr-1" />Track my abstracts</Button>
                 <Button size="sm" onClick={() => setRoute({ name: 'submit' })} className="bg-white text-fuchsia-700 hover:bg-slate-100 shadow"><Plus className="h-4 w-4 mr-1" />Submit new abstract</Button>
               </div>
             </div>
+            <p className="text-white/90 text-sm mt-3 leading-snug w-full">Thank you for your consideration to submit to "{confTitle}". Track each abstract's editorial process from this dashboard.</p>
+            <p className="text-white/90 text-sm mt-1 leading-snug w-full">Submit a new abstract or message the editor at any time.</p>
           </div>
         </Card>
       ) : (
         <Card className="border-0 shadow-md overflow-hidden">
           <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 px-6 py-4 text-white">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="flex-1 min-w-[280px]">
-                <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><ClipboardCheck className="h-3 w-3" /> Editor dashboard</div>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><ClipboardCheck className="h-3 w-3 mr-1" />Editor dashboard</Badge>
                 <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
-                <p className="text-white/90 text-sm mt-2 leading-snug">
-                  Editorial oversight for {confTitle}.
-                </p>
-                <p className="text-white/90 text-sm mt-1 leading-snug">
-                  Handle assignments, monitor peer review and steward the editorial board.
-                </p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'editorial' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><ClipboardCheck className="h-4 w-4 mr-1" />Open Editorial Office</Button>
                 <Button size="sm" onClick={() => setRoute({ name: 'workspace' })} className="bg-white/10 border border-white/40 text-white hover:bg-white/20"><Briefcase className="h-4 w-4 mr-1" />My workspace</Button>
               </div>
             </div>
+            <p className="text-white/90 text-sm mt-3 leading-snug w-full">Editorial oversight for {confTitle}.</p>
+            <p className="text-white/90 text-sm mt-1 leading-snug w-full">Handle assignments, monitor peer review and steward the editorial board.</p>
           </div>
         </Card>
       )}
@@ -4724,18 +4722,18 @@ function LogisticsBoardroom({ user }) {
       {/* Header */}
       <Card className="border-0 shadow-md overflow-hidden">
         <div className="bg-gradient-to-br from-amber-600 via-orange-600 to-rose-600 px-6 py-4 text-white">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex-1 min-w-[280px]">
-              <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Building2 className="h-3 w-3" /> Logistics committee</div>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Building2 className="h-3 w-3 mr-1" />Logistics committee</Badge>
               <h1 className="text-xl md:text-2xl font-bold leading-tight">Logistics Boardroom</h1>
-              <p className="text-white/90 text-sm mt-2 leading-snug">A private space for the logistics committee to coordinate operations, venue matters, sponsor relations and delegate handling.</p>
-              <p className="text-white/90 text-sm mt-1 leading-snug">Use the boardroom chat and pending-request queue below to keep the committee aligned.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge className="bg-white/20 text-white border-white/30">{members.length} member{members.length !== 1 ? 's' : ''}</Badge>
               <Badge className="bg-amber-100 text-amber-900 border-0">{pendingRequests.length} pending request{pendingRequests.length !== 1 ? 's' : ''}</Badge>
             </div>
           </div>
+          <p className="text-white/90 text-sm mt-3 leading-snug w-full">A private space for the logistics committee to coordinate operations, venue matters, sponsor relations and delegate handling.</p>
+          <p className="text-white/90 text-sm mt-1 leading-snug w-full">Use the boardroom chat and pending-request queue below to keep the committee aligned.</p>
         </div>
       </Card>
 
@@ -4853,20 +4851,20 @@ function SponsorsPage({ user, featured, setRoute }) {
       {/* Welcome / Header */}
       <Card className="border-0 shadow-lg overflow-hidden">
         <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 px-6 py-4 md:px-8 md:py-5 text-white">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-2">
-              <Award className="h-3 w-3" /> Sponsor dashboard
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge className="bg-white/20 border-white/30 text-white text-[10px] uppercase tracking-widest font-semibold"><Award className="h-3 w-3 mr-1" />Sponsor dashboard</Badge>
+              <h1 className="text-xl md:text-2xl font-bold leading-tight">
+                Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
+              </h1>
             </div>
-            <h1 className="text-xl md:text-2xl font-bold leading-tight mb-2">
-              Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
-            </h1>
-            <p className="text-white/95 text-sm leading-snug">
-              We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>. Your support helps convene the leading researchers, clinicians and innovators driving this event.
-            </p>
-            <p className="text-white/90 text-sm leading-snug mt-1">
-              Choose a sponsorship tier below and submit the request form — Chief Logistics will follow up with the next steps.
-            </p>
           </div>
+          <p className="text-white/95 text-sm mt-3 leading-snug w-full">
+            We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>. Your support helps convene the leading researchers, clinicians and innovators driving this event.
+          </p>
+          <p className="text-white/90 text-sm mt-1 leading-snug w-full">
+            Choose a sponsorship tier below and submit the request form — Chief Logistics will follow up with the next steps.
+          </p>
         </div>
       </Card>
 
