@@ -3320,6 +3320,17 @@ function ReviewForm({ assignment, onClose, onDone }) {
   const [files, setFiles] = useState([])
   const [submitting, setSubmitting] = useState(false)
 
+  // Fetch the FULL abstract (with body + latest version + author-uploaded documents)
+  // so the reviewer sees exactly what they are reviewing without leaving the dialog.
+  const [fullAbstract, setFullAbstract] = useState(null)
+  const [absLoading, setAbsLoading] = useState(true)
+  useEffect(() => {
+    api(`/abstracts/${assignment.abstract.id}`)
+      .then(d => setFullAbstract(d.abstract))
+      .catch(e => toast.error(e.message))
+      .finally(() => setAbsLoading(false))
+  }, [assignment.abstract.id])
+
   const addFiles = (e) => {
     const list = Array.from(e.target.files || [])
     const oversized = list.find(f => f.size > 25 * 1024 * 1024)
@@ -3350,33 +3361,96 @@ function ReviewForm({ assignment, onClose, onDone }) {
           commentsToEditor: confidentialNotes || null,
         }),
       })
-      toast.success('Review submitted to editor')
+      toast.success('Review submitted to the committee editor')
       onDone()
     } catch (e) { toast.error(e.message || 'Failed to submit review') }
     finally { setSubmitting(false) }
   }
+
+  const latestVersion = fullAbstract?.versions?.[0]
+  const authorDocs = (fullAbstract?.documents || []).filter(d =>
+    ['ABSTRACT', 'FIGURE', 'SUPPLEMENTARY', 'COVER_LETTER'].includes(d.category)
+  )
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+      <DialogContent className="max-w-4xl max-h-[92vh] overflow-auto">
         <DialogHeader>
-          <DialogTitle>Submit review</DialogTitle>
-          <DialogDescription>{assignment.abstract.submissionCode} — {assignment.abstract.title}</DialogDescription>
+          <DialogTitle>Submit review — {assignment.abstract.submissionCode}</DialogTitle>
+          <DialogDescription>Your review will be delivered to the committee editor who invited you.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="p-2 rounded-md bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2">
+        <div className="space-y-4">
+          <div className="p-2.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2">
             <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>Double-blind: author identities are hidden. Your review will be delivered to the editor only. You do not communicate with the author directly.</span>
+            <span><strong>Double-blind:</strong> author identities are hidden. Your review, scores, comments and any attached files go directly to the <strong>committee editor</strong>. You never correspond with the author.</span>
           </div>
-          <div className="grid grid-cols-5 gap-2">
-            {['originalityScore','significanceScore','methodologyScore','clarityScore','overallScore'].map(k => (
-              <div key={k}>
-                <Label className="text-[10px]">{k.replace('Score','').replace(/^./, c => c.toUpperCase())}</Label>
-                <Input type="number" min={1} max={10} value={scores[k]} onChange={e => setScores({ ...scores, [k]: parseInt(e.target.value) || 0 })} />
+
+          {/* ── LATEST ABSTRACT SUBMISSION FROM THE AUTHOR ── */}
+          <Card className="border-indigo-200 border-2 shadow-sm">
+            <CardHeader className="bg-gradient-to-r from-indigo-50 via-white to-fuchsia-50 py-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge className="bg-indigo-600 text-white text-[10px] uppercase tracking-widest">Latest submission</Badge>
+                {latestVersion && <Badge variant="outline" className="text-[10px]">v{latestVersion.versionNumber}</Badge>}
+                {fullAbstract?.theme && <Badge variant="outline" className="text-[10px]">{fullAbstract.theme.name}</Badge>}
+                {fullAbstract?.reportType && <Badge variant="outline" className="text-[10px]">{fullAbstract.reportType.replace(/_/g, ' ')}</Badge>}
               </div>
-            ))}
-          </div>
+              <CardTitle className="text-lg leading-snug mt-1">{fullAbstract?.title || assignment.abstract.title}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-3 space-y-3">
+              {absLoading ? (
+                <div className="py-6 text-center"><Loader2 className="h-5 w-5 mx-auto animate-spin text-indigo-500" /><div className="text-xs text-muted-foreground mt-1">Loading the latest version…</div></div>
+              ) : latestVersion ? (
+                <>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Abstract body</div>
+                    <div className="max-h-72 overflow-auto p-3 border rounded bg-slate-50 text-sm whitespace-pre-wrap leading-relaxed">
+                      {latestVersion.body || <em className="text-muted-foreground">No body content provided.</em>}
+                    </div>
+                  </div>
+                  {latestVersion.keywords?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Keywords</div>
+                      <div className="flex flex-wrap gap-1">
+                        {latestVersion.keywords.map(k => <span key={k} className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700">{k}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {authorDocs.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Author-uploaded documents</div>
+                      <div className="space-y-1">
+                        {authorDocs.map(d => (
+                          <a key={d.id} href={d.storagePath || d.url || `/api/uploads/${d.filePath}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 text-sm">
+                            <FileText className="h-4 w-4 text-indigo-600 shrink-0" />
+                            <span className="flex-1 truncate">{d.fileName}</span>
+                            <Badge variant="outline" className="text-[10px]">{d.category}</Badge>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground italic">No version content available.</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ── REVIEW SCORES ── */}
           <div>
-            <Label>Recommendation</Label>
+            <Label className="text-sm font-semibold">Scores (1–10)</Label>
+            <div className="grid grid-cols-5 gap-2 mt-1">
+              {['originalityScore','significanceScore','methodologyScore','clarityScore','overallScore'].map(k => (
+                <div key={k}>
+                  <Label className="text-[10px] text-muted-foreground">{k.replace('Score','').replace(/^./, c => c.toUpperCase())}</Label>
+                  <Input type="number" min={1} max={10} value={scores[k]} onChange={e => setScores({ ...scores, [k]: parseInt(e.target.value) || 0 })} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-sm font-semibold">Recommendation</Label>
             <Select value={recommendation} onValueChange={setRecommendation}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -3388,19 +3462,22 @@ function ReviewForm({ assignment, onClose, onDone }) {
               </SelectContent>
             </Select>
           </div>
+
           <div>
-            <Label>Review comments <span className="text-red-500">*</span></Label>
-            <p className="text-[11px] text-muted-foreground mb-1">Detailed critique of the abstract. Submitted to the editor; the editor may share (anonymised) with the author.</p>
-            <Textarea rows={7} value={reviewComments} onChange={e => setReviewComments(e.target.value)} placeholder="Strengths, weaknesses, suggestions for improvement..." />
+            <Label className="text-sm font-semibold">Review comments <span className="text-red-500">*</span></Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Detailed critique of the abstract — delivered to the committee editor.</p>
+            <Textarea rows={7} value={reviewComments} onChange={e => setReviewComments(e.target.value)} placeholder="Strengths, weaknesses, methodology observations, suggestions for improvement…" />
           </div>
+
           <div>
-            <Label>Confidential notes to editor (optional)</Label>
-            <p className="text-[11px] text-muted-foreground mb-1">Only visible to the editorial team, never to the author.</p>
-            <Textarea rows={3} value={confidentialNotes} onChange={e => setConfidentialNotes(e.target.value)} />
+            <Label className="text-sm font-semibold">Confidential notes to editor (optional)</Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Only visible to the committee editor — never shared with the author.</p>
+            <Textarea rows={3} value={confidentialNotes} onChange={e => setConfidentialNotes(e.target.value)} placeholder="Concerns, conflicts of interest, or context for the editor…" />
           </div>
+
           <div>
-            <Label>Supporting files / annotated abstract (optional)</Label>
-            <p className="text-[11px] text-muted-foreground mb-1">Upload the annotated abstract or any supplementary materials. Files go to the editor.</p>
+            <Label className="text-sm font-semibold">Supporting files (optional)</Label>
+            <p className="text-[11px] text-muted-foreground mb-1">Annotated abstract, marked-up PDFs or supplementary materials. Files are sent to the committee editor (max 25 MB each).</p>
             <input type="file" multiple onChange={addFiles} className="text-xs" />
             {files.length > 0 && (
               <div className="mt-2 space-y-1">
@@ -3419,7 +3496,7 @@ function ReviewForm({ assignment, onClose, onDone }) {
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
           <Button onClick={submit} disabled={submitting} className="bg-indigo-600 hover:bg-indigo-700">
-            {submitting && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Submit review
+            {submitting && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Send review to committee editor
           </Button>
         </DialogFooter>
       </DialogContent>

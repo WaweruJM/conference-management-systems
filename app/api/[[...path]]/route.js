@@ -1368,7 +1368,10 @@ async function handleReviewer(route, method, request) {
   const subMatch = route.match(/^\/reviewer\/assignments\/([^\/]+)\/submit$/)
   if (subMatch && method === 'POST') {
     const body = await request.json()
-    const a = await prisma.reviewAssignment.findUnique({ where: { id: subMatch[1] } })
+    const a = await prisma.reviewAssignment.findUnique({
+      where: { id: subMatch[1] },
+      include: { abstract: { include: { conference: true } } },
+    })
     if (!a || a.reviewerId !== user.id) return err('Forbidden', 403)
     const report = await prisma.reviewReport.create({
       data: {
@@ -1388,6 +1391,49 @@ async function handleReviewer(route, method, request) {
       where: { id: subMatch[1] },
       data: { completedAt: new Date() },
     })
+    // Notify the assigning committee editor (and, as fallback, all editors assigned
+    // to the abstract + editorial leadership) that a new review has arrived.
+    const abs = a.abstract
+    const reviewerName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email
+    const notifTitle = `New review received on ${abs.submissionCode}`
+    const notifBody = `${reviewerName} submitted their peer review with recommendation: ${(body.recommendation || 'N/A').replace(/_/g, ' ')}.`
+    const editorAssignments = await prisma.editorAssignment.findMany({
+      where: { abstractId: abs.id, active: true },
+      select: { editorId: true },
+    })
+    const editorLeads = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['CHIEF_EDITOR', 'MANAGING_EDITOR'] } } } },
+      select: { id: true, email: true },
+    })
+    const recipientIds = new Set(editorAssignments.map(e => e.editorId))
+    if (a.assignedById) recipientIds.add(a.assignedById)
+    editorLeads.forEach(e => recipientIds.add(e.id))
+    for (const rid of recipientIds) {
+      await createNotification(rid, 'MESSAGE', notifTitle, notifBody, `/abstracts/${abs.id}`).catch(() => {})
+    }
+    // Best-effort email to the committee editor(s)
+    try {
+      const { sendEmail } = await import('@/lib/email')
+      const { renderEmailHtml } = await import('@/lib/email-templates')
+      const subject = `[${abs.conference.code}] Review received — ${abs.submissionCode}`
+      const bodyText = [
+        `Dear Editor,`,
+        ``,
+        `${reviewerName} has submitted a peer review for the following abstract:`,
+        ``,
+        `Submission: ${abs.submissionCode}`,
+        `Title: ${abs.title}`,
+        `Recommendation: ${(body.recommendation || 'N/A').replace(/_/g, ' ')}`,
+        `Overall score: ${body.overallScore ?? '—'}/10`,
+        ``,
+        `Please log in to view the full report and any attached materials.`,
+      ].join('\n')
+      const html = renderEmailHtml({ subject, body: bodyText, conferenceName: abs.conference.name })
+      const editorUsers = await prisma.user.findMany({ where: { id: { in: [...recipientIds] } }, select: { email: true } })
+      for (const eu of editorUsers) {
+        if (eu.email) sendEmail({ to: eu.email, subject, html, text: bodyText }).catch(() => {})
+      }
+    } catch (e) { /* non-fatal */ }
     return ok({ report })
   }
 
