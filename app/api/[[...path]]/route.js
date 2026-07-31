@@ -634,6 +634,19 @@ async function handleAbstracts(route, method, request) {
     if (!scope && !hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'EXTERNAL_REVIEWER')) {
       where.submittedById = user.id
     }
+    // DRAFT visibility rule: only the submitting author (and the system admin, for support) can see
+    // draft abstracts. Editors, committee members and reviewers should NEVER see drafts — those
+    // abstracts have not yet been formally submitted.
+    if (where.submittedById !== user.id && !hasRole(user, 'SYSTEM_ADMIN')) {
+      // If caller specifically requested draft (via ?state=DRAFT) they still get denied unless owner
+      if (where.currentState === 'DRAFT' || (where.currentState?.in || []).includes('DRAFT')) {
+        return err('Draft abstracts are only visible to their authors', 403)
+      }
+      // Otherwise silently exclude drafts from listing
+      if (!where.currentState) {
+        where.currentState = { not: 'DRAFT' }
+      }
+    }
     // Free-text search across title, submissionCode, and author names (case-insensitive)
     if (q) {
       where.OR = [
@@ -775,12 +788,84 @@ async function handleAbstracts(route, method, request) {
     if (!isOwner && !isAssigned && !isPrivileged && !isCommitteeInsider) {
       return err('Forbidden', 403)
     }
+    // Draft-visibility rule: a DRAFT abstract must never be visible to editors,
+    // committee members or reviewers — drafts have not yet been formally submitted.
+    // Only the submitting author and SYSTEM_ADMIN (for support) can open a draft.
+    if (abstract.currentState === 'DRAFT' && !isOwner && !hasRole(user, 'SYSTEM_ADMIN')) {
+      return err('This abstract is still a draft and has not been submitted yet.', 403)
+    }
     // Double-blind: hide author identity from reviewers if enabled
     let result = abstract
     if (abstract.conference.doubleBlind && hasRole(user, 'EXTERNAL_REVIEWER') && !isOwner && !isPrivileged) {
       result = { ...abstract, authors: [], submittedBy: null }
     }
     return ok({ abstract: result })
+  }
+
+  // Update DRAFT (owner-only) — used by the author submission form to save edits before submitting.
+  const draftUpdMatch = route.match(/^\/abstracts\/([^\/]+)$/)
+  if (draftUpdMatch && method === 'PUT') {
+    const existing = await prisma.abstract.findUnique({ where: { id: draftUpdMatch[1] } })
+    if (!existing) return err('Not found', 404)
+    if (existing.submittedById !== user.id && !hasRole(user, 'SYSTEM_ADMIN')) return err('Forbidden', 403)
+    if (existing.currentState !== 'DRAFT') return err('This abstract has already been submitted and can no longer be edited from the submission form. Use the Revisions flow instead.', 409)
+
+    const body = await request.json()
+    const { title, body: absBody, keywords, themeId, reportType, disclosureStatement, coverLetter, authors, funders, ethicsStatement, conflictOfInterest, tags } = body
+
+    // Enforce the same 20-word title / 300-word body limits used by POST
+    if (title !== undefined) {
+      const titleWords = (title || '').trim().split(/\s+/).filter(Boolean).length
+      if (titleWords > 20) return err(`Title exceeds 20 words (got ${titleWords})`)
+    }
+    if (absBody !== undefined && absBody) {
+      const bodyWords = (absBody || '').trim().split(/\s+/).filter(Boolean).length
+      if (bodyWords > 300) return err(`Abstract body exceeds 300 words (got ${bodyWords})`)
+    }
+
+    // Replace authors block atomically if provided
+    if (Array.isArray(authors)) {
+      await prisma.abstractAuthor.deleteMany({ where: { abstractId: draftUpdMatch[1] } })
+      await prisma.abstractAuthor.createMany({
+        data: authors.map((a, i) => ({
+          abstractId: draftUpdMatch[1],
+          userId: a.userId || null,
+          fullName: a.fullName || '',
+          email: a.email || null,
+          phone: a.phone || null,
+          department: a.department || null,
+          affiliation: a.affiliation || null,
+          isCorresponding: !!a.isCorresponding,
+          orderIndex: a.orderIndex ?? i,
+        })),
+      })
+    }
+
+    const data = {}
+    if (title !== undefined) data.title = title
+    if (absBody !== undefined) data.body = absBody
+    if (keywords !== undefined) data.keywords = keywords
+    if (themeId !== undefined) data.themeId = themeId || null
+    if (reportType !== undefined) data.reportType = reportType
+    if (disclosureStatement !== undefined) data.disclosureStatement = disclosureStatement
+    if (coverLetter !== undefined) data.coverLetter = coverLetter
+    if (funders !== undefined) data.funders = funders
+    if (ethicsStatement !== undefined) data.ethicsStatement = ethicsStatement
+    if (conflictOfInterest !== undefined) data.conflictOfInterest = conflictOfInterest
+    if (tags !== undefined) data.tags = tags
+
+    const updated = await prisma.abstract.update({
+      where: { id: draftUpdMatch[1] },
+      data,
+      include: {
+        conference: { select: { id: true, code: true, name: true, doubleBlind: true } },
+        theme: true,
+        authors: { orderBy: { orderIndex: 'asc' } },
+        submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+    })
+    await logAudit({ actorId: user.id, action: 'UPDATE_DRAFT', entityType: 'Abstract', entityId: draftUpdMatch[1] })
+    return ok({ abstract: updated })
   }
 
   // Submit

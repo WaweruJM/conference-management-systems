@@ -1214,7 +1214,7 @@ function NotificationsBell({ notifs, onOpen, onReadAll, unread }) {
 function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isReviewer, isCommitteeEditorOnly, featured }) {
   if (route.name === 'dashboard') return <Dashboard setRoute={setRoute} isAdmin={isAdmin} isEditor={isEditor} isReviewer={isReviewer} user={user} featured={featured} />
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
-  if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} />
+  if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} draftId={route.draftId} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
   if (route.name === 'workspace') return <EditorWorkspace setRoute={setRoute} user={user} />
   if (route.name === 'live') return <LiveConferencePage user={user} />
@@ -1572,6 +1572,15 @@ function MyAbstracts({ setRoute }) {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(true)
   useEffect(() => { api('/abstracts?scope=mine').then(d => { setList(d.abstracts || []); setLoading(false) }) }, [])
+  const openAbstract = (a) => {
+    // Drafts must go BACK to the submission form for completion — they are not yet
+    // formally submitted so the read-only abstract detail page is not appropriate.
+    if (a.currentState === 'DRAFT') {
+      setRoute({ name: 'submit', draftId: a.id })
+    } else {
+      setRoute({ name: 'abstract', id: a.id, from: 'my-abstracts' })
+    }
+  }
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -1585,7 +1594,7 @@ function MyAbstracts({ setRoute }) {
         list.length === 0 ? <EmptyState label="No submissions yet" onAction={() => setRoute({ name: 'submit' })} actionLabel="Create your first submission" />
         : (
           <div className="grid gap-3">
-            {list.map(a => <AbstractCard key={a.id} a={a} onOpen={() => setRoute({ name: 'abstract', id: a.id })} />)}
+            {list.map(a => <AbstractCard key={a.id} a={a} onOpen={() => openAbstract(a)} />)}
           </div>
         )}
     </div>
@@ -1593,20 +1602,23 @@ function MyAbstracts({ setRoute }) {
 }
 
 function AbstractCard({ a, onOpen }) {
+  const isDraft = a.currentState === 'DRAFT'
   return (
     <button onClick={onOpen} className="w-full text-left">
-      <Card className="hover:shadow-md transition">
+      <Card className={`hover:shadow-md transition ${isDraft ? 'border-amber-300 bg-amber-50/40 border-dashed' : ''}`}>
         <CardContent className="p-5">
           <div className="flex justify-between items-start gap-4">
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-xs font-mono text-muted-foreground">{a.submissionCode}</span>
                 {a.theme && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
                 <Badge className={`text-[10px] border ${STATE_COLORS[a.currentState]}`}>{stateLabel(a.currentState)}</Badge>
+                {isDraft && <Badge className="bg-amber-500 text-white text-[10px]">RESUME EDITING</Badge>}
               </div>
-              <div className="font-semibold text-base">{a.title}</div>
+              <div className="font-semibold text-base">{a.title || <span className="italic text-muted-foreground">(untitled draft)</span>}</div>
               <div className="text-xs text-muted-foreground mt-1">
                 {a.authors?.map(au => au.fullName).join(', ')} · {a.conference?.code} · v{a.versions?.[0]?.versionNumber || 1}
+                {isDraft && <span className="ml-1 text-amber-700 font-medium">· Not yet submitted</span>}
               </div>
             </div>
             <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -1628,7 +1640,7 @@ function EmptyState({ label, onAction, actionLabel }) {
 }
 
 // ============ SUBMIT ABSTRACT (enhanced per guidelines) ============
-function SubmitAbstract({ setRoute, user }) {
+function SubmitAbstract({ setRoute, user, draftId }) {
   const [conferences, setConferences] = useState([])
   const [conferenceId, setConferenceId] = useState('')
   const [themeId, setThemeId] = useState('')
@@ -1644,11 +1656,46 @@ function SubmitAbstract({ setRoute, user }) {
   const [loading, setLoading] = useState(false)
   const [docFile, setDocFile] = useState(null)
   const [submitError, setSubmitError] = useState('')
+  const [draftLoading, setDraftLoading] = useState(!!draftId)
+  const [existingSubmissionCode, setExistingSubmissionCode] = useState(null)
 
   useEffect(() => { api('/conferences').then(d => {
     setConferences(d.conferences || [])
-    if (d.conferences?.[0]) setConferenceId(d.conferences[0].id)
-  }) }, [])
+    if (d.conferences?.[0] && !draftId) setConferenceId(d.conferences[0].id)
+  }) }, [draftId])
+
+  // Load existing draft if we're resuming one
+  useEffect(() => {
+    if (!draftId) return
+    (async () => {
+      try {
+        const d = await api(`/abstracts/${draftId}`)
+        const a = d.abstract
+        if (a.currentState !== 'DRAFT') {
+          toast.error('This abstract has already been submitted and can no longer be edited from this form.')
+          setRoute({ name: 'abstract', id: draftId })
+          return
+        }
+        setConferenceId(a.conferenceId)
+        setThemeId(a.themeId || '')
+        setReportType(a.reportType || 'ORIGINAL_RESEARCH')
+        setTitle(a.title || '')
+        setBody(a.body || '')
+        setKeywords((a.keywords || []).join(', '))
+        setDisclosureStatement(a.disclosureStatement || '')
+        setCoverLetter(a.coverLetter || '')
+        setAuthors((a.authors || []).map((au, i) => ({
+          userId: au.userId, fullName: au.fullName || '', email: au.email || '',
+          phone: au.phone || '', department: au.department || '', affiliation: au.affiliation || '',
+          isCorresponding: !!au.isCorresponding, orderIndex: au.orderIndex ?? i,
+        })))
+        setExistingSubmissionCode(a.submissionCode)
+      } catch (e) {
+        toast.error(e.message)
+        setRoute({ name: 'my-abstracts' })
+      } finally { setDraftLoading(false) }
+    })()
+  }, [draftId, setRoute])
 
   const themes = conferences.find(c => c.id === conferenceId)?.themes || []
   const titleWordCount = countWords(title)
@@ -1712,28 +1759,43 @@ function SubmitAbstract({ setRoute, user }) {
 
     setLoading(true)
     try {
-      const d = await api('/abstracts', {
-        method: 'POST',
-        body: JSON.stringify({
-          conferenceId, themeId: themeId || null, title,
-          reportType, body, keywords: keywordList, coverLetter,
-          disclosureStatement, authors,
-        }),
-      })
+      let absId = draftId
+      const payload = {
+        conferenceId, themeId: themeId || null, title,
+        reportType, body, keywords: keywordList, coverLetter,
+        disclosureStatement, authors,
+      }
+      if (draftId) {
+        // Update existing draft in place — no new submissionCode is generated
+        await api(`/abstracts/${draftId}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        })
+      } else {
+        // Fresh draft — create the abstract row
+        const created = await api('/abstracts', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+        absId = created.abstract.id
+      }
       // Upload the doc file if provided
       if (docFile) {
         const fd = new FormData()
         fd.append('file', docFile)
         fd.append('category', 'ABSTRACT')
-        await apiUpload(`/abstracts/${d.abstract.id}/documents`, fd)
+        await apiUpload(`/abstracts/${absId}/documents`, fd)
       }
       if (!asDraft) {
-        await api(`/abstracts/${d.abstract.id}/submit`, { method: 'POST' })
-        toast.success(`Submitted as ${d.abstract.submissionCode}`)
+        await api(`/abstracts/${absId}/submit`, { method: 'POST' })
+        toast.success(`Submitted successfully`)
+        // After a real submission the user should see the (now read-only) abstract detail
+        setRoute({ name: 'abstract', id: absId, from: 'my-abstracts' })
       } else {
-        toast.success(`Draft saved as ${d.abstract.submissionCode}`)
+        toast.success(draftId ? 'Draft updated' : 'Draft saved')
+        // Keep drafts inside My submissions until they are formally submitted
+        setRoute({ name: 'my-abstracts' })
       }
-      setRoute({ name: 'abstract', id: d.abstract.id })
     } catch (e) {
       const raw = String(e.message || '')
       let clean = raw
@@ -1768,14 +1830,28 @@ function SubmitAbstract({ setRoute, user }) {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      {draftLoading && (
+        <div className="mb-4 flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+          <span className="ml-2 text-sm text-muted-foreground">Loading your saved draft…</span>
+        </div>
+      )}
       {/* Hero header */}
       <Card className="mb-5 border-0 shadow-md overflow-hidden">
         <div className="bg-gradient-to-r from-indigo-600 via-fuchsia-600 to-rose-500 p-6 text-white">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex-1 min-w-[240px]">
-              <Badge className="bg-white/25 border-white/40 text-white backdrop-blur-sm mb-2"><FileUp className="h-3 w-3 mr-1" /> AUTHORS</Badge>
-              <h1 className="text-3xl font-bold tracking-tight">Submit new abstract</h1>
-              <p className="text-white/90 text-sm mt-1">All fields are required unless marked otherwise. Follow the guidelines below to maximise your chance of acceptance.</p>
+              <Badge className="bg-white/25 border-white/40 text-white backdrop-blur-sm mb-2">
+                <FileUp className="h-3 w-3 mr-1" /> {draftId ? 'RESUMING DRAFT' : 'AUTHORS'}
+              </Badge>
+              <h1 className="text-3xl font-bold tracking-tight">
+                {draftId ? 'Continue your draft' : 'Submit new abstract'}
+              </h1>
+              <p className="text-white/90 text-sm mt-1">
+                {draftId
+                  ? <>You are editing draft <span className="font-mono bg-white/15 px-1.5 py-0.5 rounded">{existingSubmissionCode || draftId}</span>. Complete the required fields and click "Submit for review" when ready — the draft will not reach the editorial office until it is submitted.</>
+                  : 'All fields are required unless marked otherwise. Follow the guidelines below to maximise your chance of acceptance.'}
+              </p>
             </div>
             <Button variant="outline" onClick={downloadGuidelines} className="bg-white text-indigo-700 hover:bg-slate-100 border-0 shadow"><Download className="h-4 w-4 mr-1" /> Access submission guidelines</Button>
           </div>

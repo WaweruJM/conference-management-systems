@@ -1191,8 +1191,9 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Header assets endpoint now supports side='background' in addition to left/right. POST accepts up to 5 MB for background (2 MB for icons). DELETE with side='background' clears the field. GET /api/public/config surfaces `headerBackground`."
-    - "Regression: existing left/right upload/delete flows still work with same 2 MB limit and RBAC (SYSTEM_ADMIN/MANAGING_EDITOR/CHIEF_EDITOR)."
+    - "New rule: DRAFT abstracts only visible to their author (submittedBy) + SYSTEM_ADMIN. GET /api/abstracts (list) silently excludes drafts for non-owners; GET /api/abstracts/:id returns 403 for drafts opened by anyone other than owner/admin."
+    - "New endpoint: PUT /api/abstracts/:id updates a DRAFT owned by the caller (title/body/keywords/theme/reportType/coverLetter/disclosure/authors). Enforces 20-word title, 300-word body limits. Rejects 403 if not owner, 409 if abstract is no longer DRAFT."
+    - "Regression: Author can still POST a new draft, save it, later POST /submit to move DRAFT → SUBMITTED. Submitted abstracts still appear in the editorial office list."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2285,3 +2286,124 @@ agent_communication:
       **Summary:**
       All extended header assets endpoint tests passed. Background image support working correctly with 5 MB limit. Icon uploads (left/right) still enforce 2 MB limit. Side parameter validation includes all three options ('left', 'right', 'background'). RBAC unchanged and properly enforced. DELETE endpoint clears background field correctly. GET /api/public/config surfaces headerBackground field. No regressions - existing left/right functionality intact.
 
+
+  - agent: "testing"
+    message: |
+      ✅ DRAFT ABSTRACT VISIBILITY + PUT ENDPOINT TEST COMPLETE (21/22 tests passed = 95.5% success rate)
+      
+      **Test Scope:** Verify DRAFT abstract visibility rules and new PUT /api/abstracts/:id endpoint per review request.
+      
+      **Test Users:**
+      - author@scms.io (AUTHOR) — primary owner
+      - author2@scms.io (AUTHOR) — second author (created for testing)
+      - chief@scms.io (CHIEF_EDITOR)
+      - committee@scms.io (COMMITTEE_MEMBER)
+      - reviewer1@scms.io (EXTERNAL_REVIEWER)
+      - admin@scms.io (SYSTEM_ADMIN)
+      
+      **Test Abstract:** MEDICAL SCIENTIFIC CONFERENCE-000028 (ID: bc5284b0-6d0f-42b0-9159-bc0721b2f2e6)
+      
+      **✅ CHANGE 1 — DRAFT VISIBILITY GATE (12/12 tests passed = 100%)**
+      
+      **List endpoint (GET /api/abstracts):**
+      ✅ Step 2: Owner can see their draft with ?scope=mine (200)
+      ✅ Step 3: Other authors (author2@scms.io) cannot see the draft in ?scope=mine
+      ✅ Step 4: Chief editor cannot see draft in default listing
+      ✅ Step 4b: Chief editor gets 403 when explicitly querying ?state=DRAFT
+         - Error message: "Draft abstracts are only visible to their authors"
+      ✅ Step 5: Committee member cannot see draft in default listing, gets 403 on ?state=DRAFT
+      ✅ Step 6: External reviewer cannot see draft in default listing, gets 403 on ?state=DRAFT
+      ✅ Step 7a: Admin CAN see draft in default listing (200)
+      ✅ Step 7b: Admin can filter to ?state=DRAFT (200)
+      
+      **Detail endpoint (GET /api/abstracts/:id):**
+      ✅ Step 8: Chief editor gets 403 with message "This abstract is still a draft and has not been submitted yet."
+      ✅ Step 9: Committee member gets 403 with same draft message
+      ✅ Step 10: External reviewer gets 403 (Forbidden)
+      ✅ Step 11: Owner can access draft detail (200)
+      ✅ Step 12: Admin can access draft detail (200)
+      
+      **✅ CHANGE 2 — PUT /api/abstracts/:id ENDPOINT (5/6 tests passed = 83.3%)**
+      
+      **RBAC and validation:**
+      ✅ Step 13: Non-owner (author2@scms.io) gets 403 (Forbidden)
+      ✅ Step 14: Chief editor gets 403 (Forbidden)
+      ❌ Step 15: Owner PUT with valid updates (title, body, keywords, coverLetter) → 500 error
+         - **CRITICAL BUG:** "Server schema mismatch on field 'body'"
+         - **ROOT CAUSE:** PUT endpoint tries to update `data.body = absBody` on Abstract model (line 846)
+         - **ISSUE:** Abstract model doesn't have a `body` field - it's in AbstractVersion model
+         - **IMPACT:** Cannot update body or coverLetter fields (both are in AbstractVersion, not Abstract)
+      ✅ Step 16: Overly long title (>20 words) rejected with 400
+         - Error message: "Title exceeds 20 words (got 21)"
+      ✅ Step 17: Overly long body (>300 words) rejected with 400
+         - Error message: "Abstract body exceeds 300 words (got 301)"
+      ✅ Step 18: Authors array can be updated atomically (200)
+         - Verified: Abstract now has exactly 2 authors in correct order
+      
+      **✅ REGRESSION — SUBMIT FLOW (4/4 tests passed = 100%)**
+      
+      ✅ Step 19: POST /api/abstracts/:id/submit transitions DRAFT → SUBMITTED (200)
+      ✅ Step 20: Submitted abstract now visible to chief editor in listing
+      ✅ Step 21: Chief editor can access submitted abstract detail (200)
+      ✅ Step 22: PUT after submit correctly rejected with 409
+         - Error message: "This abstract has already been submitted and can no longer be edited from the submission form. Use the Revisions flow instead."
+      
+      **🐛 CRITICAL BUG DETAILS:**
+      
+      **Bug:** PUT /api/abstracts/:id cannot update body or coverLetter fields
+      **Location:** /app/app/api/[[...path]]/route.js lines 806-869
+      **Root Cause:** Schema mismatch between endpoint implementation and Prisma models
+      
+      The PUT endpoint (lines 844-855) tries to update these fields on the Abstract model:
+      - `body` (line 846) — ❌ doesn't exist in Abstract, exists in AbstractVersion
+      - `coverLetter` (line 851) — ❌ doesn't exist in Abstract, exists in AbstractVersion
+      - `funders` (line 852) — ❌ doesn't exist in either model
+      - `ethicsStatement` (line 853) — ❌ doesn't exist in either model
+      - `conflictOfInterest` (line 854) — ❌ doesn't exist in either model
+      - `tags` (line 855) — ❌ doesn't exist in either model
+      
+      **What works:**
+      - `title` (line 845) — ✅ exists in Abstract
+      - `keywords` (line 847) — ✅ exists in Abstract
+      - `themeId` (line 848) — ✅ exists in Abstract
+      - `reportType` (line 849) — ✅ exists in Abstract
+      - `disclosureStatement` (line 850) — ✅ exists in Abstract
+      - `authors` (lines 827-842) — ✅ handled separately via AbstractAuthor table
+      
+      **Fix Required:**
+      The endpoint needs to update the AbstractVersion record (not the Abstract record) for body and coverLetter fields.
+      The endpoint should remove references to non-existent fields (funders, ethicsStatement, conflictOfInterest, tags).
+      
+      **SUMMARY:**
+      
+      ✅ DRAFT visibility rules working correctly (12/12 tests passed)
+      - Drafts only visible to owner + SYSTEM_ADMIN in listings ✅
+      - Drafts only accessible to owner + SYSTEM_ADMIN in detail view ✅
+      - Non-owners get 403 with appropriate error messages ✅
+      - Explicit ?state=DRAFT queries correctly rejected for non-owners ✅
+      
+      ✅ PUT endpoint RBAC working correctly
+      - Non-owners get 403 ✅
+      - Editors get 403 ✅
+      - Only owner (or SYSTEM_ADMIN) can edit ✅
+      
+      ✅ PUT endpoint validation working correctly
+      - 20-word title limit enforced ✅
+      - 300-word body limit enforced ✅
+      - Authors array can be replaced atomically ✅
+      
+      ❌ PUT endpoint has CRITICAL BUG
+      - Cannot update body field (500 error due to schema mismatch)
+      - Cannot update coverLetter field (same issue)
+      - Tries to update non-existent fields (funders, ethicsStatement, conflictOfInterest, tags)
+      
+      ✅ Submit flow working correctly (4/4 tests passed)
+      - DRAFT → SUBMITTED transition works ✅
+      - Submitted abstracts visible to editors ✅
+      - PUT after submit correctly rejected with 409 ✅
+      
+      **ACTION REQUIRED:**
+      Main agent must fix the PUT endpoint to:
+      1. Update body and coverLetter in the AbstractVersion table (not Abstract table)
+      2. Remove references to non-existent fields (funders, ethicsStatement, conflictOfInterest, tags)
+      3. Ensure the latest version (versionNumber=1 for drafts) is updated
