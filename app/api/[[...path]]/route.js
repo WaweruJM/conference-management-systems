@@ -841,18 +841,44 @@ async function handleAbstracts(route, method, request) {
       })
     }
 
+    // Fields that live on the Abstract row
     const data = {}
     if (title !== undefined) data.title = title
-    if (absBody !== undefined) data.body = absBody
     if (keywords !== undefined) data.keywords = keywords
     if (themeId !== undefined) data.themeId = themeId || null
     if (reportType !== undefined) data.reportType = reportType
     if (disclosureStatement !== undefined) data.disclosureStatement = disclosureStatement
-    if (coverLetter !== undefined) data.coverLetter = coverLetter
-    if (funders !== undefined) data.funders = funders
-    if (ethicsStatement !== undefined) data.ethicsStatement = ethicsStatement
-    if (conflictOfInterest !== undefined) data.conflictOfInterest = conflictOfInterest
-    if (tags !== undefined) data.tags = tags
+
+    // Body + coverLetter live on the AbstractVersion. For drafts we mutate the
+    // latest (v1) version in place — we do NOT create additional versions until the
+    // abstract is formally submitted / revised.
+    if (absBody !== undefined || coverLetter !== undefined || title !== undefined || keywords !== undefined) {
+      const latest = await prisma.abstractVersion.findFirst({
+        where: { abstractId: draftUpdMatch[1] },
+        orderBy: { versionNumber: 'desc' },
+      })
+      const versionData = {}
+      if (absBody !== undefined) versionData.body = absBody
+      if (coverLetter !== undefined) versionData.coverLetter = coverLetter
+      // Keep title + keywords on the version in sync with the abstract row
+      if (title !== undefined) versionData.title = title
+      if (keywords !== undefined) versionData.keywords = keywords
+      if (latest) {
+        await prisma.abstractVersion.update({ where: { id: latest.id }, data: versionData })
+      } else if (Object.keys(versionData).length) {
+        await prisma.abstractVersion.create({
+          data: {
+            abstractId: draftUpdMatch[1],
+            versionNumber: 1,
+            title: title || existing.title,
+            body: absBody || '',
+            keywords: keywords || [],
+            coverLetter: coverLetter || null,
+            createdById: user.id,
+          },
+        })
+      }
+    }
 
     const updated = await prisma.abstract.update({
       where: { id: draftUpdMatch[1] },
@@ -862,6 +888,7 @@ async function handleAbstracts(route, method, request) {
         theme: true,
         authors: { orderBy: { orderIndex: 'asc' } },
         submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+        versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
       },
     })
     await logAudit({ actorId: user.id, action: 'UPDATE_DRAFT', entityType: 'Abstract', entityId: draftUpdMatch[1] })

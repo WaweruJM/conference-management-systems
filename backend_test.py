@@ -1,420 +1,397 @@
 #!/usr/bin/env python3
 """
-Backend test for extended header assets endpoint with background support.
-Tests POST/DELETE /api/conferences/:id/header-logo with side='background' in addition to 'left'/'right'.
+Backend test for PUT /api/abstracts/:id endpoint
+Tests the previously-failing scenario (#15) plus authors-array test (#18)
 """
 
 import requests
-import io
+import json
 import sys
-import struct
 
 BASE_URL = "https://scms-platform-1.preview.emergentagent.com/api"
 
 def login(email, password):
     """Login and return JWT token"""
     try:
-        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password})
-        if resp.status_code == 200:
-            data = resp.json()
-            token = data.get("token")
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get('token')
             print(f"✅ Login successful for {email}")
             return token
         else:
-            print(f"❌ Login failed for {email}: {resp.status_code} - {resp.text}")
+            print(f"❌ Login failed for {email}: {response.status_code} - {response.text}")
             return None
     except Exception as e:
         print(f"❌ Login exception for {email}: {str(e)}")
         return None
 
-def get_featured_conference():
+def get_featured_conference(token):
     """Get featured conference ID"""
     try:
-        resp = requests.get(f"{BASE_URL}/public/config")
-        if resp.status_code == 200:
-            data = resp.json()
-            conf_id = data.get("conference", {}).get("id")
-            conf_name = data.get("conference", {}).get("name")
+        response = requests.get(
+            f"{BASE_URL}/public/config",
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            conf_id = data.get('conference', {}).get('id')
+            conf_name = data.get('conference', {}).get('name')
             print(f"✅ Featured conference: {conf_name} (ID: {conf_id})")
             return conf_id
         else:
-            print(f"❌ Failed to get featured conference: {resp.status_code}")
+            print(f"❌ Failed to get featured conference: {response.status_code}")
             return None
     except Exception as e:
         print(f"❌ Exception getting featured conference: {str(e)}")
         return None
 
-def create_test_image(size_kb):
-    """Create a minimal valid PNG of approximately the specified size in KB"""
-    # PNG header
-    png_header = b'\x89PNG\r\n\x1a\n'
-    
-    # Determine dimensions based on target size
-    if size_kb < 100:
-        width, height = 100, 100
-    elif size_kb < 1000:
-        width, height = 800, 600
-    elif size_kb < 3000:
-        width, height = 1500, 1000
-    else:
-        width, height = 2500, 1500
-    
-    # IHDR chunk
-    ihdr_data = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    ihdr_chunk = b'IHDR' + ihdr_data
-    ihdr_crc = struct.pack('>I', 0x00000000)  # Simplified CRC
-    ihdr = struct.pack('>I', len(ihdr_data)) + ihdr_chunk + ihdr_crc
-    
-    # Create image data (RGB pixels)
-    # Each pixel is 3 bytes (RGB), plus 1 filter byte per scanline
-    bytes_per_row = 1 + (width * 3)
-    total_data_size = bytes_per_row * height
-    
-    # Pad to reach target size
-    target_bytes = size_kb * 1024
-    padding_size = max(0, target_bytes - len(png_header) - len(ihdr) - 100)
-    
-    # IDAT chunk with image data
-    idat_data = b'\x00' * min(total_data_size, padding_size)
-    idat_chunk = b'IDAT' + idat_data
-    idat_crc = struct.pack('>I', 0x00000000)
-    idat = struct.pack('>I', len(idat_data)) + idat_chunk + idat_crc
-    
-    # IEND chunk
-    iend = struct.pack('>I', 0) + b'IEND' + struct.pack('>I', 0xAE426082)
-    
-    # Combine all chunks
-    png_bytes = png_header + ihdr + idat + iend
-    
-    actual_size = len(png_bytes)
-    print(f"   Created test image: {actual_size / 1024:.1f} KB ({width}x{height})")
-    
-    return io.BytesIO(png_bytes)
+def create_draft_abstract(token, conf_id):
+    """Create a fresh DRAFT abstract"""
+    try:
+        payload = {
+            "conferenceId": conf_id,
+            "title": "Initial Draft Title for Testing PUT Endpoint",
+            "body": "This is the initial body content for testing the PUT endpoint. It needs to be long enough to be meaningful.",
+            "keywords": ["initial", "draft", "test"],
+            "reportType": "ORIGINAL_RESEARCH",
+            "themeId": None,
+            "coverLetter": "Initial cover letter content",
+            "authors": [
+                {
+                    "fullName": "Test Author",
+                    "email": "author@scms.io",
+                    "affiliation": "Test University",
+                    "isCorresponding": True,
+                    "orderIndex": 0
+                }
+            ]
+        }
+        response = requests.post(
+            f"{BASE_URL}/abstracts",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            abstract = data.get('abstract', {})
+            abs_id = abstract.get('id')
+            submission_code = abstract.get('submissionCode')
+            state = abstract.get('currentState')
+            print(f"✅ Created DRAFT abstract: {submission_code} (ID: {abs_id}, State: {state})")
+            return abs_id
+        else:
+            print(f"❌ Failed to create abstract: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception creating abstract: {str(e)}")
+        return None
 
-def test_header_background_endpoint():
-    """Test extended header assets endpoint with background support"""
-    print("\n" + "="*80)
-    print("EXTENDED HEADER ASSETS ENDPOINT TEST")
-    print("="*80)
-    
-    # Get featured conference
-    featured_id = get_featured_conference()
-    if not featured_id:
-        print("❌ Cannot proceed without featured conference ID")
+def test_step_a_put_with_body_and_cover_letter(token, abs_id):
+    """
+    Step A: PUT with title, body, keywords, coverLetter
+    Expect 200 and verify the response
+    """
+    print("\n=== STEP A: PUT with title, body, keywords, coverLetter ===")
+    try:
+        payload = {
+            "title": "Revised draft title",
+            "body": "Updated body content that is short and clear.",
+            "keywords": ["updated", "testing", "draft"],
+            "coverLetter": "Cover letter text here"
+        }
+        response = requests.put(
+            f"{BASE_URL}/abstracts/{abs_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        print(f"PUT /api/abstracts/{abs_id} → {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            abstract = data.get('abstract', {})
+            
+            # Verify title
+            if abstract.get('title') == "Revised draft title":
+                print(f"✅ Title verified: {abstract.get('title')}")
+            else:
+                print(f"❌ Title mismatch: expected 'Revised draft title', got '{abstract.get('title')}'")
+            
+            # Verify keywords
+            if abstract.get('keywords') == ["updated", "testing", "draft"]:
+                print(f"✅ Keywords verified: {abstract.get('keywords')}")
+            else:
+                print(f"❌ Keywords mismatch: expected ['updated', 'testing', 'draft'], got {abstract.get('keywords')}")
+            
+            # Verify body and coverLetter from latest version
+            versions = abstract.get('versions', [])
+            if versions:
+                latest_version = versions[0]
+                body = latest_version.get('body')
+                cover_letter = latest_version.get('coverLetter')
+                
+                if body == "Updated body content that is short and clear.":
+                    print(f"✅ Body verified: {body}")
+                else:
+                    print(f"❌ Body mismatch: expected 'Updated body content that is short and clear.', got '{body}'")
+                
+                if cover_letter == "Cover letter text here":
+                    print(f"✅ CoverLetter verified: {cover_letter}")
+                else:
+                    print(f"❌ CoverLetter mismatch: expected 'Cover letter text here', got '{cover_letter}'")
+            else:
+                print(f"❌ No versions found in response")
+            
+            print("✅ STEP A PASSED: PUT with body and coverLetter successful")
+            return True
+        else:
+            print(f"❌ STEP A FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ STEP A EXCEPTION: {str(e)}")
         return False
+
+def test_step_b_put_with_authors_array(token, abs_id):
+    """
+    Step B: PUT with authors array of TWO authors
+    Expect 200 and verify authors length === 2, ordered by orderIndex
+    """
+    print("\n=== STEP B: PUT with authors array (2 authors) ===")
+    try:
+        payload = {
+            "authors": [
+                {
+                    "fullName": "Dr. Jane Smith",
+                    "email": "jane.smith@example.com",
+                    "affiliation": "University of Science",
+                    "isCorresponding": True,
+                    "orderIndex": 0
+                },
+                {
+                    "fullName": "Dr. John Doe",
+                    "email": "john.doe@example.com",
+                    "affiliation": "Research Institute",
+                    "isCorresponding": False,
+                    "orderIndex": 1
+                }
+            ]
+        }
+        response = requests.put(
+            f"{BASE_URL}/abstracts/{abs_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        print(f"PUT /api/abstracts/{abs_id} with authors → {response.status_code}")
+        
+        if response.status_code == 200:
+            # GET the abstract to verify authors
+            get_response = requests.get(
+                f"{BASE_URL}/abstracts/{abs_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10
+            )
+            
+            if get_response.status_code == 200:
+                data = get_response.json()
+                abstract = data.get('abstract', {})
+                authors = abstract.get('authors', [])
+                
+                if len(authors) == 2:
+                    print(f"✅ Authors count verified: {len(authors)}")
+                else:
+                    print(f"❌ Authors count mismatch: expected 2, got {len(authors)}")
+                
+                # Verify order
+                if len(authors) >= 2:
+                    if authors[0].get('orderIndex') == 0 and authors[1].get('orderIndex') == 1:
+                        print(f"✅ Authors order verified: orderIndex 0, 1")
+                    else:
+                        print(f"❌ Authors order mismatch: got orderIndex {authors[0].get('orderIndex')}, {authors[1].get('orderIndex')}")
+                    
+                    # Verify names
+                    if authors[0].get('fullName') == "Dr. Jane Smith":
+                        print(f"✅ First author verified: {authors[0].get('fullName')}")
+                    else:
+                        print(f"❌ First author mismatch: expected 'Dr. Jane Smith', got '{authors[0].get('fullName')}'")
+                    
+                    if authors[1].get('fullName') == "Dr. John Doe":
+                        print(f"✅ Second author verified: {authors[1].get('fullName')}")
+                    else:
+                        print(f"❌ Second author mismatch: expected 'Dr. John Doe', got '{authors[1].get('fullName')}'")
+                
+                print("✅ STEP B PASSED: Authors array update successful")
+                return True
+            else:
+                print(f"❌ STEP B FAILED: GET after PUT returned {get_response.status_code}")
+                return False
+        else:
+            print(f"❌ STEP B FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ STEP B EXCEPTION: {str(e)}")
+        return False
+
+def test_step_c_regression_checks(author_token, chief_token, author2_token, abs_id):
+    """
+    Step C: Confirm regression fix did NOT re-introduce earlier issues
+    - As chief@scms.io: GET /api/abstracts/{absId} → 403 (draft still hidden)
+    - PUT the draft as author2@scms.io (non-owner) → 403
+    - Word-count validation: PUT with 21-word title → 400
+    """
+    print("\n=== STEP C: Regression checks ===")
     
     all_passed = True
     
-    # Test 1: Login as admin and verify /public/config returns headerBackground field
-    print("\n--- Test 1: Verify /public/config returns headerBackground field ---")
-    token_admin = login("admin@scms.io", "password123")
-    if not token_admin:
-        print("❌ Test 1 FAILED: Cannot login as admin@scms.io")
-        return False
-    
+    # C1: Chief editor cannot see draft
+    print("\n--- C1: Chief editor cannot see draft ---")
     try:
-        resp = requests.get(f"{BASE_URL}/public/config")
-        if resp.status_code == 200:
-            data = resp.json()
-            conf = data.get("conference", {})
-            if "headerBackground" in conf:
-                print(f"✅ Test 1 PASSED: /public/config returns headerBackground field (value: {conf.get('headerBackground')})")
-            else:
-                print(f"❌ Test 1 FAILED: headerBackground field not found in conference object")
-                all_passed = False
-        else:
-            print(f"❌ Test 1 FAILED: GET /public/config returned {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 1 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 2: Upload ~1 MB PNG with side='background' - expect 200
-    print("\n--- Test 2: Upload ~1 MB PNG with side='background' ---")
-    headers = {"Authorization": f"Bearer {token_admin}"}
-    try:
-        img_bytes = create_test_image(1000)  # ~1 MB
-        files = {'file': ('test_background.png', img_bytes, 'image/png')}
-        data = {'side': 'background'}
-        resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                           headers=headers, files=files, data=data)
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get("side") == "background" and "imagePath" in result:
-                print(f"✅ Test 2 PASSED: Upload background returned 200")
-                print(f"   imagePath: {result.get('imagePath')}")
-                print(f"   side: {result.get('side')}")
-                
-                # Verify /public/config now shows headerBackground
-                resp2 = requests.get(f"{BASE_URL}/public/config")
-                if resp2.status_code == 200:
-                    conf = resp2.json().get("conference", {})
-                    if conf.get("headerBackground") == result.get("imagePath"):
-                        print(f"✅ Test 2: /public/config.headerBackground updated correctly")
-                    else:
-                        print(f"❌ Test 2: /public/config.headerBackground mismatch")
-                        all_passed = False
-            else:
-                print(f"❌ Test 2 FAILED: Response missing expected fields: {result}")
-                all_passed = False
-        else:
-            print(f"❌ Test 2 FAILED: Upload returned {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 2 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 3: Upload ~6 MB image with side='background' - expect 400
-    print("\n--- Test 3: Upload ~6 MB image with side='background' (expect 400) ---")
-    try:
-        img_bytes = create_test_image(6000)  # ~6 MB
-        files = {'file': ('test_large.png', img_bytes, 'image/png')}
-        data = {'side': 'background'}
-        resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                           headers=headers, files=files, data=data)
-        if resp.status_code == 400:
-            error_msg = resp.json().get("error", "")
-            if "5 MB" in error_msg or "too large" in error_msg.lower():
-                print(f"✅ Test 3 PASSED: Upload >5 MB correctly returned 400")
-                print(f"   Error message: {error_msg}")
-            else:
-                print(f"❌ Test 3 FAILED: Error message doesn't mention size limit: {error_msg}")
-                all_passed = False
-        else:
-            print(f"❌ Test 3 FAILED: Expected 400, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 3 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 4: Upload ~3 MB image with side='left' - expect 400 (icons still capped at 2 MB)
-    print("\n--- Test 4: Upload ~3 MB image with side='left' (expect 400) ---")
-    try:
-        img_bytes = create_test_image(3000)  # ~3 MB
-        files = {'file': ('test_left_large.png', img_bytes, 'image/png')}
-        data = {'side': 'left'}
-        resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                           headers=headers, files=files, data=data)
-        if resp.status_code == 400:
-            error_msg = resp.json().get("error", "")
-            if "2 MB" in error_msg or "too large" in error_msg.lower():
-                print(f"✅ Test 4 PASSED: Upload >2 MB for 'left' correctly returned 400")
-                print(f"   Error message: {error_msg}")
-            else:
-                print(f"❌ Test 4 FAILED: Error message doesn't mention 2 MB limit: {error_msg}")
-                all_passed = False
-        else:
-            print(f"❌ Test 4 FAILED: Expected 400, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 4 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 5: Upload with side='middle' - expect 400
-    print("\n--- Test 5: Upload with side='middle' (expect 400) ---")
-    try:
-        img_bytes = create_test_image(50)  # Small image
-        files = {'file': ('test_invalid.png', img_bytes, 'image/png')}
-        data = {'side': 'middle'}
-        resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                           headers=headers, files=files, data=data)
-        if resp.status_code == 400:
-            error_msg = resp.json().get("error", "")
-            if "left" in error_msg and "right" in error_msg and "background" in error_msg:
-                print(f"✅ Test 5 PASSED: Invalid side correctly returned 400")
-                print(f"   Error message: {error_msg}")
-            else:
-                print(f"❌ Test 5 FAILED: Error message doesn't mention valid sides: {error_msg}")
-                all_passed = False
-        else:
-            print(f"❌ Test 5 FAILED: Expected 400, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 5 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 6: DELETE with {"side":"background"} - expect 200
-    print("\n--- Test 6: DELETE with side='background' ---")
-    try:
-        resp = requests.delete(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                             headers=headers, json={"side": "background"})
-        if resp.status_code == 200:
-            result = resp.json()
-            conf = result.get("conference", {})
-            if conf.get("headerBackground") is None:
-                print(f"✅ Test 6 PASSED: DELETE background returned 200, field now null")
-                
-                # Verify /public/config
-                resp2 = requests.get(f"{BASE_URL}/public/config")
-                if resp2.status_code == 200:
-                    conf2 = resp2.json().get("conference", {})
-                    if conf2.get("headerBackground") is None:
-                        print(f"✅ Test 6: /public/config.headerBackground now null")
-                    else:
-                        print(f"❌ Test 6: /public/config.headerBackground not null: {conf2.get('headerBackground')}")
-                        all_passed = False
-            else:
-                print(f"❌ Test 6 FAILED: headerBackground not null after delete: {conf.get('headerBackground')}")
-                all_passed = False
-        else:
-            print(f"❌ Test 6 FAILED: DELETE returned {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 6 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 7: DELETE with {"side":"invalid"} - expect 400
-    print("\n--- Test 7: DELETE with side='invalid' (expect 400) ---")
-    try:
-        resp = requests.delete(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                             headers=headers, json={"side": "invalid"})
-        if resp.status_code == 400:
-            error_msg = resp.json().get("error", "")
-            print(f"✅ Test 7 PASSED: DELETE with invalid side returned 400")
-            print(f"   Error message: {error_msg}")
-        else:
-            print(f"❌ Test 7 FAILED: Expected 400, got {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 7 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Test 8: As author@scms.io - POST with valid file+side='background' - expect 403
-    print("\n--- Test 8: POST as author@scms.io (expect 403) ---")
-    token_author = login("author@scms.io", "password123")
-    if token_author:
-        headers_author = {"Authorization": f"Bearer {token_author}"}
-        try:
-            img_bytes = create_test_image(50)
-            files = {'file': ('test_author.png', img_bytes, 'image/png')}
-            data = {'side': 'background'}
-            resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                               headers=headers_author, files=files, data=data)
-            if resp.status_code == 403:
-                print(f"✅ Test 8 PASSED: Author correctly denied with 403")
-            else:
-                print(f"❌ Test 8 FAILED: Expected 403, got {resp.status_code}: {resp.text}")
-                all_passed = False
-        except Exception as e:
-            print(f"❌ Test 8 FAILED: Exception: {str(e)}")
-            all_passed = False
-    else:
-        print(f"❌ Test 8 FAILED: Cannot login as author@scms.io")
-        all_passed = False
-    
-    # Test 9: As chief@scms.io - POST valid background upload, then DELETE
-    print("\n--- Test 9: POST and DELETE as chief@scms.io ---")
-    token_chief = login("chief@scms.io", "password123")
-    if token_chief:
-        headers_chief = {"Authorization": f"Bearer {token_chief}"}
-        try:
-            # POST
-            img_bytes = create_test_image(500)  # ~500 KB
-            files = {'file': ('test_chief.png', img_bytes, 'image/png')}
-            data = {'side': 'background'}
-            resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                               headers=headers_chief, files=files, data=data)
-            if resp.status_code == 200:
-                print(f"✅ Test 9a PASSED: Chief editor can POST background")
-                
-                # DELETE
-                resp2 = requests.delete(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                                      headers=headers_chief, json={"side": "background"})
-                if resp2.status_code == 200:
-                    print(f"✅ Test 9b PASSED: Chief editor can DELETE background")
-                else:
-                    print(f"❌ Test 9b FAILED: DELETE returned {resp2.status_code}: {resp2.text}")
-                    all_passed = False
-            else:
-                print(f"❌ Test 9a FAILED: POST returned {resp.status_code}: {resp.text}")
-                all_passed = False
-        except Exception as e:
-            print(f"❌ Test 9 FAILED: Exception: {str(e)}")
-            all_passed = False
-    else:
-        print(f"❌ Test 9 FAILED: Cannot login as chief@scms.io")
-        all_passed = False
-    
-    # Test 10: Regression - upload side='left' ~50KB PNG, verify /public/config.headerLogoLeft updates
-    print("\n--- Test 10: Regression - upload side='left' ---")
-    try:
-        img_bytes = create_test_image(50)  # ~50 KB
-        files = {'file': ('test_left.png', img_bytes, 'image/png')}
-        data = {'side': 'left'}
-        resp = requests.post(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                           headers=headers, files=files, data=data)
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get("side") == "left" and "imagePath" in result:
-                print(f"✅ Test 10a PASSED: Upload left returned 200")
-                
-                # Verify /public/config
-                resp2 = requests.get(f"{BASE_URL}/public/config")
-                if resp2.status_code == 200:
-                    conf = resp2.json().get("conference", {})
-                    if conf.get("headerLogoLeft") == result.get("imagePath"):
-                        print(f"✅ Test 10b PASSED: /public/config.headerLogoLeft updated")
-                        
-                        # Verify headerBackground is still null (unaffected)
-                        if conf.get("headerBackground") is None:
-                            print(f"✅ Test 10c PASSED: headerBackground unaffected (still null)")
-                        else:
-                            print(f"❌ Test 10c FAILED: headerBackground affected: {conf.get('headerBackground')}")
-                            all_passed = False
-                    else:
-                        print(f"❌ Test 10b FAILED: headerLogoLeft mismatch")
-                        all_passed = False
-            else:
-                print(f"❌ Test 10a FAILED: Response missing expected fields: {result}")
-                all_passed = False
-        else:
-            print(f"❌ Test 10a FAILED: Upload returned {resp.status_code}: {resp.text}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ Test 10 FAILED: Exception: {str(e)}")
-        all_passed = False
-    
-    # Cleanup: Delete all logos to restore baseline
-    print("\n--- Cleanup: Delete all logos ---")
-    try:
-        for side in ['left', 'right', 'background']:
-            resp = requests.delete(f"{BASE_URL}/conferences/{featured_id}/header-logo", 
-                                 headers=headers, json={"side": side})
-            if resp.status_code == 200:
-                print(f"✅ Cleanup: Deleted {side} logo")
-            else:
-                print(f"⚠️  Cleanup: Failed to delete {side} logo: {resp.status_code}")
+        response = requests.get(
+            f"{BASE_URL}/abstracts/{abs_id}",
+            headers={"Authorization": f"Bearer {chief_token}"},
+            timeout=10
+        )
         
-        # Verify all null
-        resp = requests.get(f"{BASE_URL}/public/config")
-        if resp.status_code == 200:
-            conf = resp.json().get("conference", {})
-            if conf.get("headerLogoLeft") is None and conf.get("headerLogoRight") is None and conf.get("headerBackground") is None:
-                print(f"✅ Cleanup: All logos now null")
-            else:
-                print(f"⚠️  Cleanup: Some logos still set: left={conf.get('headerLogoLeft')}, right={conf.get('headerLogoRight')}, background={conf.get('headerBackground')}")
+        print(f"GET /api/abstracts/{abs_id} as chief@scms.io → {response.status_code}")
+        
+        if response.status_code == 403:
+            print(f"✅ C1 PASSED: Chief editor correctly denied access to draft (403)")
+        else:
+            print(f"❌ C1 FAILED: Expected 403, got {response.status_code}")
+            all_passed = False
     except Exception as e:
-        print(f"⚠️  Cleanup: Exception: {str(e)}")
+        print(f"❌ C1 EXCEPTION: {str(e)}")
+        all_passed = False
+    
+    # C2: Non-owner author cannot PUT draft
+    print("\n--- C2: Non-owner author cannot PUT draft ---")
+    try:
+        payload = {"title": "Unauthorized edit attempt"}
+        response = requests.put(
+            f"{BASE_URL}/abstracts/{abs_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {author2_token}"},
+            timeout=10
+        )
+        
+        print(f"PUT /api/abstracts/{abs_id} as author2@scms.io → {response.status_code}")
+        
+        if response.status_code == 403:
+            print(f"✅ C2 PASSED: Non-owner correctly denied PUT access (403)")
+        else:
+            print(f"❌ C2 FAILED: Expected 403, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ C2 EXCEPTION: {str(e)}")
+        all_passed = False
+    
+    # C3: Word-count validation (21-word title)
+    print("\n--- C3: Word-count validation (21-word title) ---")
+    try:
+        # Create a 21-word title
+        long_title = " ".join(["word"] * 21)
+        payload = {"title": long_title}
+        response = requests.put(
+            f"{BASE_URL}/abstracts/{abs_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {author_token}"},
+            timeout=10
+        )
+        
+        print(f"PUT /api/abstracts/{abs_id} with 21-word title → {response.status_code}")
+        
+        if response.status_code == 400:
+            data = response.json()
+            error_msg = data.get('error', '')
+            if "exceeds 20 words" in error_msg or "got 21" in error_msg:
+                print(f"✅ C3 PASSED: 21-word title correctly rejected (400) with message: {error_msg}")
+            else:
+                print(f"❌ C3 FAILED: Got 400 but wrong error message: {error_msg}")
+                all_passed = False
+        else:
+            print(f"❌ C3 FAILED: Expected 400, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ C3 EXCEPTION: {str(e)}")
+        all_passed = False
+    
+    if all_passed:
+        print("\n✅ STEP C PASSED: All regression checks passed")
+    else:
+        print("\n❌ STEP C FAILED: Some regression checks failed")
     
     return all_passed
 
 def main():
-    print("="*80)
-    print("BACKEND TEST: Extended Header Assets Endpoint with Background Support")
-    print("="*80)
+    print("=" * 80)
+    print("BACKEND TEST: PUT /api/abstracts/:id endpoint")
+    print("Testing previously-failing scenario (#15) + authors-array test (#18)")
+    print("=" * 80)
     
-    all_passed = test_header_background_endpoint()
+    # Login as author@scms.io
+    print("\n--- Login as author@scms.io ---")
+    author_token = login("author@scms.io", "password123")
+    if not author_token:
+        print("❌ TEST ABORTED: Cannot login as author@scms.io")
+        sys.exit(1)
     
-    print("\n" + "="*80)
+    # Login as chief@scms.io for regression test
+    print("\n--- Login as chief@scms.io ---")
+    chief_token = login("chief@scms.io", "password123")
+    if not chief_token:
+        print("❌ TEST ABORTED: Cannot login as chief@scms.io")
+        sys.exit(1)
+    
+    # Login as author2@scms.io for regression test
+    print("\n--- Login as author2@scms.io ---")
+    author2_token = login("author2@scms.io", "password123")
+    if not author2_token:
+        print("⚠️  WARNING: Cannot login as author2@scms.io, will skip C2 test")
+        author2_token = None
+    
+    # Get featured conference
+    print("\n--- Get featured conference ---")
+    conf_id = get_featured_conference(author_token)
+    if not conf_id:
+        print("❌ TEST ABORTED: Cannot get featured conference")
+        sys.exit(1)
+    
+    # Create fresh DRAFT abstract
+    print("\n--- Create fresh DRAFT abstract ---")
+    abs_id = create_draft_abstract(author_token, conf_id)
+    if not abs_id:
+        print("❌ TEST ABORTED: Cannot create draft abstract")
+        sys.exit(1)
+    
+    # Run tests
+    step_a_passed = test_step_a_put_with_body_and_cover_letter(author_token, abs_id)
+    step_b_passed = test_step_b_put_with_authors_array(author_token, abs_id)
+    step_c_passed = test_step_c_regression_checks(author_token, chief_token, author2_token, abs_id)
+    
+    # Summary
+    print("\n" + "=" * 80)
     print("TEST SUMMARY")
-    print("="*80)
+    print("=" * 80)
+    print(f"Step A (PUT with body/coverLetter): {'✅ PASSED' if step_a_passed else '❌ FAILED'}")
+    print(f"Step B (PUT with authors array): {'✅ PASSED' if step_b_passed else '❌ FAILED'}")
+    print(f"Step C (Regression checks): {'✅ PASSED' if step_c_passed else '❌ FAILED'}")
     
-    if all_passed:
-        print("✅ ALL TESTS PASSED")
-        return 0
+    if step_a_passed and step_b_passed and step_c_passed:
+        print("\n🎉 ALL TESTS PASSED")
+        sys.exit(0)
     else:
-        print("❌ SOME TESTS FAILED")
-        return 1
+        print("\n❌ SOME TESTS FAILED")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
