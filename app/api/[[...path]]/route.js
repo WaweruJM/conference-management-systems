@@ -766,7 +766,13 @@ async function handleAbstracts(route, method, request) {
     if (!abstract) return err('Not found', 404)
     // Access control: authors can see own, editors/reviewers can see if assigned, admin all
     const isOwner = abstract.submittedById === user.id
-    const myReviewerAssignment = abstract.reviewAssignments.find(r => r.reviewerId === user.id)
+    // A reviewer may have multiple ReviewAssignment rows for the same abstract (e.g. after
+    // re-invitation). We pick the "best" one: ACCEPTED > PENDING > DECLINED. This ensures
+    // that a reviewer who has ACCEPTED at least one invitation for this abstract retains
+    // access even if older DECLINED / PENDING rows still exist in the database.
+    const myAssignments = abstract.reviewAssignments.filter(r => r.reviewerId === user.id)
+    const priority = { ACCEPTED: 0, PENDING: 1, DECLINED: 2 }
+    const myReviewerAssignment = myAssignments.sort((a, b) => (priority[a.invitationStatus] ?? 9) - (priority[b.invitationStatus] ?? 9))[0]
     // An external reviewer can only read the abstract AFTER accepting the invitation.
     // If they have DECLINED (or are still pending), access is denied — they only see
     // metadata on their reviewer workspace, not the full abstract body.
@@ -1008,15 +1014,41 @@ async function handleAbstracts(route, method, request) {
     }
     if (!allowed) return err('Forbidden — you may only invite reviewers for abstracts assigned to you.', 403)
     const body = await request.json()
-    const assignment = await prisma.reviewAssignment.create({
-      data: {
-        abstractId: assignRvMatch[1],
-        reviewerId: body.reviewerId,
-        assignedById: user.id,
-        reviewType: body.reviewType || 'EXTERNAL_REVIEWER',
-        dueDate: body.dueDate ? new Date(body.dueDate) : null,
-      },
+    // Idempotent invitation: if this reviewer has previously been assigned to the same
+    // abstract, reuse the existing row instead of creating a duplicate. This prevents
+    // ghost "declined" rows blocking access after re-invitation.
+    const existingAsn = await prisma.reviewAssignment.findFirst({
+      where: { abstractId: assignRvMatch[1], reviewerId: body.reviewerId },
+      orderBy: { assignedAt: 'desc' },
     })
+    let assignment
+    if (existingAsn) {
+      if (existingAsn.invitationStatus === 'ACCEPTED' && existingAsn.completedAt) {
+        return err('This reviewer has already submitted a review for this abstract.', 409)
+      }
+      // Reset the invitation so the reviewer can respond again
+      assignment = await prisma.reviewAssignment.update({
+        where: { id: existingAsn.id },
+        data: {
+          invitationStatus: 'PENDING',
+          respondedAt: null,
+          reviewType: body.reviewType || existingAsn.reviewType,
+          dueDate: body.dueDate ? new Date(body.dueDate) : existingAsn.dueDate,
+          assignedById: user.id,
+          assignedAt: new Date(),
+        },
+      })
+    } else {
+      assignment = await prisma.reviewAssignment.create({
+        data: {
+          abstractId: assignRvMatch[1],
+          reviewerId: body.reviewerId,
+          assignedById: user.id,
+          reviewType: body.reviewType || 'EXTERNAL_REVIEWER',
+          dueDate: body.dueDate ? new Date(body.dueDate) : null,
+        },
+      })
+    }
     const abs = await prisma.abstract.findUnique({ where: { id: assignRvMatch[1] }, include: { conference: true, theme: true } })
     const { notifyUser } = await import('@/lib/workflow')
     await notifyUser({
@@ -1239,7 +1271,21 @@ async function handleReviewer(route, method, request) {
       }
       return a
     })
-    return ok({ assignments: cleaned })
+    // De-duplicate assignments for the same abstract (defensive — early data seed and
+    // re-invitations can produce multiple ReviewAssignment rows per abstract). Keep the
+    // best-priority row: ACCEPTED (with report if any) > ACCEPTED > PENDING > DECLINED.
+    const priority = (a) => {
+      if (a.invitationStatus === 'ACCEPTED' && a.report) return 0
+      if (a.invitationStatus === 'ACCEPTED') return 1
+      if (a.invitationStatus === 'PENDING') return 2
+      return 3 // DECLINED
+    }
+    const byAbstract = new Map()
+    for (const asn of cleaned) {
+      const existing = byAbstract.get(asn.abstract?.id)
+      if (!existing || priority(asn) < priority(existing)) byAbstract.set(asn.abstract?.id, asn)
+    }
+    return ok({ assignments: Array.from(byAbstract.values()) })
   }
 
   // Respond to invitation
