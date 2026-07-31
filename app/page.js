@@ -83,12 +83,13 @@ const GRATITUDE_CLOSINGS = [
 const CHART_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#84cc16']
 
 // Sample hero background images (used when conference has none)
+// High resolution (>=1920 wide), professionally lit medical/scientific conference photos.
 const DEFAULT_HERO_IMAGES = [
-  'https://images.unsplash.com/photo-1505373877841-8d25f7d46678?auto=format&fit=crop&w=1920&q=70',
-  'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1920&q=70',
-  'https://images.pexels.com/photos/276175/pexels-photo-276175.jpeg?auto=compress&cs=tinysrgb&w=1920',
-  'https://images.pexels.com/photos/9275222/pexels-photo-9275222.jpeg?auto=compress&cs=tinysrgb&w=1920',
-  'https://images.pexels.com/photos/34774347/pexels-photo-34774347.jpeg?auto=compress&cs=tinysrgb&w=1920',
+  'https://images.unsplash.com/photo-1778876088510-15c5099de4d2?fm=jpg&q=75&w=1920&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?fm=jpg&q=75&w=1920&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1606761568499-6d2451b23c66?fm=jpg&q=75&w=1920&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1594122230689-45899d9e6f69?fm=jpg&q=75&w=1920&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?fm=jpg&q=75&w=1920&auto=format&fit=crop',
 ]
 
 const WORD_LIMIT = 300
@@ -98,9 +99,9 @@ const ALLOWED_DOC_EXTS = ['.doc', '.docx']
 
 const countWords = (s) => (s || '').trim().split(/\s+/).filter(Boolean).length
 
-// Rotating hero carousel — uses object-cover with center focus so images fill the
-// hero area without pixel-level upscaling artefacts. High-quality images should be
-// at least 1920x800 for best results.
+// Rotating hero carousel — uses object-cover with a slight upward bias (center 35%)
+// so faces / subjects sit comfortably below the fixed header. High-quality images
+// should be at least 1920x1000 for best results.
 function HeroCarousel({ images, height = 'h-[420px]' }) {
   const imgs = (images && images.length) ? images.map(p => p.startsWith('/api/') ? p : p) : DEFAULT_HERO_IMAGES
   const [idx, setIdx] = useState(0)
@@ -114,10 +115,11 @@ function HeroCarousel({ images, height = 'h-[420px]' }) {
             alt=""
             loading="eager"
             decoding="async"
-            style={{ objectPosition: 'center center', imageRendering: 'auto' }}
+            style={{ objectPosition: 'center 35%', imageRendering: 'auto' }}
             className="w-full h-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/25 to-black/60" />
+          {/* Slightly darker at top so the fixed header contrasts nicely; lighter middle for text legibility */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/30 to-black/55" />
         </div>
       ))}
     </div>
@@ -351,27 +353,31 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
       {/* Hero section with rotating background */}
       <section className="relative">
         <HeroCarousel images={heroImages} height="h-[440px]" />
-        <div className="absolute inset-0 flex items-center">
+        {/* items-start + pt keeps the title higher in view, closer to the header,
+            while still leaving breathing room below for buttons and date/venue meta. */}
+        <div className="absolute inset-0 flex items-start pt-12 md:pt-14">
           <div className="container mx-auto px-6">
             <div className="max-w-4xl text-white mx-auto text-center">
-              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-tight drop-shadow-lg">
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-tight drop-shadow-lg py-2">
                 {featured?.name || 'Scientific Conference Management System'}
               </h1>
               {featured?.mainTheme && (
-                <p className="mt-4 text-lg md:text-2xl font-semibold opacity-95 drop-shadow max-w-3xl mx-auto">
+                <p className="mt-6 text-lg md:text-2xl font-semibold opacity-95 drop-shadow max-w-3xl mx-auto py-2">
                   {featured.mainTheme}
                 </p>
               )}
-              <div className="mt-6 flex gap-3 justify-center">
-                <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700">
-                  Register / Submit abstract <ChevronRight className="ml-1 h-4 w-4" />
+              <div className="mt-8 flex flex-wrap gap-4 justify-center">
+                <Button size="lg" onClick={onRegister} className="bg-indigo-600 hover:bg-indigo-700 px-6 py-6 text-base font-semibold shadow-lg">
+                  Register / Submit abstract <ChevronRight className="ml-1 h-5 w-5" />
                 </Button>
-                <Button size="lg" variant="outline" onClick={onLogin} className="bg-white/10 border-white text-white hover:bg-white/20">Sign in</Button>
+                <Button size="lg" variant="outline" onClick={onLogin} className="bg-white/10 border-white text-white hover:bg-white/25 px-6 py-6 text-base font-semibold shadow-lg">
+                  Sign in
+                </Button>
               </div>
               {featured?.startDate && (
-                <div className="mt-5 flex flex-wrap gap-4 text-sm opacity-95 justify-center">
-                  <span>📅 {formatDateRange(featured.startDate, featured.endDate)}</span>
-                  <span>📍 {featured.venue}, {featured.city}, {featured.country}</span>
+                <div className="mt-8 flex flex-wrap gap-6 text-sm md:text-base opacity-95 justify-center bg-black/25 backdrop-blur-sm rounded-full px-6 py-3 max-w-2xl mx-auto">
+                  <span className="whitespace-nowrap">📅 {formatDateRange(featured.startDate, featured.endDate)}</span>
+                  <span className="whitespace-nowrap">📍 {featured.venue}, {featured.city}, {featured.country}</span>
                 </div>
               )}
             </div>
