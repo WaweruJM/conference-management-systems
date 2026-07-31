@@ -1338,12 +1338,17 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         </Card>
       ) : (
         <Card className="border-0 shadow-md overflow-hidden">
-          <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 p-6 text-white">
+          <div className="bg-gradient-to-br from-indigo-700 via-indigo-600 to-fuchsia-600 px-6 py-4 text-white">
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-[280px]">
                 <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><ClipboardCheck className="h-3 w-3" /> Editor dashboard</div>
-                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
-                <p className="text-white/90 text-sm mt-2 max-w-2xl">Editorial oversight for {confTitle}. Handle assignments, monitor peer review, and steward the editorial board.</p>
+                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome back{user?.firstName ? ', ' + user.firstName : ''}</h1>
+                <p className="text-white/90 text-sm mt-2 leading-snug">
+                  Editorial oversight for {confTitle}.
+                </p>
+                <p className="text-white/90 text-sm mt-1 leading-snug">
+                  Handle assignments, monitor peer review and steward the editorial board.
+                </p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'editorial' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><ClipboardCheck className="h-4 w-4 mr-1" />Open Editorial Office</Button>
