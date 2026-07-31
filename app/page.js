@@ -1307,12 +1307,13 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {isReviewerOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
-          <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 p-6 text-white">
+          <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 px-6 py-4 text-white">
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-[280px]">
                 <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Award className="h-3 w-3" /> Reviewer dashboard</div>
-                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
-                <p className="text-white/90 text-sm mt-2 max-w-2xl">Your peer-review queue — assess assigned abstracts and submit blind reviews for {confTitle}. Author identities remain hidden.</p>
+                <h1 className="text-xl md:text-2xl font-bold leading-tight">Welcome{user?.firstName ? ', ' + user.firstName : ''}</h1>
+                <p className="text-white/90 text-sm mt-2 leading-snug">Your peer-review queue — assess assigned abstracts and submit blind reviews for {confTitle}.</p>
+                <p className="text-white/90 text-sm mt-1 leading-snug">Author identities remain hidden throughout the process.</p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'reviews' })} className="bg-white text-purple-700 hover:bg-slate-100 shadow"><Award className="h-4 w-4 mr-1" />Open review workspace</Button>
@@ -1322,12 +1323,13 @@ function Dashboard({ setRoute, isAdmin, isEditor, isReviewer, user, featured }) 
         </Card>
       ) : isAuthorOnly ? (
         <Card className="border-0 shadow-md overflow-hidden">
-          <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 p-6 text-white">
+          <div className="bg-gradient-to-br from-indigo-600 via-fuchsia-600 to-rose-500 px-6 py-4 text-white">
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-[280px]">
                 <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1">Author dashboard</div>
-                <h1 className="text-2xl md:text-3xl font-bold leading-tight">Thank you for your consideration to submit your abstract to "{confTitle}".</h1>
-                <p className="text-white/90 text-sm mt-2 max-w-2xl">Track each abstract editorial process, submit a new abstract, and inbox the editor — all from this dashboard.</p>
+                <h1 className="text-xl md:text-2xl font-bold leading-tight">Thank you for your consideration to submit to "{confTitle}".</h1>
+                <p className="text-white/90 text-sm mt-2 leading-snug">Track each abstract editorial process from this dashboard.</p>
+                <p className="text-white/90 text-sm mt-1 leading-snug">Submit a new abstract or inbox the editor at any time.</p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" onClick={() => setRoute({ name: 'my-abstracts' })} className="bg-white text-indigo-700 hover:bg-slate-100 shadow"><FileText className="h-4 w-4 mr-1" />Track my abstracts</Button>
@@ -1608,9 +1610,35 @@ function MyAbstracts({ setRoute }) {
 
 function AbstractCard({ a, onOpen }) {
   const isDraft = a.currentState === 'DRAFT'
+  if (isDraft) {
+    // Dedicated Draft card — no interactive state badge, a single "Resume editing" CTA.
+    return (
+      <Card className="border-2 border-dashed border-amber-300 bg-amber-50/40 hover:shadow-md transition">
+        <CardContent className="p-5">
+          <div className="flex justify-between items-start gap-4 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <Badge className="bg-amber-500 text-white text-[10px] font-bold uppercase tracking-widest">Draft</Badge>
+                <span className="text-xs font-mono text-muted-foreground">{a.submissionCode}</span>
+                {a.theme && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
+              </div>
+              <div className="font-semibold text-base">{a.title || <span className="italic text-muted-foreground">(untitled draft)</span>}</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {a.authors?.map(au => au.fullName).join(', ')} · {a.conference?.code}
+                <span className="ml-1 text-amber-700 font-medium">· Not yet submitted</span>
+              </div>
+            </div>
+            <Button onClick={onOpen} size="sm" className="bg-amber-600 hover:bg-amber-700 text-white shrink-0">
+              Resume editing <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
   return (
     <button onClick={onOpen} className="w-full text-left">
-      <Card className={`hover:shadow-md transition ${isDraft ? 'border-amber-300 bg-amber-50/40 border-dashed' : ''}`}>
+      <Card className="hover:shadow-md transition">
         <CardContent className="p-5">
           <div className="flex justify-between items-start gap-4">
             <div className="flex-1">
@@ -1618,12 +1646,10 @@ function AbstractCard({ a, onOpen }) {
                 <span className="text-xs font-mono text-muted-foreground">{a.submissionCode}</span>
                 {a.theme && <Badge variant="outline" className="text-[10px]">{a.theme.name}</Badge>}
                 <Badge className={`text-[10px] border ${STATE_COLORS[a.currentState]}`}>{stateLabel(a.currentState)}</Badge>
-                {isDraft && <Badge className="bg-amber-500 text-white text-[10px]">RESUME EDITING</Badge>}
               </div>
-              <div className="font-semibold text-base">{a.title || <span className="italic text-muted-foreground">(untitled draft)</span>}</div>
+              <div className="font-semibold text-base">{a.title}</div>
               <div className="text-xs text-muted-foreground mt-1">
                 {a.authors?.map(au => au.fullName).join(', ')} · {a.conference?.code} · v{a.versions?.[0]?.versionNumber || 1}
-                {isDraft && <span className="ml-1 text-amber-700 font-medium">· Not yet submitted</span>}
               </div>
             </div>
             <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -1685,10 +1711,13 @@ function SubmitAbstract({ setRoute, user, draftId }) {
         setThemeId(a.themeId || '')
         setReportType(a.reportType || 'ORIGINAL_RESEARCH')
         setTitle(a.title || '')
-        setBody(a.body || '')
-        setKeywords((a.keywords || []).join(', '))
+        // body + coverLetter live on the latest AbstractVersion (versions are ordered
+        // versionNumber DESC by the API, so versions[0] is the most recent revision).
+        const latestVer = (a.versions && a.versions[0]) || null
+        setBody((latestVer?.body) || '')
+        setKeywords((a.keywords || latestVer?.keywords || []).join(', '))
         setDisclosureStatement(a.disclosureStatement || '')
-        setCoverLetter(a.coverLetter || '')
+        setCoverLetter((latestVer?.coverLetter) || '')
         setAuthors((a.authors || []).map((au, i) => ({
           userId: au.userId, fullName: au.fullName || '', email: au.email || '',
           phone: au.phone || '', department: au.department || '', affiliation: au.affiliation || '',
@@ -4694,12 +4723,13 @@ function LogisticsBoardroom({ user }) {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <Card className="border-0 shadow-md overflow-hidden">
-        <div className="bg-gradient-to-br from-amber-600 via-orange-600 to-rose-600 p-6 text-white">
+        <div className="bg-gradient-to-br from-amber-600 via-orange-600 to-rose-600 px-6 py-4 text-white">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex-1 min-w-[280px]">
               <div className="text-[10px] uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1"><Building2 className="h-3 w-3" /> Logistics committee</div>
-              <h1 className="text-2xl md:text-3xl font-bold leading-tight">Logistics Boardroom</h1>
-              <p className="text-white/90 text-sm mt-2 max-w-2xl">A private space for the logistics committee to coordinate operations, venue matters, sponsor relations and delegate handling.</p>
+              <h1 className="text-xl md:text-2xl font-bold leading-tight">Logistics Boardroom</h1>
+              <p className="text-white/90 text-sm mt-2 leading-snug">A private space for the logistics committee to coordinate operations, venue matters, sponsor relations and delegate handling.</p>
+              <p className="text-white/90 text-sm mt-1 leading-snug">Use the boardroom chat and pending-request queue below to keep the committee aligned.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge className="bg-white/20 text-white border-white/30">{members.length} member{members.length !== 1 ? 's' : ''}</Badge>
@@ -4822,23 +4852,19 @@ function SponsorsPage({ user, featured, setRoute }) {
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       {/* Welcome / Header */}
       <Card className="border-0 shadow-lg overflow-hidden">
-        <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 p-6 md:p-8 text-white">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-3">
+        <div className="bg-gradient-to-br from-amber-600 via-yellow-600 to-orange-500 px-6 py-4 md:px-8 md:py-5 text-white">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-[10px] uppercase tracking-widest font-semibold mb-2">
               <Award className="h-3 w-3" /> Sponsor dashboard
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold leading-tight mb-2">
+            <h1 className="text-xl md:text-2xl font-bold leading-tight mb-2">
               Welcome{user?.firstName ? `, ${user.firstName}` : ''} — and thank you.
             </h1>
-            <p className="text-white/95 text-base leading-relaxed">
-              We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>.
-              Your support helps us convene leading researchers, clinicians and industry innovators
-              to advance the science and practice at the heart of this event.
+            <p className="text-white/95 text-sm leading-snug">
+              We are grateful for your interest in partnering with <span className="font-semibold">{confName}</span>. Your support helps convene the leading researchers, clinicians and innovators driving this event.
             </p>
-            <p className="text-white/90 text-sm leading-relaxed mt-2">
-              Below you'll find our sponsorship categories with the corresponding benefits and pricing.
-              Choose a tier that best fits your organisation and complete the request form —
-              our Chief Logistics team will follow up with the next steps within a few working days.
+            <p className="text-white/90 text-sm leading-snug mt-1">
+              Choose a sponsorship tier below and submit the request form — Chief Logistics will follow up with the next steps.
             </p>
           </div>
         </div>
