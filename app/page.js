@@ -2489,7 +2489,7 @@ function EditorialPanel({ abs, onRefresh, user }) {
     } catch (e) { toast.error(e.message) } finally { setInviting(false) }
   }
 
-  const STATES = ['TECHNICAL_CHECK', 'RETURNED_FOR_FORMATTING', 'EDITORIAL_ASSIGNMENT', 'COMMITTEE_REVIEW', 'EXTERNAL_PEER_REVIEW', 'REVIEWS_COMPLETED', 'EDITORIAL_DECISION', 'MAJOR_REVISION', 'MINOR_REVISION', 'ACCEPTED', 'REJECTED', 'WITHDRAWN', 'ORAL', 'POSTER', 'PROGRAMME_SCHEDULING', 'PUBLISHED', 'ARCHIVED']
+  const STATES = ['EDITORIAL_ASSIGNMENT', 'TECHNICAL_CHECK', 'RETURNED_FOR_FORMATTING', 'COMMITTEE_REVIEW', 'EXTERNAL_PEER_REVIEW', 'REVIEWS_COMPLETED', 'EDITORIAL_DECISION', 'MAJOR_REVISION', 'MINOR_REVISION', 'ACCEPTED', 'REJECTED', 'WITHDRAWN', 'ORAL', 'POSTER', 'PROGRAMME_SCHEDULING', 'PUBLISHED', 'ARCHIVED']
 
   // Filter already-assigned reviewers from the dropdown
   const assignedReviewerIds = new Set((abs.reviewAssignments || []).map(r => r.reviewerId))
@@ -2613,10 +2613,10 @@ function EditorialPanel({ abs, onRefresh, user }) {
         <Separator />
 
         <div>
-          <div className="text-sm font-semibold mb-2">Transition state</div>
+          <div className="text-sm font-semibold mb-2">Editorial process stage</div>
           <div className="flex gap-2">
             <Select value={transitionTarget} onValueChange={setTransitionTarget}>
-              <SelectTrigger className="w-64"><SelectValue placeholder="Choose new state" /></SelectTrigger>
+              <SelectTrigger className="w-64"><SelectValue placeholder="Choose editorial process stage" /></SelectTrigger>
               <SelectContent>{STATES.map(s => <SelectItem key={s} value={s}>{stateLabel(s)}</SelectItem>)}</SelectContent>
             </Select>
             <Input placeholder="Comment (optional)" value={transitionComment} onChange={e => setTransitionComment(e.target.value)} />

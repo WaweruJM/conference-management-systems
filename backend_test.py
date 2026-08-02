@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Regression test for Committee Editor workspace visibility bug fix.
+Backend test for revised editorial process auto-tick behaviour.
 
-Bug: Committee Editor with COMMITTEE_MEMBER role couldn't see abstracts assigned to them
-in "My Editor Workspace" because GET /api/abstracts?scope=assigned was routing them to
-the reviewer branch instead of the editor branch.
-
-Fix: Backend now checks editor roles first (MANAGING_EDITOR, CHIEF_EDITOR, COMMITTEE_EDITOR,
-COMMITTEE_MEMBER) → returns editorAssignments. Falls through to EXTERNAL_REVIEWER for reviewer branch.
+Test Scope:
+- POST /api/abstracts/:id/technical-scores now transitions to TECHNICAL_CHECK (was EDITORIAL_ASSIGNMENT)
+- Guard: only trigger when state is SUBMITTED or EDITORIAL_ASSIGNMENT
+- Regression: POST /api/abstracts/:id/assign-editor still works correctly
 """
 
 import requests
@@ -16,26 +14,23 @@ import sys
 
 BASE_URL = "https://scms-platform-1.preview.emergentagent.com/api"
 
-# Test users (password: password123)
+# Test users
 USERS = {
     "admin": {"email": "admin@scms.io", "password": "password123"},
     "chief": {"email": "chief@scms.io", "password": "password123"},
     "committee": {"email": "committee@scms.io", "password": "password123"},
     "committee2": {"email": "committee2@scms.io", "password": "password123"},
-    "managing": {"email": "managing@scms.io", "password": "password123"},
     "author": {"email": "author@scms.io", "password": "password123"},
-    "reviewer1": {"email": "reviewer1@scms.io", "password": "password123"},
 }
 
 def login(email, password):
     """Login and return JWT token"""
     try:
-        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password})
+        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password}, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             token = data.get("token")
-            user = data.get("user")
-            print(f"✅ Login successful: {email} (roles: {[r['role'] for r in user.get('roles', [])]})")
+            print(f"✅ Login successful: {email}")
             return token
         else:
             print(f"❌ Login failed for {email}: {resp.status_code} - {resp.text}")
@@ -44,35 +39,45 @@ def login(email, password):
         print(f"❌ Login exception for {email}: {e}")
         return None
 
+def get_headers(token):
+    """Get headers with Authorization"""
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
 def get_featured_conference(token):
-    """Get featured conference"""
+    """Get featured conference from /public/config"""
     try:
-        resp = requests.get(f"{BASE_URL}/public/config")
+        resp = requests.get(f"{BASE_URL}/public/config", timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            conf = data.get("conference")
+            conf = data.get("conference") or data.get("featuredConference")
             if conf:
-                print(f"✅ Featured conference: {conf['name']} (ID: {conf['id']})")
+                print(f"✅ Featured conference: {conf.get('name')} (ID: {conf.get('id')})")
                 return conf
-        print(f"❌ Failed to get featured conference: {resp.status_code}")
-        return None
+            else:
+                print("❌ No featured conference found")
+                return None
+        else:
+            print(f"❌ Failed to get public config: {resp.status_code}")
+            return None
     except Exception as e:
         print(f"❌ Exception getting featured conference: {e}")
         return None
 
 def get_abstracts(token, scope=None, state=None):
-    """Get abstracts with optional scope and state filters"""
+    """Get abstracts list"""
     try:
-        headers = {"Authorization": f"Bearer {token}"}
         params = {}
         if scope:
             params["scope"] = scope
         if state:
             params["state"] = state
-        resp = requests.get(f"{BASE_URL}/abstracts", headers=headers, params=params)
+        
+        resp = requests.get(f"{BASE_URL}/abstracts", headers=get_headers(token), params=params, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("abstracts", [])
+            abstracts = data.get("abstracts", [])
+            print(f"✅ GET /abstracts returned {len(abstracts)} abstracts")
+            return abstracts
         else:
             print(f"❌ GET /abstracts failed: {resp.status_code} - {resp.text}")
             return None
@@ -80,40 +85,129 @@ def get_abstracts(token, scope=None, state=None):
         print(f"❌ Exception getting abstracts: {e}")
         return None
 
-def get_abstract_detail(token, abstract_id):
-    """Get abstract detail by ID"""
+def get_abstract_detail(token, abs_id):
+    """Get abstract detail"""
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(f"{BASE_URL}/abstracts/{abstract_id}", headers=headers)
-        return resp.status_code, resp.json() if resp.status_code == 200 else resp.text
-    except Exception as e:
-        print(f"❌ Exception getting abstract detail: {e}")
-        return None, str(e)
-
-def assign_editor(token, abstract_id, editor_id, role="COMMITTEE_EDITOR"):
-    """Assign editor to abstract"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        payload = {"editorId": editor_id, "role": role}
-        resp = requests.post(f"{BASE_URL}/abstracts/{abstract_id}/assign-editor", headers=headers, json=payload)
-        if resp.status_code == 200:
-            print(f"✅ Assigned editor to abstract {abstract_id}")
-            return True
-        else:
-            print(f"❌ Failed to assign editor: {resp.status_code} - {resp.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Exception assigning editor: {e}")
-        return False
-
-def get_notifications(token):
-    """Get notifications for current user"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(f"{BASE_URL}/notifications", headers=headers)
+        resp = requests.get(f"{BASE_URL}/abstracts/{abs_id}", headers=get_headers(token), timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("notifications", [])
+            abstract = data.get("abstract")
+            print(f"✅ GET /abstracts/{abs_id} returned abstract: {abstract.get('submissionCode')} (state: {abstract.get('currentState')})")
+            return abstract
+        else:
+            print(f"❌ GET /abstracts/{abs_id} failed: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception getting abstract detail: {e}")
+        return None
+
+def create_abstract(token, conf_id):
+    """Create a draft abstract"""
+    try:
+        payload = {
+            "conferenceId": conf_id,
+            "title": "Test Abstract for Technical Scores Auto-Tick",
+            "body": "This is a test abstract body for verifying the revised editorial process auto-tick behaviour.",
+            "keywords": ["test", "technical-scores", "auto-tick"],
+            "reportType": "ORAL",
+            "authors": [
+                {
+                    "fullName": "Test Author",
+                    "email": "test@example.com",
+                    "affiliation": "Test University",
+                    "isCorresponding": True,
+                    "orderIndex": 0
+                }
+            ]
+        }
+        resp = requests.post(f"{BASE_URL}/abstracts", headers=get_headers(token), json=payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            abstract = data.get("abstract")
+            print(f"✅ Created abstract: {abstract.get('submissionCode')} (ID: {abstract.get('id')})")
+            return abstract
+        else:
+            print(f"❌ Failed to create abstract: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception creating abstract: {e}")
+        return None
+
+def submit_abstract(token, abs_id):
+    """Submit abstract (DRAFT -> SUBMITTED)"""
+    try:
+        resp = requests.post(f"{BASE_URL}/abstracts/{abs_id}/submit", headers=get_headers(token), timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            abstract = data.get("abstract")
+            print(f"✅ Submitted abstract: {abstract.get('submissionCode')} (state: {abstract.get('currentState')})")
+            return abstract
+        else:
+            print(f"❌ Failed to submit abstract: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception submitting abstract: {e}")
+        return None
+
+def transition_abstract(token, abs_id, new_state, comment):
+    """Manually transition abstract state"""
+    try:
+        payload = {"newState": new_state, "comment": comment}
+        resp = requests.post(f"{BASE_URL}/abstracts/{abs_id}/transition", headers=get_headers(token), json=payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            abstract = data.get("abstract")
+            print(f"✅ Transitioned abstract to {new_state}: {abstract.get('submissionCode')}")
+            return abstract
+        else:
+            print(f"❌ Failed to transition abstract: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception transitioning abstract: {e}")
+        return None
+
+def assign_editor(token, abs_id, editor_id, role="COMMITTEE_EDITOR"):
+    """Assign editor to abstract"""
+    try:
+        payload = {"editorId": editor_id, "role": role}
+        resp = requests.post(f"{BASE_URL}/abstracts/{abs_id}/assign-editor", headers=get_headers(token), json=payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            assignment = data.get("assignment")
+            print(f"✅ Assigned editor to abstract (assignment ID: {assignment.get('id')})")
+            return assignment
+        else:
+            print(f"❌ Failed to assign editor: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception assigning editor: {e}")
+        return None
+
+def post_technical_scores(token, abs_id, scores):
+    """Post technical scores"""
+    try:
+        resp = requests.post(f"{BASE_URL}/abstracts/{abs_id}/scores", headers=get_headers(token), json=scores, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            score = data.get("score")
+            print(f"✅ Posted technical scores (score ID: {score.get('id') if score else 'N/A'})")
+            return score
+        else:
+            print(f"❌ Failed to post technical scores: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception posting technical scores: {e}")
+        return None
+
+def get_notifications(token):
+    """Get notifications"""
+    try:
+        resp = requests.get(f"{BASE_URL}/notifications", headers=get_headers(token), timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            notifications = data.get("notifications", [])
+            print(f"✅ GET /notifications returned {len(notifications)} notifications")
+            return notifications
         else:
             print(f"❌ GET /notifications failed: {resp.status_code} - {resp.text}")
             return None
@@ -121,324 +215,330 @@ def get_notifications(token):
         print(f"❌ Exception getting notifications: {e}")
         return None
 
-def get_reviewer_assignments(token):
-    """Get reviewer assignments"""
+def get_user_id(token, email):
+    """Get user ID by email"""
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(f"{BASE_URL}/reviewer/assignments", headers=headers)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("assignments", [])
-        else:
-            print(f"❌ GET /reviewer/assignments failed: {resp.status_code} - {resp.text}")
-            return None
-    except Exception as e:
-        print(f"❌ Exception getting reviewer assignments: {e}")
-        return None
-
-def get_user_id_by_email(token, email):
-    """Get user ID by email (admin only)"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(f"{BASE_URL}/users", headers=headers)
+        resp = requests.get(f"{BASE_URL}/users", headers=get_headers(token), timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             users = data.get("users", [])
             for user in users:
                 if user.get("email") == email:
+                    print(f"✅ Found user ID for {email}: {user.get('id')}")
                     return user.get("id")
-        return None
+            print(f"❌ User not found: {email}")
+            return None
+        else:
+            print(f"❌ GET /users failed: {resp.status_code} - {resp.text}")
+            return None
     except Exception as e:
         print(f"❌ Exception getting user ID: {e}")
         return None
 
 def main():
     print("=" * 80)
-    print("COMMITTEE EDITOR WORKSPACE VISIBILITY REGRESSION TEST")
+    print("BACKEND TEST: Revised Editorial Process Auto-Tick Behaviour")
     print("=" * 80)
-    print()
     
-    # Track test results
-    tests_passed = 0
-    tests_failed = 0
-    
-    # Step 1: Setup - Login as chief and prepare abstracts
+    # Step 1: Login as admin and get featured conference
     print("\n" + "=" * 80)
-    print("STEP 1: SETUP - Prepare test data")
+    print("STEP 1: Setup - Login and get featured conference")
     print("=" * 80)
     
-    chief_token = login(USERS["chief"]["email"], USERS["chief"]["password"])
-    if not chief_token:
-        print("❌ CRITICAL: Cannot login as chief@scms.io")
-        return
-    
-    # Get featured conference
-    conf = get_featured_conference(chief_token)
-    if not conf:
-        print("❌ CRITICAL: Cannot get featured conference")
-        return
-    
-    # Get admin token to fetch user IDs
     admin_token = login(USERS["admin"]["email"], USERS["admin"]["password"])
     if not admin_token:
-        print("❌ CRITICAL: Cannot login as admin@scms.io")
-        return
+        print("❌ CRITICAL: Admin login failed")
+        sys.exit(1)
     
-    # Get user IDs for committee@scms.io, committee2@scms.io, managing@scms.io
-    committee_id = get_user_id_by_email(admin_token, "committee@scms.io")
-    committee2_id = get_user_id_by_email(admin_token, "committee2@scms.io")
-    managing_id = get_user_id_by_email(admin_token, "managing@scms.io")
+    conf = get_featured_conference(admin_token)
+    if not conf:
+        print("❌ CRITICAL: Failed to get featured conference")
+        sys.exit(1)
     
-    if not committee_id or not committee2_id or not managing_id:
-        print(f"❌ CRITICAL: Cannot get user IDs (committee: {committee_id}, committee2: {committee2_id}, managing: {managing_id})")
-        return
+    conf_id = conf.get("id")
     
-    print(f"✅ User IDs: committee={committee_id}, committee2={committee2_id}, managing={managing_id}")
+    # Get existing SUBMITTED or EDITORIAL_ASSIGNMENT abstract
+    abstracts = get_abstracts(admin_token)
+    if not abstracts:
+        print("❌ CRITICAL: Failed to get abstracts")
+        sys.exit(1)
     
-    # Get abstracts in suitable states (SUBMITTED, TECHNICAL_CHECK, EDITORIAL_ASSIGNMENT)
-    all_abstracts = get_abstracts(admin_token)
-    if not all_abstracts:
-        print("❌ CRITICAL: Cannot get abstracts")
-        return
+    # Find a suitable abstract or create one
+    test_abstract = None
+    for abs in abstracts:
+        if abs.get("currentState") in ["SUBMITTED", "EDITORIAL_ASSIGNMENT"]:
+            test_abstract = abs
+            print(f"✅ Found existing abstract in suitable state: {abs.get('submissionCode')} (state: {abs.get('currentState')})")
+            break
     
-    suitable_abstracts = [
-        a for a in all_abstracts 
-        if a.get("currentState") in ["SUBMITTED", "TECHNICAL_CHECK", "EDITORIAL_ASSIGNMENT"]
-    ]
+    if not test_abstract:
+        print("⚠️  No suitable abstract found, creating new one...")
+        # Login as author to create abstract
+        author_token = login(USERS["author"]["email"], USERS["author"]["password"])
+        if not author_token:
+            print("❌ CRITICAL: Author login failed")
+            sys.exit(1)
+        
+        test_abstract = create_abstract(author_token, conf_id)
+        if not test_abstract:
+            print("❌ CRITICAL: Failed to create abstract")
+            sys.exit(1)
+        
+        # Submit the abstract
+        test_abstract = submit_abstract(author_token, test_abstract.get("id"))
+        if not test_abstract:
+            print("❌ CRITICAL: Failed to submit abstract")
+            sys.exit(1)
+        
+        # Transition to SUBMITTED if needed
+        if test_abstract.get("currentState") != "SUBMITTED":
+            test_abstract = transition_abstract(admin_token, test_abstract.get("id"), "SUBMITTED", "prep for test")
+            if not test_abstract:
+                print("❌ CRITICAL: Failed to transition to SUBMITTED")
+                sys.exit(1)
     
-    if len(suitable_abstracts) < 3:
-        print(f"❌ CRITICAL: Need at least 3 suitable abstracts, found {len(suitable_abstracts)}")
-        return
+    abs_id = test_abstract.get("id")
+    submission_code = test_abstract.get("submissionCode")
     
-    # Assign editors to 3 different abstracts
-    abs1 = suitable_abstracts[0]
-    abs2 = suitable_abstracts[1]
-    abs3 = suitable_abstracts[2]
+    print(f"\n✅ Test abstract ready: {submission_code} (ID: {abs_id})")
     
-    print(f"\n📋 Test abstracts:")
-    print(f"   Abstract 1: {abs1['submissionCode']} (ID: {abs1['id']}) - will assign to committee@scms.io")
-    print(f"   Abstract 2: {abs2['submissionCode']} (ID: {abs2['id']}) - will assign to committee2@scms.io")
-    print(f"   Abstract 3: {abs3['submissionCode']} (ID: {abs3['id']}) - will assign to managing@scms.io")
-    
-    # Assign committee@scms.io to abstract 1
-    if assign_editor(chief_token, abs1["id"], committee_id, "COMMITTEE_EDITOR"):
-        tests_passed += 1
-    else:
-        tests_failed += 1
-    
-    # Assign committee2@scms.io to abstract 2
-    if assign_editor(chief_token, abs2["id"], committee2_id, "COMMITTEE_EDITOR"):
-        tests_passed += 1
-    else:
-        tests_failed += 1
-    
-    # Assign managing@scms.io to abstract 3
-    if assign_editor(chief_token, abs3["id"], managing_id, "COMMITTEE_EDITOR"):
-        tests_passed += 1
-    else:
-        tests_failed += 1
-    
-    print(f"\n✅ Setup complete: Assigned 3 editors to 3 abstracts")
-    
-    # Step 2: Fix verified - Committee Editor with COMMITTEE_MEMBER sees editor assignments
+    # Step 2: Assign-editor regression test
     print("\n" + "=" * 80)
-    print("STEP 2: FIX VERIFIED - Committee Editor with COMMITTEE_MEMBER role")
+    print("STEP 2: Assign-editor regression test")
     print("=" * 80)
     
+    # Login as chief
+    chief_token = login(USERS["chief"]["email"], USERS["chief"]["password"])
+    if not chief_token:
+        print("❌ CRITICAL: Chief login failed")
+        sys.exit(1)
+    
+    # Get committee user ID
+    committee_id = get_user_id(admin_token, USERS["committee"]["email"])
+    if not committee_id:
+        print("❌ CRITICAL: Failed to get committee user ID")
+        sys.exit(1)
+    
+    # Assign editor
+    assignment = assign_editor(chief_token, abs_id, committee_id, "COMMITTEE_EDITOR")
+    if not assignment:
+        print("❌ TEST FAILED: assign-editor endpoint failed")
+        sys.exit(1)
+    
+    # Verify state is EDITORIAL_ASSIGNMENT
+    test_abstract = get_abstract_detail(admin_token, abs_id)
+    if not test_abstract:
+        print("❌ TEST FAILED: Failed to get abstract after assign-editor")
+        sys.exit(1)
+    
+    if test_abstract.get("currentState") != "EDITORIAL_ASSIGNMENT":
+        print(f"❌ TEST FAILED: Expected state EDITORIAL_ASSIGNMENT, got {test_abstract.get('currentState')}")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: Abstract transitioned to EDITORIAL_ASSIGNMENT")
+    
+    # Login as committee and verify notification
     committee_token = login(USERS["committee"]["email"], USERS["committee"]["password"])
     if not committee_token:
-        print("❌ TEST FAILED: Cannot login as committee@scms.io")
-        tests_failed += 1
-    else:
-        # GET /api/abstracts?scope=assigned should return abstracts assigned to committee@scms.io
-        assigned_abstracts = get_abstracts(committee_token, scope="assigned")
-        if assigned_abstracts is None:
-            print("❌ TEST FAILED: GET /abstracts?scope=assigned returned error")
-            tests_failed += 1
-        elif len(assigned_abstracts) == 0:
-            print("❌ TEST FAILED: GET /abstracts?scope=assigned returned empty list (BUG NOT FIXED)")
-            tests_failed += 1
-        else:
-            # Check if abs1 is in the list
-            found = any(a["id"] == abs1["id"] for a in assigned_abstracts)
-            if found:
-                print(f"✅ TEST PASSED: committee@scms.io sees assigned abstract {abs1['submissionCode']}")
-                print(f"   Total assigned abstracts: {len(assigned_abstracts)}")
-                tests_passed += 1
-            else:
-                print(f"❌ TEST FAILED: committee@scms.io does NOT see assigned abstract {abs1['submissionCode']}")
-                print(f"   Assigned abstracts: {[a['submissionCode'] for a in assigned_abstracts]}")
-                tests_failed += 1
-        
-        # Verify committee@scms.io does NOT see abstracts they were NOT assigned to
-        sees_abs2 = any(a["id"] == abs2["id"] for a in (assigned_abstracts or []))
-        sees_abs3 = any(a["id"] == abs3["id"] for a in (assigned_abstracts or []))
-        if not sees_abs2 and not sees_abs3:
-            print(f"✅ TEST PASSED: committee@scms.io does NOT see unassigned abstracts")
-            tests_passed += 1
-        else:
-            print(f"❌ TEST FAILED: committee@scms.io sees unassigned abstracts (abs2: {sees_abs2}, abs3: {sees_abs3})")
-            tests_failed += 1
+        print("❌ CRITICAL: Committee login failed")
+        sys.exit(1)
     
-    # Step 3: Committee Editor with COMMITTEE_EDITOR role sees editor assignments
-    print("\n" + "=" * 80)
-    print("STEP 3: REGRESSION - Committee Editor with COMMITTEE_EDITOR role")
-    print("=" * 80)
-    
-    committee2_token = login(USERS["committee2"]["email"], USERS["committee2"]["password"])
-    if not committee2_token:
-        print("❌ TEST FAILED: Cannot login as committee2@scms.io")
-        tests_failed += 1
-    else:
-        assigned_abstracts = get_abstracts(committee2_token, scope="assigned")
-        if assigned_abstracts is None:
-            print("❌ TEST FAILED: GET /abstracts?scope=assigned returned error")
-            tests_failed += 1
-        else:
-            # Check if abs2 is in the list
-            found = any(a["id"] == abs2["id"] for a in assigned_abstracts)
-            if found:
-                print(f"✅ TEST PASSED: committee2@scms.io sees assigned abstract {abs2['submissionCode']}")
-                print(f"   Total assigned abstracts: {len(assigned_abstracts)}")
-                tests_passed += 1
-            else:
-                print(f"❌ TEST FAILED: committee2@scms.io does NOT see assigned abstract {abs2['submissionCode']}")
-                tests_failed += 1
-            
-            # Verify they don't see abs1 (assigned to committee@scms.io)
-            sees_abs1 = any(a["id"] == abs1["id"] for a in assigned_abstracts)
-            if not sees_abs1:
-                print(f"✅ TEST PASSED: committee2@scms.io does NOT see abstracts assigned to others")
-                tests_passed += 1
-            else:
-                print(f"❌ TEST FAILED: committee2@scms.io sees abstract assigned to committee@scms.io")
-                tests_failed += 1
-    
-    # Step 4: Managing Editor sees editor assignments
-    print("\n" + "=" * 80)
-    print("STEP 4: REGRESSION - Managing Editor")
-    print("=" * 80)
-    
-    managing_token = login(USERS["managing"]["email"], USERS["managing"]["password"])
-    if not managing_token:
-        print("❌ TEST FAILED: Cannot login as managing@scms.io")
-        tests_failed += 1
-    else:
-        assigned_abstracts = get_abstracts(managing_token, scope="assigned")
-        if assigned_abstracts is None:
-            print("❌ TEST FAILED: GET /abstracts?scope=assigned returned error")
-            tests_failed += 1
-        else:
-            # Check if abs3 is in the list
-            found = any(a["id"] == abs3["id"] for a in assigned_abstracts)
-            if found:
-                print(f"✅ TEST PASSED: managing@scms.io sees assigned abstract {abs3['submissionCode']}")
-                print(f"   Total assigned abstracts: {len(assigned_abstracts)}")
-                tests_passed += 1
-            else:
-                print(f"❌ TEST FAILED: managing@scms.io does NOT see assigned abstract {abs3['submissionCode']}")
-                tests_failed += 1
-    
-    # Step 5: External Reviewer path still works
-    print("\n" + "=" * 80)
-    print("STEP 5: REGRESSION - External Reviewer path")
-    print("=" * 80)
-    
-    reviewer1_token = login(USERS["reviewer1"]["email"], USERS["reviewer1"]["password"])
-    if not reviewer1_token:
-        print("❌ TEST FAILED: Cannot login as reviewer1@scms.io")
-        tests_failed += 1
-    else:
-        assigned_abstracts = get_abstracts(reviewer1_token, scope="assigned")
-        if assigned_abstracts is None:
-            print("❌ TEST FAILED: GET /abstracts?scope=assigned returned error")
-            tests_failed += 1
-        else:
-            # Should filter by review assignments (may be empty, that's OK)
-            print(f"✅ TEST PASSED: reviewer1@scms.io GET /abstracts?scope=assigned returns 200")
-            print(f"   Reviewer assignments: {len(assigned_abstracts)}")
-            tests_passed += 1
-    
-    # Step 6: Notification on assign-editor
-    print("\n" + "=" * 80)
-    print("STEP 6: REGRESSION - Notification on assign-editor")
-    print("=" * 80)
-    
-    # Check notifications for committee@scms.io
     notifications = get_notifications(committee_token)
     if notifications is None:
-        print("❌ TEST FAILED: Cannot get notifications for committee@scms.io")
-        tests_failed += 1
-    else:
-        # Look for ASSIGNMENT notification with title "New editor assignment"
-        assignment_notifs = [
-            n for n in notifications 
-            if n.get("type") == "ASSIGNMENT" and "assignment" in n.get("title", "").lower()
-        ]
-        if assignment_notifs:
-            print(f"✅ TEST PASSED: Found {len(assignment_notifs)} ASSIGNMENT notification(s)")
-            print(f"   Latest: {assignment_notifs[0].get('title')} - {assignment_notifs[0].get('body')}")
-            tests_passed += 1
-        else:
-            print(f"❌ TEST FAILED: No ASSIGNMENT notification found")
-            print(f"   Total notifications: {len(notifications)}")
-            tests_failed += 1
+        print("❌ TEST FAILED: Failed to get notifications")
+        sys.exit(1)
     
-    # Step 7: Abstract accessible via detail endpoint
+    # Find ASSIGNMENT notification
+    assignment_notif = None
+    for notif in notifications:
+        if notif.get("type") == "ASSIGNMENT" and notif.get("title") == "New editor assignment" and submission_code in notif.get("body", ""):
+            assignment_notif = notif
+            break
+    
+    if not assignment_notif:
+        print("❌ TEST FAILED: ASSIGNMENT notification not found")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: ASSIGNMENT notification found with title 'New editor assignment'")
+    
+    # Verify abstract is in scope=assigned
+    assigned_abstracts = get_abstracts(committee_token, scope="assigned")
+    if assigned_abstracts is None:
+        print("❌ TEST FAILED: Failed to get assigned abstracts")
+        sys.exit(1)
+    
+    found_in_assigned = False
+    for abs in assigned_abstracts:
+        if abs.get("id") == abs_id:
+            found_in_assigned = True
+            break
+    
+    if not found_in_assigned:
+        print("❌ TEST FAILED: Abstract not found in scope=assigned")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: Abstract found in GET /abstracts?scope=assigned")
+    
+    # Step 3: Auto-tick technical check
     print("\n" + "=" * 80)
-    print("STEP 7: Abstract accessible via detail endpoint")
+    print("STEP 3: Auto-tick technical check (EDITORIAL_ASSIGNMENT -> TECHNICAL_CHECK)")
     print("=" * 80)
     
-    status, result = get_abstract_detail(committee_token, abs1["id"])
-    if status == 200:
-        print(f"✅ TEST PASSED: committee@scms.io can access abstract detail {abs1['submissionCode']}")
-        tests_passed += 1
-    else:
-        print(f"❌ TEST FAILED: committee@scms.io cannot access abstract detail (status: {status})")
-        tests_failed += 1
+    # Post technical scores as committee member
+    scores = {
+        "originality": 8,
+        "methodology": 7,
+        "relevance": 8,
+        "language": 7,
+        "themeAlignment": 8,
+        "comments": "OK"
+    }
     
-    # Step 8: Non-regression on other endpoints
+    score = post_technical_scores(committee_token, abs_id, scores)
+    if not score:
+        print("❌ TEST FAILED: Failed to post technical scores")
+        sys.exit(1)
+    
+    # Verify state is now TECHNICAL_CHECK
+    test_abstract = get_abstract_detail(admin_token, abs_id)
+    if not test_abstract:
+        print("❌ TEST FAILED: Failed to get abstract after technical scores")
+        sys.exit(1)
+    
+    if test_abstract.get("currentState") != "TECHNICAL_CHECK":
+        print(f"❌ TEST FAILED: Expected state TECHNICAL_CHECK, got {test_abstract.get('currentState')}")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: Abstract auto-transitioned to TECHNICAL_CHECK")
+    
+    # Step 4: Idempotent save
     print("\n" + "=" * 80)
-    print("STEP 8: Non-regression on other endpoints")
+    print("STEP 4: Idempotent save (state should remain TECHNICAL_CHECK)")
     print("=" * 80)
     
-    # GET /abstracts (no scope) as committee@scms.io
-    all_abstracts_committee = get_abstracts(committee_token)
-    if all_abstracts_committee is not None:
-        print(f"✅ TEST PASSED: GET /abstracts (no scope) works for committee@scms.io")
-        print(f"   Total abstracts: {len(all_abstracts_committee)}")
-        tests_passed += 1
-    else:
-        print(f"❌ TEST FAILED: GET /abstracts (no scope) failed for committee@scms.io")
-        tests_failed += 1
+    # Post same scores again
+    score = post_technical_scores(committee_token, abs_id, scores)
+    if not score:
+        print("❌ TEST FAILED: Failed to post technical scores (idempotent)")
+        sys.exit(1)
     
-    # GET /reviewer/assignments as committee@scms.io
-    reviewer_assignments = get_reviewer_assignments(committee_token)
-    if reviewer_assignments is not None:
-        print(f"✅ TEST PASSED: GET /reviewer/assignments works for committee@scms.io")
-        print(f"   Total reviewer assignments: {len(reviewer_assignments)}")
-        tests_passed += 1
-    else:
-        print(f"❌ TEST FAILED: GET /reviewer/assignments failed for committee@scms.io")
-        tests_failed += 1
+    # Verify state is still TECHNICAL_CHECK
+    test_abstract = get_abstract_detail(admin_token, abs_id)
+    if not test_abstract:
+        print("❌ TEST FAILED: Failed to get abstract after idempotent save")
+        sys.exit(1)
     
-    # Summary
+    if test_abstract.get("currentState") != "TECHNICAL_CHECK":
+        print(f"❌ TEST FAILED: State changed on idempotent save, got {test_abstract.get('currentState')}")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: State remained TECHNICAL_CHECK on idempotent save")
+    
+    # Step 5: No transition when already past
+    print("\n" + "=" * 80)
+    print("STEP 5: No transition when already past (advance to COMMITTEE_REVIEW)")
+    print("=" * 80)
+    
+    # Manually transition to COMMITTEE_REVIEW
+    test_abstract = transition_abstract(admin_token, abs_id, "COMMITTEE_REVIEW", "advance for test")
+    if not test_abstract:
+        print("❌ TEST FAILED: Failed to transition to COMMITTEE_REVIEW")
+        sys.exit(1)
+    
+    # Login as committee2 and post technical scores
+    committee2_token = login(USERS["committee2"]["email"], USERS["committee2"]["password"])
+    if not committee2_token:
+        print("❌ CRITICAL: Committee2 login failed")
+        sys.exit(1)
+    
+    score = post_technical_scores(committee2_token, abs_id, scores)
+    if not score:
+        print("❌ TEST FAILED: Failed to post technical scores (committee2)")
+        sys.exit(1)
+    
+    # Verify state is still COMMITTEE_REVIEW (not rolled back)
+    test_abstract = get_abstract_detail(admin_token, abs_id)
+    if not test_abstract:
+        print("❌ TEST FAILED: Failed to get abstract after downstream technical scores")
+        sys.exit(1)
+    
+    if test_abstract.get("currentState") != "COMMITTEE_REVIEW":
+        print(f"❌ TEST FAILED: State rolled back from COMMITTEE_REVIEW to {test_abstract.get('currentState')}")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: State remained COMMITTEE_REVIEW (no rollback)")
+    
+    # Step 6: Auto-tick from SUBMITTED directly
+    print("\n" + "=" * 80)
+    print("STEP 6: Auto-tick from SUBMITTED directly")
+    print("=" * 80)
+    
+    # Find or create an abstract in SUBMITTED state
+    # First, try to find an existing SUBMITTED abstract
+    all_abstracts = get_abstracts(admin_token)
+    new_abstract = None
+    
+    if all_abstracts:
+        for abs in all_abstracts:
+            if abs.get("currentState") == "SUBMITTED":
+                new_abstract = abs
+                print(f"✅ Found existing SUBMITTED abstract: {abs.get('submissionCode')}")
+                break
+    
+    # If no SUBMITTED abstract found, transition the test abstract back to SUBMITTED
+    if not new_abstract:
+        print("⚠️  No SUBMITTED abstract found, transitioning test abstract back to SUBMITTED...")
+        # First transition to SUBMITTED
+        test_abstract = transition_abstract(admin_token, abs_id, "SUBMITTED", "reset for SUBMITTED test")
+        if not test_abstract:
+            print("❌ TEST FAILED: Failed to transition test abstract to SUBMITTED")
+            sys.exit(1)
+        new_abstract = test_abstract
+    
+    new_abs_id = new_abstract.get("id")
+    new_submission_code = new_abstract.get("submissionCode")
+    
+    print(f"✅ Abstract ready for SUBMITTED test: {new_submission_code} (state: {new_abstract.get('currentState')})")
+    
+    # Post technical scores as committee member
+    score = post_technical_scores(committee_token, new_abs_id, scores)
+    if not score:
+        print("❌ TEST FAILED: Failed to post technical scores on SUBMITTED abstract")
+        sys.exit(1)
+    
+    # Verify state is now TECHNICAL_CHECK
+    new_abstract = get_abstract_detail(admin_token, new_abs_id)
+    if not new_abstract:
+        print("❌ TEST FAILED: Failed to get new abstract after technical scores")
+        sys.exit(1)
+    
+    if new_abstract.get("currentState") != "TECHNICAL_CHECK":
+        print(f"❌ TEST FAILED: Expected state TECHNICAL_CHECK from SUBMITTED, got {new_abstract.get('currentState')}")
+        sys.exit(1)
+    
+    print(f"✅ TEST PASSED: Abstract auto-transitioned from SUBMITTED to TECHNICAL_CHECK")
+    
+    # Final summary
     print("\n" + "=" * 80)
     print("TEST SUMMARY")
     print("=" * 80)
-    total_tests = tests_passed + tests_failed
-    print(f"Total tests: {total_tests}")
-    print(f"✅ Passed: {tests_passed}")
-    print(f"❌ Failed: {tests_failed}")
-    print(f"Success rate: {tests_passed / total_tests * 100:.1f}%")
-    print("=" * 80)
-    
-    if tests_failed == 0:
-        print("\n🎉 ALL TESTS PASSED - Bug fix verified successfully!")
-        return 0
-    else:
-        print(f"\n⚠️  {tests_failed} TEST(S) FAILED - Review required")
-        return 1
+    print("✅ All tests passed successfully!")
+    print("\nTest Results:")
+    print("  ✅ Step 2: Assign-editor regression (EDITORIAL_ASSIGNMENT, notification, scope=assigned)")
+    print("  ✅ Step 3: Auto-tick technical check (EDITORIAL_ASSIGNMENT -> TECHNICAL_CHECK)")
+    print("  ✅ Step 4: Idempotent save (state remains TECHNICAL_CHECK)")
+    print("  ✅ Step 5: No transition when already past (COMMITTEE_REVIEW unchanged)")
+    print("  ✅ Step 6: Auto-tick from SUBMITTED directly (SUBMITTED -> TECHNICAL_CHECK)")
+    print("\n" + "=" * 80)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n❌ Test interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n\n❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

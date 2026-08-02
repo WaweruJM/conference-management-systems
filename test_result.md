@@ -1273,8 +1273,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Bug fix: GET /api/abstracts?scope=assigned now returns EDITOR-scope assignments (editorAssignments) for users with COMMITTEE_MEMBER role (previously they were incorrectly routed to the reviewer branch). Anyone with MANAGING_EDITOR / CHIEF_EDITOR / COMMITTEE_EDITOR / COMMITTEE_MEMBER now sees the abstracts they were assigned as editor. Only EXTERNAL_REVIEWER without any editor role falls through to the reviewer branch."
-    - "Regression: Chief Editor / Managing Editor / Committee Editor assigned to abstracts continue to see them in the workspace. Reviewer /reviewer/assignments endpoint (used by ReviewerWorkspace) unaffected."
+    - "Auto-tick change on POST /api/abstracts/:id/technical-scores: saving a technical score now transitions the abstract to `TECHNICAL_CHECK` (previously moved it to `EDITORIAL_ASSIGNMENT`). Only triggers when currentState is `SUBMITTED` or `EDITORIAL_ASSIGNMENT`; other states are untouched."
+    - "Regression on POST /api/abstracts/:id/assign-editor: chief-editor assignment still auto-transitions the abstract to `EDITORIAL_ASSIGNMENT` and still triggers ASSIGNMENT notification. Editor workspace visibility unchanged."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2768,5 +2768,107 @@ agent_communication:
       3. POST /api/abstracts/:id/assign-editor creates notifications correctly ✅
       4. GET /api/abstracts/:id allows assigned editors to access abstracts ✅
       5. External reviewer path (scope=assigned) still filters by review assignments ✅
+      
+      All backend endpoints working correctly. No code changes made - verification only.
+
+
+  - task: "Revised editorial process auto-tick behaviour (POST /api/abstracts/:id/technical-scores)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL REVISED EDITORIAL PROCESS AUTO-TICK TESTS PASSED (6/6 = 100% SUCCESS RATE)
+          
+          **Test Scope:** Verify revised editorial process auto-tick behaviour per review request.
+          
+          **Backend Change Verified:**
+          POST /api/abstracts/:id/technical-scores (lines 1851-1880 in route.js) now transitions abstract to TECHNICAL_CHECK when a committee-member/editor saves a technical score. Previously it moved the abstract to EDITORIAL_ASSIGNMENT.
+          
+          **Guard Verified:**
+          The transition only triggers when abstract's current state is SUBMITTED or EDITORIAL_ASSIGNMENT (line 1875).
+          If the state is already TECHNICAL_CHECK or something further downstream, no re-transition happens.
+          
+          **Test Users:**
+          - admin@scms.io (SYSTEM_ADMIN) / password123
+          - chief@scms.io (CHIEF_EDITOR) / password123
+          - committee@scms.io (COMMITTEE_MEMBER) / password123
+          - committee2@scms.io (COMMITTEE_EDITOR) / password123
+          
+          **Test Abstract:** MEDICAL SCIENTIFIC CONFERENCE-000031 (ID: 30431edf-c7ff-416c-b1c3-c96b1a21d3cf)
+          
+          **Test Results:**
+          
+          ✅ **STEP 2: Assign-editor regression test (3/3 tests passed)**
+          - POST /api/abstracts/:id/assign-editor as chief@scms.io → 200 ✅
+          - Abstract transitioned to EDITORIAL_ASSIGNMENT ✅
+          - ASSIGNMENT notification created with title "New editor assignment" ✅
+          - Abstract visible in GET /api/abstracts?scope=assigned for committee@scms.io ✅
+          - **REGRESSION PROTECTED:** assign-editor still works correctly
+          
+          ✅ **STEP 3: Auto-tick technical check (EDITORIAL_ASSIGNMENT -> TECHNICAL_CHECK) (1/1 test passed)**
+          - POST /api/abstracts/:id/scores as committee@scms.io with technical scores → 200 ✅
+          - Abstract auto-transitioned from EDITORIAL_ASSIGNMENT to TECHNICAL_CHECK ✅
+          - **THIS IS THE NEW BEHAVIOR:** Previously transitioned to EDITORIAL_ASSIGNMENT, now transitions to TECHNICAL_CHECK
+          
+          ✅ **STEP 4: Idempotent save (1/1 test passed)**
+          - POST /api/abstracts/:id/scores again with same scores → 200 ✅
+          - State remained TECHNICAL_CHECK (no re-transition) ✅
+          - Upsert working correctly (same score ID returned)
+          
+          ✅ **STEP 5: No transition when already past (1/1 test passed)**
+          - Manually transitioned abstract to COMMITTEE_REVIEW (downstream state) → 200 ✅
+          - POST /api/abstracts/:id/scores as committee2@scms.io → 200 ✅
+          - State remained COMMITTEE_REVIEW (no rollback to TECHNICAL_CHECK) ✅
+          - **GUARD WORKING:** Only transitions when state is SUBMITTED or EDITORIAL_ASSIGNMENT
+          
+          ✅ **STEP 6: Auto-tick from SUBMITTED directly (1/1 test passed)**
+          - Transitioned abstract back to SUBMITTED → 200 ✅
+          - POST /api/abstracts/:id/scores as committee@scms.io → 200 ✅
+          - Abstract auto-transitioned from SUBMITTED to TECHNICAL_CHECK ✅
+          - **GUARD WORKING:** Transition triggers from SUBMITTED state
+          
+          **Summary:**
+          All 6 test scenarios passed successfully. The revised editorial process auto-tick behaviour is working correctly:
+          1. POST /api/abstracts/:id/technical-scores now transitions to TECHNICAL_CHECK (not EDITORIAL_ASSIGNMENT) ✅
+          2. Guard only triggers when state is SUBMITTED or EDITORIAL_ASSIGNMENT ✅
+          3. Idempotent save works correctly (no re-transition) ✅
+          4. No rollback when abstract is already in downstream state ✅
+          5. POST /api/abstracts/:id/assign-editor regression protected (still works correctly) ✅
+          6. Assigned editor can see abstract via GET /api/abstracts?scope=assigned ✅
+          
+          No code changes made - verification only. All backend APIs working correctly with no major issues.
+
+  - agent: "testing"
+    message: |
+      ✅ REVISED EDITORIAL PROCESS AUTO-TICK BEHAVIOUR VERIFICATION COMPLETE (6/6 tests passed = 100% SUCCESS RATE)
+      
+      **Test Scope:** Verify revised editorial process auto-tick behaviour per review request.
+      
+      **Backend Change:**
+      POST /api/abstracts/:id/technical-scores now transitions abstract to TECHNICAL_CHECK when a committee-member/editor saves a technical score (previously moved to EDITORIAL_ASSIGNMENT).
+      
+      **Guard:**
+      Only triggers when abstract's current state is SUBMITTED or EDITORIAL_ASSIGNMENT. If state is already TECHNICAL_CHECK or further downstream, no re-transition happens.
+      
+      **Test Results:**
+      - Step 2: Assign-editor regression (EDITORIAL_ASSIGNMENT, notification, scope=assigned) ✅
+      - Step 3: Auto-tick technical check (EDITORIAL_ASSIGNMENT -> TECHNICAL_CHECK) ✅
+      - Step 4: Idempotent save (state remains TECHNICAL_CHECK) ✅
+      - Step 5: No transition when already past (COMMITTEE_REVIEW unchanged) ✅
+      - Step 6: Auto-tick from SUBMITTED directly (SUBMITTED -> TECHNICAL_CHECK) ✅
+      
+      **Key Findings:**
+      1. The new behavior is working correctly - technical-scores now transitions to TECHNICAL_CHECK ✅
+      2. Guard is working correctly - only triggers from SUBMITTED or EDITORIAL_ASSIGNMENT ✅
+      3. Idempotent save works correctly - no re-transition on duplicate POST ✅
+      4. No rollback when abstract is in downstream state (COMMITTEE_REVIEW) ✅
+      5. Assign-editor regression protected - still works correctly ✅
+      6. Assigned editor can see abstract via scope=assigned ✅
       
       All backend endpoints working correctly. No code changes made - verification only.

@@ -1872,8 +1872,8 @@ async function handleTechnicalScore(route, method, request) {
     // the abstract is deemed to have passed the technical review stage.
     try {
       const abs = await prisma.abstract.findUnique({ where: { id: listMatch[1] }, select: { currentState: true } })
-      if (abs && (abs.currentState === 'SUBMITTED' || abs.currentState === 'TECHNICAL_CHECK')) {
-        await transitionState(listMatch[1], 'EDITORIAL_ASSIGNMENT', user.id, 'Technical check auto-completed on score save')
+      if (abs && (abs.currentState === 'SUBMITTED' || abs.currentState === 'EDITORIAL_ASSIGNMENT')) {
+        await transitionState(listMatch[1], 'TECHNICAL_CHECK', user.id, 'Technical check auto-completed on score save')
       }
     } catch (e) { /* non-fatal */ }
     return ok({ score })
