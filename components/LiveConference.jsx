@@ -18,8 +18,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Loader2, Radio, Video, Maximize2, Send, Users, MessageSquare, Building2 } from 'lucide-react'
+import { Loader2, Radio, Video, Maximize2, Send, Users, MessageSquare, Building2, Presentation, X } from 'lucide-react'
 import { toast } from 'sonner'
+import dynamic from 'next/dynamic'
+
+const MergedPresentationViewer = dynamic(() => import('@/components/MergedPresentationViewer'), { ssr: false })
 
 const getToken = () => (typeof window !== 'undefined' ? localStorage.getItem('scmsToken') : null)
 
@@ -38,6 +41,7 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
   const [tokenData, setTokenData] = useState(null)
   const [error, setError] = useState('')
   const [connecting, setConnecting] = useState(false)
+  const [merged, setMerged] = useState(null) // { url, slideIndex, generatedAt, totalPages }
   const authed = !!getToken()
 
   useEffect(() => {
@@ -47,6 +51,13 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
     check()
     const t = setInterval(check, 15000)
     return () => { alive = false; clearInterval(t) }
+  }, [conf?.id])
+
+  useEffect(() => {
+    if (!conf?.id) return
+    // Merged presentation metadata is public-ish (served from /api/uploads),
+    // but the metadata endpoint doesn't require auth for reading. Ignore errors.
+    fetch(`/api/conferences/${conf.id}/merged-presentation`).then(r => r.ok ? r.json() : null).then(d => setMerged(d?.presentation || null)).catch(() => {})
   }, [conf?.id])
 
   const join = async () => {
@@ -166,15 +177,18 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
   }
 
   return (
-    <LiveKitConnected tokenData={tokenData} conf={conf} isAdmin={isAdmin}
+    <LiveKitConnected tokenData={tokenData} conf={conf} isAdmin={isAdmin} merged={merged}
       onLeave={() => setTokenData(null)}
       onEnd={isAdmin ? () => { toggleLive(false); setTokenData(null) } : null}
     />
   )
 }
 
-function LiveKitConnected({ tokenData, conf, isAdmin, onLeave, onEnd }) {
+function LiveKitConnected({ tokenData, conf, isAdmin, merged, onLeave, onEnd }) {
   const wrapRef = useRef(null)
+  const [showSlides, setShowSlides] = useState(!!merged?.url)
+
+  useEffect(() => { setShowSlides(!!merged?.url) }, [merged?.url])
 
   const goFullscreen = () => {
     if (!wrapRef.current) return
@@ -191,6 +205,11 @@ function LiveKitConnected({ tokenData, conf, isAdmin, onLeave, onEnd }) {
           {tokenData.role === 'host' && <Badge variant="outline" className="border-white/30 text-white text-[10px]">HOST</Badge>}
         </div>
         <div className="flex gap-2">
+          {merged?.url && (
+            <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setShowSlides(v => !v)} title={showSlides ? 'Hide slides' : 'Show slides'}>
+              <Presentation className="h-4 w-4 mr-1" /> {showSlides ? 'Hide slides' : 'Show slides'}
+            </Button>
+          )}
           <Button size="sm" variant="ghost" className="text-white hover:bg-white/10" onClick={goFullscreen}><Maximize2 className="h-4 w-4" /></Button>
           {isAdmin && onEnd && <Button size="sm" variant="destructive" onClick={onEnd}>End broadcast</Button>}
           <Button size="sm" variant="outline" className="border-white/30 text-white hover:bg-white/10" onClick={onLeave}>Leave</Button>
@@ -208,7 +227,10 @@ function LiveKitConnected({ tokenData, conf, isAdmin, onLeave, onEnd }) {
           className="flex-1 flex overflow-hidden"
         >
           <RoomAudioRenderer />
-          <div className="flex-1 flex flex-col bg-black relative">
+          {showSlides && merged?.url && (
+            <SlidesPanel merged={merged} isHost={tokenData.role === 'host'} onClose={() => setShowSlides(false)} />
+          )}
+          <div className="flex-1 flex flex-col bg-black relative min-w-0">
             <div className="flex-1 relative overflow-hidden">
               <VideoStage />
             </div>
@@ -218,6 +240,67 @@ function LiveKitConnected({ tokenData, conf, isAdmin, onLeave, onEnd }) {
           </div>
           <QnASidebar displayName={tokenData.displayName} isHost={tokenData.role === 'host'} />
         </LiveKitRoom>
+      </div>
+    </div>
+  )
+}
+
+// SlidesPanel: renders the merged presentation and syncs the current page across
+// all connected participants using the LiveKit data channel topic "slides".
+// Only the host can advance slides; every viewer follows the host's page.
+function SlidesPanel({ merged, isHost, onClose }) {
+  const [page, setPage] = useState(1)
+  const { send, message } = useDataChannel('slides')
+
+  // When we receive a page update from anyone (host), follow it.
+  useEffect(() => {
+    if (!message) return
+    try {
+      const raw = new TextDecoder().decode(message.payload)
+      const data = JSON.parse(raw)
+      if (data && typeof data.page === 'number' && data.page > 0) {
+        setPage(data.page)
+      }
+    } catch {}
+  }, [message])
+
+  const changePage = async (n) => {
+    setPage(n)
+    if (!isHost) return
+    try {
+      const payload = new TextEncoder().encode(JSON.stringify({ page: n, ts: Date.now() }))
+      await send(payload, { reliable: true, topic: 'slides' })
+    } catch {}
+  }
+
+  // On host mount, broadcast the initial page so late-joining viewers can catch up.
+  useEffect(() => {
+    if (!isHost) return
+    const t = setTimeout(() => {
+      const payload = new TextEncoder().encode(JSON.stringify({ page, ts: Date.now() }))
+      send(payload, { reliable: true, topic: 'slides' }).catch(() => {})
+    }, 800)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost])
+
+  return (
+    <div className="w-[42%] min-w-[380px] max-w-[720px] border-r border-white/10 bg-slate-950 flex flex-col relative">
+      <div className="h-9 bg-slate-800 text-white text-xs flex items-center px-3 gap-2 shrink-0">
+        <Presentation className="h-3.5 w-3.5" />
+        <span className="font-semibold">Slides</span>
+        {isHost && <Badge className="bg-indigo-600 text-[9px] px-1 py-0">CONTROLLING</Badge>}
+        <Button size="sm" variant="ghost" className="text-white hover:bg-white/10 h-6 w-6 p-0 ml-auto" onClick={onClose}><X className="h-3 w-3" /></Button>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <MergedPresentationViewer
+          url={merged.url}
+          slideIndex={merged.slideIndex || []}
+          isPresenter={isHost}
+          currentPage={page}
+          onPageChange={changePage}
+          height="100%"
+        />
       </div>
     </div>
   )

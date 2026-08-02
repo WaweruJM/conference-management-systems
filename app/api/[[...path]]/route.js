@@ -591,7 +591,7 @@ async function handleUploadServe(route, method, request) {
   try {
     const buf = await fs.readFile(abs)
     const ext = path.extname(abs).toLowerCase()
-    const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' }
+    const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' }
     return new NextResponse(buf, { status: 200, headers: { 'Content-Type': mimeMap[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' } })
   } catch {
     return err('Not found', 404)
@@ -1752,6 +1752,97 @@ async function handleProgramme(route, method, request) {
   return null
 }
 
+// ============ MERGED CONFERENCE PRESENTATION (PDF) ============
+// - POST /api/conferences/:id/merged-presentation  -> (Admin/Chief Editor) generates & stores merged PDF
+// - GET  /api/conferences/:id/merged-presentation  -> metadata (url, index, generatedAt)
+async function handleMergedPresentation(route, method, request) {
+  const m = route.match(/^\/conferences\/([^\/]+)\/merged-presentation$/)
+  if (!m) return null
+  const conferenceId = m[1]
+
+  const conference = await prisma.conference.findUnique({ where: { id: conferenceId } })
+  if (!conference) return err('Conference not found', 404)
+
+  const outDir = path.join(UPLOAD_DIR, 'merged', conferenceId)
+  const pdfAbs = path.join(outDir, 'merged.pdf')
+  const idxAbs = path.join(outDir, 'index.json')
+  const publicUrl = `/api/uploads/merged/${conferenceId}/merged.pdf`
+
+  const readMeta = async () => {
+    try {
+      const st = await fs.stat(pdfAbs)
+      const raw = await fs.readFile(idxAbs, 'utf-8').catch(() => '{}')
+      const parsed = JSON.parse(raw || '{}')
+      return {
+        url: publicUrl,
+        generatedAt: st.mtime.toISOString(),
+        sizeBytes: st.size,
+        slideIndex: parsed.slideIndex || [],
+        totalPages: parsed.totalPages || 0,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  if (method === 'GET') {
+    const meta = await readMeta()
+    return ok({ presentation: meta })
+  }
+
+  if (method === 'POST') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')) return err('Forbidden — only Admin or Chief/Managing Editor may generate the merged presentation.', 403)
+
+    // Pull all programme sessions ordered by startTime, with items ordered
+    // and each abstract's presentation assets. We only include items that
+    // reference an existing accepted abstract with a presentation uploaded
+    // OR always include (fallback covers page is auto-inserted).
+    const sessions = await prisma.programmeSession.findMany({
+      where: { conferenceId },
+      orderBy: { startTime: 'asc' },
+      include: {
+        theme: true,
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            abstract: {
+              include: { authors: { orderBy: { orderIndex: 'asc' } } },
+            },
+          },
+        },
+      },
+    })
+
+    if (sessions.length === 0) {
+      return err('The programme is empty. Please add sessions and schedule abstracts before generating the merged presentation.', 400)
+    }
+    const totalTalks = sessions.reduce((n, s) => n + (s.items?.length || 0), 0)
+    if (totalTalks === 0) {
+      return err('No presentations have been scheduled in the programme yet.', 400)
+    }
+
+    const { generateMergedConferencePDF } = await import('@/lib/pdf')
+    const { pdfBytes, slideIndex, totalPages } = await generateMergedConferencePDF({
+      conference, sessions, uploadDir: UPLOAD_DIR,
+    })
+
+    await fs.mkdir(outDir, { recursive: true })
+    await fs.writeFile(pdfAbs, Buffer.from(pdfBytes))
+    await fs.writeFile(idxAbs, JSON.stringify({ slideIndex, totalPages, generatedAt: new Date().toISOString() }, null, 2))
+
+    await logAudit({ actorId: user.id, action: 'GENERATE_MERGED_PRESENTATION', entityType: 'Conference', entityId: conferenceId }).catch(() => {})
+
+    const meta = await readMeta()
+    return ok({ presentation: meta })
+  }
+
+  return null
+}
+
+
+
 async function handleAudit(route, method, request) {
   if (route === '/audit' && method === 'GET') {
     const user = await getCurrentUser(request)
@@ -2819,6 +2910,7 @@ async function router(request, { params }) {
     r = await handleAuth(route, method, request); if (r) return r
     r = await handlePasswordReset(route, method, request); if (r) return r
     r = await handleConferences(route, method, request); if (r) return r
+    r = await handleMergedPresentation(route, method, request); if (r) return r
     r = await handleTemplates(route, method, request); if (r) return r
     r = await handleBooths(route, method, request); if (r) return r
     r = await handleLiveConference(route, method, request); if (r) return r
@@ -2837,6 +2929,7 @@ async function router(request, { params }) {
     r = await handleNotifications(route, method, request); if (r) return r
     r = await handleAnalytics(route, method, request); if (r) return r
     r = await handleProgramme(route, method, request); if (r) return r
+    r = await handleMergedPresentation(route, method, request); if (r) return r
     r = await handleAudit(route, method, request); if (r) return r
     r = await handleDocumentDownload(route, method, request); if (r) return r
     return err(`Route ${route} not found`, 404)

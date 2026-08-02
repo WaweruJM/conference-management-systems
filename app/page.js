@@ -21,10 +21,11 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
-  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 const LiveConference = dynamic(() => import('@/components/LiveConference'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
+const MergedPresentationViewer = dynamic(() => import('@/components/MergedPresentationViewer'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
 
 const TOKEN_KEY = 'scms_token'
 const getToken = () => (typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null)
@@ -4336,7 +4337,149 @@ function DelegatesPage() {
         </Card>
       </div>
       <p className="text-xs text-muted-foreground mt-4">CSV columns: Prefix, First Name, Last Name, Email, Type, Mode, Rank, Unit, Affiliation, Company, Registered. Physical file also contains editors and admin. Name tags are 8 per A4 page (2 columns × 4 rows) — cut along the borders.</p>
+
+      {/* Merged Conference Presentation */}
+      {confId && <MergedPresentationPanel confId={confId} />}
     </div>
+  )
+}
+
+// ============ MERGED CONFERENCE PRESENTATION PANEL ============
+// Admin / Chief Editor generates a single PDF combining all scheduled talks in
+// programme order (cover page + author photo + bio + slide deck). The generated
+// PDF is served from /api/uploads/merged/<confId>/merged.pdf and is auto-loaded
+// by the Live Conference viewer, syncing slide changes across all participants.
+function MergedPresentationPanel({ confId }) {
+  const [meta, setMeta] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+
+  const refresh = () => {
+    setLoading(true)
+    api(`/conferences/${confId}/merged-presentation`).then(d => setMeta(d.presentation || null))
+      .catch(() => setMeta(null))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { refresh() }, [confId])
+
+  const generate = async () => {
+    if (!confirm('Generate the merged conference presentation now? This combines every scheduled talk (title, author photo, bio and slides) into a single PDF. It may take a minute.')) return
+    setGenerating(true)
+    try {
+      const d = await api(`/conferences/${confId}/merged-presentation`, { method: 'POST' })
+      setMeta(d.presentation || null)
+      toast.success('Merged presentation generated successfully.')
+    } catch (e) {
+      toast.error(e.message || 'Could not generate merged presentation')
+    } finally { setGenerating(false) }
+  }
+
+  return (
+    <>
+    <Card className="mt-6 border-2 border-indigo-200">
+      <CardHeader className="bg-gradient-to-r from-indigo-50 to-purple-50">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2"><Presentation className="h-5 w-5 text-indigo-600" /> Merged conference presentation</CardTitle>
+            <CardDescription className="mt-1">
+              A single PDF combining every scheduled talk in programme order — cover page with title, author photo, bio and time slot, followed by the presenter's slide deck. Auto-loaded in the Live Conference room so slides sync to every viewer.
+            </CardDescription>
+          </div>
+          <Button onClick={generate} disabled={generating} className="bg-indigo-600 hover:bg-indigo-700 whitespace-nowrap">
+            {generating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+            {meta ? 'Regenerate' : 'Generate merged presentation'}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-5">
+        {loading ? (
+          <div className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 inline animate-spin mr-1" /> Loading…</div>
+        ) : meta ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground">Generated</div>
+                <div className="font-semibold">{new Date(meta.generatedAt).toLocaleString('en-GB')}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground">Total pages</div>
+                <div className="font-semibold">{meta.totalPages}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground">Talks included</div>
+                <div className="font-semibold">{(meta.slideIndex || []).length}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground">File size</div>
+                <div className="font-semibold">{(meta.sizeBytes / (1024 * 1024)).toFixed(1)} MB</div>
+              </div>
+            </div>
+
+            {(meta.slideIndex || []).length > 0 && (
+              <details className="border rounded-lg overflow-hidden">
+                <summary className="px-3 py-2 cursor-pointer bg-slate-50 text-sm font-medium hover:bg-slate-100">Programme order ({meta.slideIndex.length} talks)</summary>
+                <div className="max-h-[280px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 sticky top-0"><tr>
+                      <th className="text-left p-2">#</th><th className="text-left p-2">Session</th>
+                      <th className="text-left p-2">Talk</th><th className="text-left p-2">Type</th>
+                      <th className="text-left p-2">Cover page</th>
+                    </tr></thead>
+                    <tbody>
+                      {meta.slideIndex.map((t, i) => (
+                        <tr key={t.abstractId} className="border-t hover:bg-slate-50">
+                          <td className="p-2 font-mono text-muted-foreground">{i + 1}</td>
+                          <td className="p-2 text-muted-foreground truncate max-w-[160px]">{t.sessionTitle}</td>
+                          <td className="p-2 font-medium truncate max-w-[280px]">
+                            <span className="font-mono text-[10px] text-indigo-700 mr-1">{t.submissionCode}</span>
+                            {t.title}
+                          </td>
+                          <td className="p-2"><Badge variant="outline" className="text-[10px]">{t.presentationType || '—'}</Badge></td>
+                          <td className="p-2 font-mono text-muted-foreground">p. {t.coverPage} ({t.slideCount} slide{t.slideCount === 1 ? '' : 's'})</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => setPreviewOpen(true)}>
+                <FileText className="h-4 w-4 mr-1" /> Preview in-browser
+              </Button>
+              <a href={meta.url} target="_blank" rel="noreferrer">
+                <Button variant="outline"><Download className="h-4 w-4 mr-1" /> Download PDF</Button>
+              </a>
+              <a href={meta.url} target="_blank" rel="noreferrer">
+                <Button variant="outline">Open in new tab</Button>
+              </a>
+            </div>
+            <div className="text-xs text-muted-foreground border-l-2 border-indigo-500 pl-3 mt-2">
+              💡 During the live conference, this deck is displayed alongside the video and slides advance in sync when the host clicks the next arrow — every viewer sees the same page.
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground bg-slate-50 rounded-lg p-4">
+            <div className="font-medium text-slate-700 mb-1">No merged presentation yet</div>
+            Click <span className="font-semibold">Generate merged presentation</span> above to build one. Make sure the programme has been scheduled (at least one session with talks) and that presenters have uploaded their PDF slides on the Templates page.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+
+    <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <DialogContent className="max-w-5xl h-[85vh] p-0 gap-0 flex flex-col overflow-hidden">
+        <DialogHeader className="px-5 py-3 border-b shrink-0">
+          <DialogTitle className="flex items-center gap-2"><Presentation className="h-5 w-5 text-indigo-600" /> Merged presentation preview</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-hidden bg-slate-900">
+          {meta?.url && <MergedPresentationViewer url={meta.url} slideIndex={meta.slideIndex || []} isPresenter={true} height="100%" />}
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
 function ConferenceAdmin() {

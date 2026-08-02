@@ -1,0 +1,36 @@
+{
+  "slideIndex": [
+    {
+      "abstractId": "e4ffd582-a2df-45c5-b51a-e332a4087686",
+      "submissionCode": "FIFTH MEDICAL SCIENTIFIC CONFERENCE-000002",
+      "title": "outcome of novel laparoscopic caeserian section; case series",
+      "authors": "Anna Fischer*",
+      "sessionId": "cf3719ad-21f2-4f6f-a3f4-ca9b56618780",
+      "sessionTitle": "Session 1A: Trauma",
+      "startTime": "2027-03-18T08:00:00.000Z",
+      "endTime": "2027-03-18T12:30:00.000Z",
+      "presentationType": "UNDECIDED",
+      "coverPage": 3,
+      "firstSlidePage": 4,
+      "endPage": 4,
+      "slideCount": 1
+    },
+    {
+      "abstractId": "7c071406-69f9-4b18-923c-fbf219aa500a",
+      "submissionCode": "FIFTH MEDICAL SCIENTIFIC CONFERENCE-000022",
+      "title": "Lamu East Sub County",
+      "authors": "James Waweru*",
+      "sessionId": "886f89af-bdd0-4c33-9a27-d626b8e4a145",
+      "sessionTitle": "Opening Ceremony & Keynote",
+      "startTime": "2027-03-18T08:00:00.000Z",
+      "endTime": "2027-03-18T08:30:00.000Z",
+      "presentationType": "UNDECIDED",
+      "coverPage": 6,
+      "firstSlidePage": 7,
+      "endPage": 7,
+      "slideCount": 1
+    }
+  ],
+  "totalPages": 7,
+  "generatedAt": "2026-08-02T16:10:51.412Z"
+}
