@@ -4953,7 +4953,119 @@ function TemplatesPage({ user, isAdmin, isEditor }) {
         ))}
       </div>
       <p className="text-xs text-muted-foreground mt-4">Note: Templates can only be downloaded by authors whose abstracts have been accepted, or by editors/admins.</p>
+
+      {/* ── Presentation package (authors of accepted abstracts) ── */}
+      <PresentationPackageSection user={user} isAdmin={isAdmin} isEditor={isEditor} />
     </div>
+  )
+}
+
+// Presentation package uploader — appears on the Templates page. Loads all abstracts
+// that belong to the current user (or every accepted abstract for admins/editors) and
+// lets the presenting author upload/replace the PPTX, passport photo, and biography.
+function PresentationPackageSection({ user, isAdmin, isEditor }) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    // Authors see their own accepted abstracts; admin/editors see everyone's.
+    const scope = (isAdmin || isEditor) ? '' : '?scope=mine'
+    api(`/abstracts${scope}`).then(d => {
+      const accepted = (d.abstracts || []).filter(a =>
+        ['ACCEPTED', 'ORAL', 'POSTER', 'PRESENTATION_UPLOAD', 'PROGRAMME_SCHEDULING', 'PUBLISHED'].includes(a.currentState)
+      )
+      setItems(accepted)
+    }).finally(() => setLoading(false))
+  }, [isAdmin, isEditor])
+
+  if (loading) return <div className="mt-8"><Loader2 className="animate-spin h-5 w-5 text-indigo-500" /></div>
+  if (items.length === 0) return null
+  return (
+    <div className="mt-8">
+      <h2 className="text-xl font-bold mb-3 flex items-center gap-2"><Upload className="h-5 w-5 text-indigo-600" /> Your presentation package</h2>
+      <p className="text-xs text-muted-foreground mb-4">Upload your PowerPoint presentation, a passport-size photo and a short biography for each accepted abstract. You can delete and re-upload as many times as needed until the editors are satisfied.</p>
+      <div className="space-y-4">
+        {items.map(a => <PresentationCard key={a.id} abstract={a} user={user} />)}
+      </div>
+    </div>
+  )
+}
+
+function PresentationCard({ abstract: initialAbs, user }) {
+  const [abs, setAbs] = useState(initialAbs)
+  const [bio, setBio] = useState(initialAbs.biography || `Author: ${user.title || ''} ${user.firstName} ${user.lastName}\nInstitution: ${user.affiliation || ''}\nEmail: ${user.email}\n\nShort biography (max 200 words):\n`)
+  const [savingBio, setSavingBio] = useState(false)
+
+  const upload = async (kind, e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const d = await apiUpload(`/abstracts/${abs.id}/${kind}`, fd)
+      setAbs(d.abstract); toast.success(`${kind.replace('-', ' ')} uploaded`)
+    } catch (e) { toast.error(e.message) }
+    finally { e.target.value = '' }
+  }
+  const del = async (kind) => {
+    if (!confirm(`Delete the current ${kind.replace('-', ' ')}?`)) return
+    try {
+      const res = await fetch(`/api/abstracts/${abs.id}/${kind}`, { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) } })
+      const d = await res.json(); if (!res.ok) throw new Error(d.error)
+      setAbs(d.abstract); toast.success('Deleted — you may upload afresh')
+    } catch (e) { toast.error(e.message) }
+  }
+  const saveBio = async () => {
+    setSavingBio(true)
+    try {
+      const d = await api(`/abstracts/${abs.id}/biography`, { method: 'PUT', body: JSON.stringify({ biography: bio }) })
+      setAbs(d.abstract); toast.success('Biography saved')
+    } catch (e) { toast.error(e.message) }
+    finally { setSavingBio(false) }
+  }
+
+  return (
+    <Card className="border-2 border-indigo-100">
+      <CardHeader className="bg-gradient-to-r from-indigo-50 to-white pb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge className="bg-emerald-600 text-white text-[10px]">{abs.currentState}</Badge>
+          <span className="text-xs font-mono text-slate-500">{abs.submissionCode}</span>
+        </div>
+        <CardTitle className="text-base leading-snug mt-1">{abs.title}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-4">
+        {/* Presentation */}
+        <div className="border rounded-lg p-3 bg-slate-50">
+          <Label className="text-sm font-semibold flex items-center gap-1.5"><FileText className="h-4 w-4 text-indigo-600" /> PowerPoint presentation (PPTX/PPT/PDF, max 50 MB)</Label>
+          {abs.presentationPath ? (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <a href={abs.presentationPath} target="_blank" rel="noreferrer" className="text-indigo-600 text-sm hover:underline flex items-center gap-1"><FileText className="h-4 w-4" /> Current file</a>
+              <Button variant="outline" size="sm" onClick={() => del('presentation')}><Trash2 className="h-3 w-3 mr-1" /> Delete &amp; re-upload</Button>
+            </div>
+          ) : (
+            <input type="file" accept=".ppt,.pptx,.pdf" onChange={e => upload('presentation', e)} className="text-xs mt-2" />
+          )}
+        </div>
+        {/* Photo */}
+        <div className="border rounded-lg p-3 bg-slate-50">
+          <Label className="text-sm font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-fuchsia-600" /> Passport-size photo (JPG/PNG, max 2 MB)</Label>
+          {abs.authorPhotoPath ? (
+            <div className="mt-2 flex items-center gap-3">
+              <img src={abs.authorPhotoPath} alt="Author" className="h-20 w-20 rounded object-cover border" />
+              <Button variant="outline" size="sm" onClick={() => del('author-photo')}><Trash2 className="h-3 w-3 mr-1" /> Delete &amp; re-upload</Button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*" onChange={e => upload('author-photo', e)} className="text-xs mt-2" />
+          )}
+        </div>
+        {/* Bio */}
+        <div className="border rounded-lg p-3 bg-slate-50">
+          <Label className="text-sm font-semibold flex items-center gap-1.5"><FileText className="h-4 w-4 text-slate-600" /> Short biography</Label>
+          <Textarea rows={6} value={bio} onChange={e => setBio(e.target.value)} className="mt-2" />
+          <div className="flex justify-end mt-2">
+            <Button onClick={saveBio} disabled={savingBio} className="bg-indigo-600 hover:bg-indigo-700" size="sm">{savingBio && <Loader2 className="h-3 w-3 animate-spin mr-1" />} Save biography</Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

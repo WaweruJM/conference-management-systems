@@ -977,6 +977,77 @@ async function handleAbstracts(route, method, request) {
   }
 
   // Assign editor
+  // ─── Presentation package (post-acceptance) ─────────────────────────────
+  // Author uploads their presentation slides, passport photo and short biography.
+  // Admin / Chief Editor can also update / view these. Delete + re-upload is supported
+  // so authors can iterate until the editors are satisfied.
+  const presMatch = route.match(/^\/abstracts\/([^\/]+)\/presentation$/)
+  if (presMatch && (method === 'POST' || method === 'DELETE')) {
+    const abs = await prisma.abstract.findUnique({ where: { id: presMatch[1] } })
+    if (!abs) return err('Not found', 404)
+    const isOwner = abs.submittedById === user.id
+    const isPriv = hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')
+    if (!isOwner && !isPriv) return err('Forbidden', 403)
+    if (method === 'POST') {
+      const fd = await request.formData()
+      const file = fd.get('file')
+      if (!file) return err('No file')
+      if (file.size > 50 * 1024 * 1024) return err('Presentation exceeds 50 MB limit')
+      const ext = (file.name.split('.').pop() || '').toLowerCase()
+      if (!['ppt', 'pptx', 'pdf'].includes(ext)) return err('Only PPT, PPTX or PDF files are accepted')
+      const buf = Buffer.from(await file.arrayBuffer())
+      const safeName = `presentation_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      const dir = path.join(UPLOAD_DIR, 'presentations', presMatch[1])
+      await fs.mkdir(dir, { recursive: true })
+      const filePath = path.join(dir, safeName)
+      await fs.writeFile(filePath, buf)
+      const publicPath = `/api/uploads/presentations/${presMatch[1]}/${safeName}`
+      const updated = await prisma.abstract.update({ where: { id: presMatch[1] }, data: { presentationPath: publicPath } })
+      return ok({ abstract: updated })
+    }
+    // DELETE — clear the field so the author can upload afresh
+    const updated = await prisma.abstract.update({ where: { id: presMatch[1] }, data: { presentationPath: null } })
+    return ok({ abstract: updated })
+  }
+  const photoMatch = route.match(/^\/abstracts\/([^\/]+)\/author-photo$/)
+  if (photoMatch && (method === 'POST' || method === 'DELETE')) {
+    const abs = await prisma.abstract.findUnique({ where: { id: photoMatch[1] } })
+    if (!abs) return err('Not found', 404)
+    const isOwner = abs.submittedById === user.id
+    const isPriv = hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')
+    if (!isOwner && !isPriv) return err('Forbidden', 403)
+    if (method === 'POST') {
+      const fd = await request.formData()
+      const file = fd.get('file')
+      if (!file) return err('No file')
+      if (file.size > 2 * 1024 * 1024) return err('Photo exceeds 2 MB limit (please use a passport-size image)')
+      if (!file.type.startsWith('image/')) return err('Please upload a JPG or PNG image')
+      const buf = Buffer.from(await file.arrayBuffer())
+      const safeName = `photo_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      const dir = path.join(UPLOAD_DIR, 'photos', photoMatch[1])
+      await fs.mkdir(dir, { recursive: true })
+      const filePath = path.join(dir, safeName)
+      await fs.writeFile(filePath, buf)
+      const publicPath = `/api/uploads/photos/${photoMatch[1]}/${safeName}`
+      const updated = await prisma.abstract.update({ where: { id: photoMatch[1] }, data: { authorPhotoPath: publicPath } })
+      return ok({ abstract: updated })
+    }
+    const updated = await prisma.abstract.update({ where: { id: photoMatch[1] }, data: { authorPhotoPath: null } })
+    return ok({ abstract: updated })
+  }
+  const bioMatch = route.match(/^\/abstracts\/([^\/]+)\/biography$/)
+  if (bioMatch && method === 'PUT') {
+    const abs = await prisma.abstract.findUnique({ where: { id: bioMatch[1] } })
+    if (!abs) return err('Not found', 404)
+    const isOwner = abs.submittedById === user.id
+    const isPriv = hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')
+    if (!isOwner && !isPriv) return err('Forbidden', 403)
+    const body = await request.json()
+    const bio = (body.biography || '').toString().slice(0, 4000)
+    const updated = await prisma.abstract.update({ where: { id: bioMatch[1] }, data: { biography: bio } })
+    return ok({ abstract: updated })
+  }
+
   const assignEdMatch = route.match(/^\/abstracts\/([^\/]+)\/assign-editor$/)
   if (assignEdMatch && method === 'POST') {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR')) return err('Forbidden', 403)

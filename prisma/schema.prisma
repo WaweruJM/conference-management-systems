@@ -214,6 +214,9 @@ model Abstract {
 
   title           String
   reportType      ReportType @default(ORIGINAL_RESEARCH)
+  presentationPath   String?  // Uploaded PPT / PPTX presentation (post-acceptance)
+  authorPhotoPath    String?  // Uploaded passport-size photo of the presenting author
+  biography          String?  // Short biography of the presenting author (pre-populated with name)
   disclosureStatement String? @db.Text
   currentState    AbstractState @default(DRAFT)
   presentationType PresentationType @default(UNDECIDED)

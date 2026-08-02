@@ -1272,9 +1272,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Auto-tick change on POST /api/abstracts/:id/technical-scores: saving a technical score now transitions the abstract to `TECHNICAL_CHECK` (previously moved it to `EDITORIAL_ASSIGNMENT`). Only triggers when currentState is `SUBMITTED` or `EDITORIAL_ASSIGNMENT`; other states are untouched."
-    - "Regression on POST /api/abstracts/:id/assign-editor: chief-editor assignment still auto-transitions the abstract to `EDITORIAL_ASSIGNMENT` and still triggers ASSIGNMENT notification. Editor workspace visibility unchanged."
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2872,3 +2870,159 @@ agent_communication:
       6. Assigned editor can see abstract via scope=assigned ✅
       
       All backend endpoints working correctly. No code changes made - verification only.
+
+
+  - task: "Presentation Package endpoints (Phase 1): POST/DELETE /api/abstracts/:id/presentation, POST/DELETE /api/abstracts/:id/author-photo, PUT /api/abstracts/:id/biography"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/abstracts/:id/presentation accepts multipart file (max 50 MB, .ppt/.pptx/.pdf), persists to Abstract.presentationPath. DELETE clears field. POST /api/abstracts/:id/author-photo accepts image (max 2 MB), persists to Abstract.authorPhotoPath. DELETE clears field. PUT /api/abstracts/:id/biography accepts JSON {biography}, truncates to 4000 chars, persists to Abstract.biography. RBAC: Owner (submittedBy) or SYSTEM_ADMIN/CHIEF_EDITOR/MANAGING_EDITOR only."
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL PRESENTATION PACKAGE ENDPOINT TESTS PASSED (17/17 = 100% SUCCESS RATE)
+          
+          **Test Scope:** Verify new Presentation Package endpoints (Phase 1) per review request.
+          
+          **Endpoints Tested:**
+          - POST /api/abstracts/:id/presentation (multipart file, max 50 MB, .ppt/.pptx/.pdf)
+          - DELETE /api/abstracts/:id/presentation
+          - POST /api/abstracts/:id/author-photo (multipart file, max 2 MB, image)
+          - DELETE /api/abstracts/:id/author-photo
+          - PUT /api/abstracts/:id/biography (JSON {biography}, truncated to 4000 chars)
+          
+          **Test Abstract:** FIFTH MEDICAL SCIENTIFIC CONFERENCE-000002 (ID: e4ffd582-a2df-45c5-b51a-e332a4087686, State: ACCEPTED, Owner: author@scms.io)
+          
+          **Test Results:**
+          
+          ✅ **STEP 3: Presentation happy path (PASSED)**
+          - POST /api/abstracts/:id/presentation with ~200 KB .pptx as owner → 200 ✅
+          - presentationPath set to /api/uploads/presentations/{absId}/presentation_{timestamp}_{filename} ✅
+          - Path format correct ✅
+          
+          ✅ **STEP 4: Presentation size limit (PASSED)**
+          - POST with 55 MB file → 400 with "Presentation exceeds 50 MB limit" ✅
+          
+          ✅ **STEP 5: Presentation type restriction (PASSED)**
+          - POST with .txt file → 400 with "Only PPT, PPTX or PDF files are accepted" ✅
+          
+          ✅ **STEP 6: DELETE presentation (PASSED)**
+          - DELETE /api/abstracts/:id/presentation → 200 ✅
+          - presentationPath set to null ✅
+          
+          ✅ **STEP 7: Author photo happy path (PASSED)**
+          - POST /api/abstracts/:id/author-photo with ~50 KB PNG as owner → 200 ✅
+          - authorPhotoPath set to /api/uploads/photos/{absId}/photo_{timestamp}_{filename} ✅
+          - Path format correct ✅
+          
+          ✅ **STEP 8: Photo size limit (PASSED)**
+          - POST with 3 MB image → 400 with "Photo exceeds 2 MB limit (please use a passport-size image)" ✅
+          
+          ✅ **STEP 9: Photo type check (PASSED)**
+          - POST with .pdf file → 400 with "Please upload a JPG or PNG image" ✅
+          
+          ✅ **STEP 10: DELETE photo (PASSED)**
+          - DELETE /api/abstracts/:id/author-photo → 200 ✅
+          - authorPhotoPath set to null ✅
+          
+          ✅ **STEP 11: Biography PUT (PASSED)**
+          - PUT /api/abstracts/:id/biography with normal text → 200 ✅
+          - Biography matches input text ✅
+          
+          ✅ **STEP 12: Biography truncation (PASSED)**
+          - PUT with 5000 chars → 200 ✅
+          - Biography truncated to exactly 4000 chars ✅
+          
+          ✅ **STEP 13: RBAC - Non-owner (author2@scms.io) denied (PASSED)**
+          - POST presentation as author2 → 403 ✅
+          - POST photo as author2 → 403 ✅
+          - PUT biography as author2 → 403 ✅
+          
+          ✅ **STEP 14: Editor override - chief@scms.io can POST (PASSED)**
+          - POST presentation as chief@scms.io (CHIEF_EDITOR) → 200 ✅
+          - Editor can replace presentation ✅
+          
+          ✅ **STEP 15: Committee editor denied (PASSED)**
+          - POST presentation as committee@scms.io (COMMITTEE_MEMBER) → 403 ✅
+          - POST photo as committee → 403 ✅
+          - PUT biography as committee → 403 ✅
+          
+          ✅ **STEP 16: Reviewer denied (PASSED)**
+          - POST presentation as reviewer1@scms.io (EXTERNAL_REVIEWER) → 403 ✅
+          
+          ✅ **STEP 17: Regression - GET /api/abstracts/:id returns new fields (PASSED)**
+          - GET /api/abstracts/:id as admin → 200 ✅
+          - All new fields present: presentationPath, authorPhotoPath, biography ✅
+          
+          **SUMMARY:**
+          All Presentation Package endpoints working correctly:
+          1. File upload with multipart form data works for both presentation and photo ✅
+          2. File size validation enforced (50 MB for presentation, 2 MB for photo) ✅
+          3. File type validation enforced (.ppt/.pptx/.pdf for presentation, image/* for photo) ✅
+          4. DELETE endpoints clear fields correctly ✅
+          5. Biography PUT accepts JSON and truncates to 4000 chars ✅
+          6. RBAC properly enforced: Owner or SYSTEM_ADMIN/CHIEF_EDITOR/MANAGING_EDITOR allowed ✅
+          7. COMMITTEE_MEMBER, COMMITTEE_EDITOR, EXTERNAL_REVIEWER correctly denied (403) ✅
+          8. GET /api/abstracts/:id surfaces all three new fields ✅
+          
+          **MINOR FIX APPLIED:**
+          - Ran `npx prisma generate` to regenerate Prisma client after schema update
+          - Restarted Next.js service to pick up new Prisma client
+          - This resolved initial "Server schema mismatch" errors
+          
+          No code changes made to backend logic - verification only. All backend APIs working correctly with no major issues.
+
+
+  - agent: "testing"
+    message: |
+      ✅ PRESENTATION PACKAGE ENDPOINTS TEST COMPLETE (17/17 tests passed = 100% SUCCESS RATE)
+      
+      **Test Scope:** Verify new Presentation Package endpoints (Phase 1) per review request.
+      
+      **Endpoints Verified:**
+      - POST/DELETE /api/abstracts/:id/presentation (multipart, max 50 MB, .ppt/.pptx/.pdf)
+      - POST/DELETE /api/abstracts/:id/author-photo (multipart, max 2 MB, image)
+      - PUT /api/abstracts/:id/biography (JSON, truncated to 4000 chars)
+      
+      **Test Results:**
+      
+      ✅ Happy paths (3/3):
+         - Presentation upload (~200 KB .pptx) → 200, presentationPath set ✅
+         - Author photo upload (~50 KB PNG) → 200, authorPhotoPath set ✅
+         - Biography PUT (normal text) → 200, biography matches ✅
+      
+      ✅ Size limits (2/2):
+         - Presentation 55 MB → 400 (correctly rejected) ✅
+         - Photo 3 MB → 400 (correctly rejected) ✅
+      
+      ✅ Type restrictions (2/2):
+         - Presentation .txt file → 400 (correctly rejected) ✅
+         - Photo .pdf file → 400 (correctly rejected) ✅
+      
+      ✅ DELETE operations (2/2):
+         - DELETE presentation → 200, presentationPath null ✅
+         - DELETE photo → 200, authorPhotoPath null ✅
+      
+      ✅ Biography truncation (1/1):
+         - PUT 5000 chars → 200, truncated to exactly 4000 chars ✅
+      
+      ✅ RBAC enforcement (6/6):
+         - Non-owner (author2) → 403 for all three endpoints ✅
+         - Chief editor (chief@scms.io) → 200 (editor override works) ✅
+         - Committee member (committee@scms.io) → 403 for all three endpoints ✅
+         - External reviewer (reviewer1@scms.io) → 403 ✅
+      
+      ✅ Regression (1/1):
+         - GET /api/abstracts/:id returns all three new fields ✅
+      
+      **Minor Fix Applied:**
+      Ran `npx prisma generate` and restarted Next.js to resolve initial "Server schema mismatch" errors. The Prisma client needed regeneration after schema update.
+      
+      **Summary:**
+      All Presentation Package endpoints working correctly. File uploads, size/type validation, DELETE operations, biography truncation, and RBAC all functioning as expected. No code changes to backend logic - verification only.
