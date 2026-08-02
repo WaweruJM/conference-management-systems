@@ -1,0 +1,61 @@
+{
+  "items": [
+    {
+      "id": "break-1",
+      "durationMin": 10,
+      "startTime": null,
+      "type": "break",
+      "kind": "other",
+      "title": "Opening Remarks"
+    },
+    {
+      "id": "talk-1",
+      "durationMin": 15,
+      "startTime": null,
+      "type": "talk",
+      "abstractId": "e4ffd582-a2df-45c5-b51a-e332a4087686",
+      "sessionId": "1",
+      "sessionTitle": "Session 1"
+    },
+    {
+      "id": "break-2",
+      "durationMin": 15,
+      "startTime": null,
+      "type": "break",
+      "kind": "tea",
+      "title": "Morning Tea"
+    },
+    {
+      "id": "sponsor-1",
+      "durationMin": 20,
+      "startTime": null,
+      "type": "sponsor",
+      "sponsorBoothId": null,
+      "sponsorName": "MedTech Global",
+      "title": "Innovation in Medical Devices",
+      "speakerName": "Dr. Priya Sharma",
+      "speakerBio": "Leading expert in medical technology",
+      "description": "Latest innovations in medical devices"
+    },
+    {
+      "id": "talk-2",
+      "durationMin": 15,
+      "startTime": null,
+      "type": "talk",
+      "abstractId": "e4ffd582-a2df-45c5-b51a-e332a4087686",
+      "sessionId": "1",
+      "sessionTitle": "Session 1"
+    },
+    {
+      "id": "break-3",
+      "durationMin": 60,
+      "startTime": null,
+      "type": "break",
+      "kind": "lunch",
+      "title": "Lunch Break"
+    }
+  ],
+  "updatedAt": "2026-08-02T16:54:15.384Z",
+  "updatedBy": "0f0f9509-4d39-4320-9d7b-76e2f540882d",
+  "source": "saved"
+}

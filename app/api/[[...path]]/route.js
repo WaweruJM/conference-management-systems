@@ -1753,12 +1753,15 @@ async function handleProgramme(route, method, request) {
 }
 
 // ============ MERGED CONFERENCE PRESENTATION (PDF) ============
-// - POST /api/conferences/:id/merged-presentation  -> (Admin/Chief Editor) generates & stores merged PDF
-// - GET  /api/conferences/:id/merged-presentation  -> metadata (url, index, generatedAt)
+// - POST /api/conferences/:id/merged-presentation           -> (Admin/Chief Editor) generates & stores merged PDF
+// - GET  /api/conferences/:id/merged-presentation           -> metadata (url, index, generatedAt)
+// - GET  /api/conferences/:id/presentation-sequence         -> ordered sequence (talks + sponsor talks + breaks); auto-derived from programme when never saved
+// - PUT  /api/conferences/:id/presentation-sequence         -> (Admin/Chief Editor) save sequence items (JSON on disk beside merged.pdf)
 async function handleMergedPresentation(route, method, request) {
-  const m = route.match(/^\/conferences\/([^\/]+)\/merged-presentation$/)
-  if (!m) return null
-  const conferenceId = m[1]
+  const seqMatch = route.match(/^\/conferences\/([^\/]+)\/presentation-sequence$/)
+  const genMatch = route.match(/^\/conferences\/([^\/]+)\/merged-presentation$/)
+  if (!seqMatch && !genMatch) return null
+  const conferenceId = (seqMatch || genMatch)[1]
 
   const conference = await prisma.conference.findUnique({ where: { id: conferenceId } })
   if (!conference) return err('Conference not found', 404)
@@ -1766,8 +1769,115 @@ async function handleMergedPresentation(route, method, request) {
   const outDir = path.join(UPLOAD_DIR, 'merged', conferenceId)
   const pdfAbs = path.join(outDir, 'merged.pdf')
   const idxAbs = path.join(outDir, 'index.json')
+  const seqAbs = path.join(outDir, 'sequence.json')
   const publicUrl = `/api/uploads/merged/${conferenceId}/merged.pdf`
 
+  // ---- Sequence helpers ----
+  const readSequence = async () => {
+    try {
+      const raw = await fs.readFile(seqAbs, 'utf-8')
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed.items) ? parsed : null
+    } catch { return null }
+  }
+
+  // Auto-derive a default sequence from the current programme (talks only, no breaks).
+  const deriveDefaultSequence = async () => {
+    const sessions = await prisma.programmeSession.findMany({
+      where: { conferenceId },
+      orderBy: { startTime: 'asc' },
+      include: {
+        items: {
+          orderBy: { orderIndex: 'asc' },
+          include: { abstract: { select: { id: true, submissionCode: true, title: true } } },
+        },
+      },
+    })
+    const items = []
+    for (const s of sessions) {
+      for (const it of (s.items || [])) {
+        if (!it.abstract) continue
+        items.push({
+          id: `talk-${it.id}`,
+          type: 'talk',
+          abstractId: it.abstract.id,
+          sessionId: s.id,
+          sessionTitle: s.title,
+          submissionCode: it.abstract.submissionCode,
+          title: it.abstract.title,
+          durationMin: it.durationMin || 15,
+        })
+      }
+    }
+    return { items, updatedAt: null, updatedBy: null, source: 'auto' }
+  }
+
+  if (seqMatch) {
+    if (method === 'GET') {
+      let payload = await readSequence()
+      let src = 'saved'
+      if (!payload) {
+        payload = await deriveDefaultSequence()
+        src = payload.source || 'auto'
+      }
+      // Hydrate talk items with fresh title/sessionTitle/submissionCode from the DB
+      // (metadata may be stale if abstracts were edited after the sequence was saved).
+      const talkIds = [...new Set((payload.items || []).filter(i => i.type === 'talk' && i.abstractId).map(i => i.abstractId))]
+      if (talkIds.length) {
+        const abstracts = await prisma.abstract.findMany({
+          where: { id: { in: talkIds } },
+          select: { id: true, title: true, submissionCode: true, presentationType: true },
+        })
+        const byId = Object.fromEntries(abstracts.map(a => [a.id, a]))
+        payload.items = payload.items.map(it => {
+          if (it.type !== 'talk') return it
+          const a = byId[it.abstractId]
+          if (!a) return { ...it, _missing: true }
+          return { ...it, title: a.title, submissionCode: a.submissionCode, presentationType: a.presentationType }
+        })
+      }
+      return ok({ sequence: { ...payload, source: src } })
+    }
+    if (method === 'PUT') {
+      const user = await getCurrentUser(request)
+      if (!user) return err('Unauthenticated', 401)
+      if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')) return err('Forbidden — only Admin or Chief/Managing Editor may edit the presentation sequence.', 403)
+      const body = await request.json().catch(() => ({}))
+      const raw = Array.isArray(body.items) ? body.items : []
+      // Validate and normalise items
+      const items = raw.map((it, i) => {
+        const base = {
+          id: String(it.id || `item-${Date.now()}-${i}`),
+          durationMin: Math.max(1, Math.min(480, Number(it.durationMin) || 15)),
+          startTime: it.startTime || null,
+        }
+        if (it.type === 'talk') return { ...base, type: 'talk', abstractId: String(it.abstractId || ''), sessionId: it.sessionId || null, sessionTitle: String(it.sessionTitle || '').slice(0, 200) }
+        if (it.type === 'sponsor') return {
+          ...base, type: 'sponsor',
+          sponsorBoothId: it.sponsorBoothId || null,
+          sponsorName: String(it.sponsorName || '').slice(0, 200),
+          title: String(it.title || 'Sponsor talk').slice(0, 200),
+          speakerName: String(it.speakerName || '').slice(0, 200),
+          speakerBio: String(it.speakerBio || '').slice(0, 4000),
+          description: String(it.description || '').slice(0, 2000),
+        }
+        if (it.type === 'break') return {
+          ...base, type: 'break',
+          kind: ['tea', 'lunch', 'coffee', 'networking', 'other'].includes(it.kind) ? it.kind : 'tea',
+          title: String(it.title || '').slice(0, 200),
+        }
+        return null
+      }).filter(Boolean)
+      const payload = { items, updatedAt: new Date().toISOString(), updatedBy: user.id, source: 'saved' }
+      await fs.mkdir(outDir, { recursive: true })
+      await fs.writeFile(seqAbs, JSON.stringify(payload, null, 2))
+      await logAudit({ actorId: user.id, action: 'UPDATE_PRESENTATION_SEQUENCE', entityType: 'Conference', entityId: conferenceId }).catch(() => {})
+      return ok({ sequence: payload })
+    }
+    return null
+  }
+
+  // ---- Merged PDF endpoints ----
   const readMeta = async () => {
     try {
       const st = await fs.stat(pdfAbs)
@@ -1779,6 +1889,7 @@ async function handleMergedPresentation(route, method, request) {
         sizeBytes: st.size,
         slideIndex: parsed.slideIndex || [],
         totalPages: parsed.totalPages || 0,
+        usedSequence: parsed.usedSequence || 'auto',
       }
     } catch {
       return null
@@ -1795,42 +1906,51 @@ async function handleMergedPresentation(route, method, request) {
     if (!user) return err('Unauthenticated', 401)
     if (!hasRole(user, 'SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR')) return err('Forbidden — only Admin or Chief/Managing Editor may generate the merged presentation.', 403)
 
-    // Pull all programme sessions ordered by startTime, with items ordered
-    // and each abstract's presentation assets. We only include items that
-    // reference an existing accepted abstract with a presentation uploaded
-    // OR always include (fallback covers page is auto-inserted).
-    const sessions = await prisma.programmeSession.findMany({
-      where: { conferenceId },
-      orderBy: { startTime: 'asc' },
-      include: {
-        theme: true,
-        items: {
-          orderBy: { orderIndex: 'asc' },
-          include: {
-            abstract: {
-              include: { authors: { orderBy: { orderIndex: 'asc' } } },
-            },
-          },
-        },
-      },
-    })
-
-    if (sessions.length === 0) {
+    // Load stored sequence (or fall back to auto-derived from programme).
+    let sequencePayload = await readSequence()
+    let usedSequence = 'saved'
+    if (!sequencePayload) {
+      sequencePayload = await deriveDefaultSequence()
+      usedSequence = 'auto'
+    }
+    const seqItems = sequencePayload.items || []
+    if (seqItems.length === 0) {
       return err('The programme is empty. Please add sessions and schedule abstracts before generating the merged presentation.', 400)
     }
-    const totalTalks = sessions.reduce((n, s) => n + (s.items?.length || 0), 0)
-    if (totalTalks === 0) {
+    const anyTalk = seqItems.some(i => i.type === 'talk')
+    if (!anyTalk && usedSequence === 'auto') {
       return err('No presentations have been scheduled in the programme yet.', 400)
+    }
+
+    // Hydrate: fetch abstract details (authors, photos, bios, presentation) and sponsor booth logos.
+    const abstractIds = [...new Set(seqItems.filter(i => i.type === 'talk' && i.abstractId).map(i => i.abstractId))]
+    const boothIds = [...new Set(seqItems.filter(i => i.type === 'sponsor' && i.sponsorBoothId).map(i => i.sponsorBoothId))]
+    const [abstracts, booths] = await Promise.all([
+      abstractIds.length ? prisma.abstract.findMany({ where: { id: { in: abstractIds } }, include: { authors: { orderBy: { orderIndex: 'asc' } } } }) : [],
+      boothIds.length ? prisma.exhibitionBooth.findMany({ where: { id: { in: boothIds } } }) : [],
+    ])
+    const absById = Object.fromEntries(abstracts.map(a => [a.id, a]))
+    const boothById = Object.fromEntries(booths.map(b => [b.id, b]))
+
+    // Compose the hydrated sequence for the PDF generator.
+    const hydratedSequence = seqItems.map(it => {
+      if (it.type === 'talk') return { ...it, abstract: absById[it.abstractId] || null }
+      if (it.type === 'sponsor') return { ...it, booth: boothById[it.sponsorBoothId] || null }
+      return it
+    }).filter(it => !(it.type === 'talk' && !it.abstract))
+
+    if (hydratedSequence.length === 0) {
+      return err('None of the sequence items resolve to a valid talk or break. Please review the sequence editor.', 400)
     }
 
     const { generateMergedConferencePDF } = await import('@/lib/pdf')
     const { pdfBytes, slideIndex, totalPages } = await generateMergedConferencePDF({
-      conference, sessions, uploadDir: UPLOAD_DIR,
+      conference, sequence: hydratedSequence, uploadDir: UPLOAD_DIR,
     })
 
     await fs.mkdir(outDir, { recursive: true })
     await fs.writeFile(pdfAbs, Buffer.from(pdfBytes))
-    await fs.writeFile(idxAbs, JSON.stringify({ slideIndex, totalPages, generatedAt: new Date().toISOString() }, null, 2))
+    await fs.writeFile(idxAbs, JSON.stringify({ slideIndex, totalPages, generatedAt: new Date().toISOString(), usedSequence }, null, 2))
 
     await logAudit({ actorId: user.id, action: 'GENERATE_MERGED_PRESENTATION', entityType: 'Conference', entityId: conferenceId }).catch(() => {})
 

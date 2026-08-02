@@ -1,545 +1,785 @@
 #!/usr/bin/env python3
 """
-Backend test for Presentation Package endpoints (Phase 1)
-Tests POST/DELETE /api/abstracts/:id/presentation, POST/DELETE /api/abstracts/:id/author-photo, PUT /api/abstracts/:id/biography
+Backend test for Phase 2b — Presentation Sequence Editor
+Tests GET/PUT /api/conferences/:id/presentation-sequence + POST /api/conferences/:id/merged-presentation
 """
+
 import requests
 import json
-import io
 import os
+import shutil
+from datetime import datetime
 
-BASE_URL = "https://scms-platform-1.preview.emergentagent.com/api"
+BASE_URL = "http://localhost:3000"
+FEATURED_CONF_ID = "e01de36e-e09e-479f-bd53-c056b2a90436"
+FAKE_CONF_ID = "bbbbbbbb-1111-2222-3333-444444444444"
 
-def login(email, password="password123"):
-    """Login and return JWT token"""
+# Test credentials (all password: password123)
+CREDENTIALS = {
+    "admin": {"email": "admin@scms.io", "password": "password123"},
+    "chief": {"email": "chief@scms.io", "password": "password123"},
+    "author": {"email": "author@scms.io", "password": "password123"},
+    "committee": {"email": "committee@scms.io", "password": "password123"},
+    "reviewer2": {"email": "reviewer2@scms.io", "password": "password123"},
+}
+
+tokens = {}
+
+def login(role):
+    """Login and get JWT token"""
     try:
-        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password}, timeout=10)
+        creds = CREDENTIALS[role]
+        resp = requests.post(f"{BASE_URL}/api/auth/login", json=creds, timeout=10)
         if resp.status_code == 200:
-            token = resp.json().get("token")
-            print(f"✅ Login as {email} → 200 (token: {token[:20]}...)")
+            data = resp.json()
+            token = data.get("token")
+            tokens[role] = token
+            print(f"✅ Login as {role}@scms.io successful")
             return token
         else:
-            print(f"❌ Login as {email} → {resp.status_code}")
+            print(f"❌ Login as {role}@scms.io failed: {resp.status_code}")
             return None
     except Exception as e:
-        print(f"❌ Login as {email} failed: {e}")
+        print(f"❌ Login as {role}@scms.io exception: {e}")
         return None
 
-def get_headers(token):
-    """Return headers with Bearer token"""
-    return {"Authorization": f"Bearer {token}"}
+def backup_sequence_file():
+    """Backup the sequence.json file"""
+    seq_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json"
+    backup_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json.backup"
+    try:
+        if os.path.exists(seq_path):
+            shutil.copy2(seq_path, backup_path)
+            print(f"✅ Backed up sequence.json to {backup_path}")
+            return True
+        else:
+            print(f"ℹ️  No sequence.json found at {seq_path}")
+            return False
+    except Exception as e:
+        print(f"❌ Failed to backup sequence.json: {e}")
+        return False
 
-def create_fake_file(size_kb, extension="pptx"):
-    """Create a fake file buffer of specified size"""
-    content = b"X" * (size_kb * 1024)
-    return io.BytesIO(content), f"test_file.{extension}"
+def restore_sequence_file():
+    """Restore the sequence.json file from backup"""
+    seq_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json"
+    backup_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json.backup"
+    try:
+        if os.path.exists(backup_path):
+            shutil.copy2(backup_path, seq_path)
+            print(f"✅ Restored sequence.json from backup")
+            return True
+        else:
+            print(f"ℹ️  No backup found at {backup_path}")
+            return False
+    except Exception as e:
+        print(f"❌ Failed to restore sequence.json: {e}")
+        return False
 
-def create_fake_image(size_kb, extension="png"):
-    """Create a fake image buffer"""
-    # Create a minimal PNG header to pass image type check
-    if extension == "png":
-        # Minimal PNG signature + IHDR chunk
-        png_header = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde'
-        content = png_header + (b"X" * (size_kb * 1024 - len(png_header)))
-    else:
-        content = b"X" * (size_kb * 1024)
-    return io.BytesIO(content), f"test_photo.{extension}"
+def delete_sequence_file():
+    """Delete the sequence.json file"""
+    seq_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json"
+    try:
+        if os.path.exists(seq_path):
+            os.remove(seq_path)
+            print(f"✅ Deleted sequence.json")
+            return True
+        else:
+            print(f"ℹ️  No sequence.json to delete")
+            return False
+    except Exception as e:
+        print(f"❌ Failed to delete sequence.json: {e}")
+        return False
+
+def test_a_get_sequence():
+    """Test A: GET sequence scenarios"""
+    print("\n" + "="*80)
+    print("TEST A: GET /api/conferences/:id/presentation-sequence")
+    print("="*80)
+    
+    # A1: GET on featured conference with saved sequence
+    print("\n--- A1: GET on featured conference (should have saved sequence) ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence", timeout=10)
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            seq = data.get("sequence", {})
+            print(f"✅ GET returned 200")
+            print(f"   Source: {seq.get('source')}")
+            print(f"   Items count: {len(seq.get('items', []))}")
+            print(f"   UpdatedAt: {seq.get('updatedAt')}")
+            print(f"   UpdatedBy: {seq.get('updatedBy')}")
+            if seq.get('source') == 'saved':
+                print(f"✅ Source is 'saved' as expected")
+            else:
+                print(f"⚠️  Source is '{seq.get('source')}', expected 'saved'")
+            if len(seq.get('items', [])) >= 1:
+                print(f"✅ Has {len(seq.get('items', []))} items")
+                # Show first item
+                first_item = seq['items'][0]
+                print(f"   First item type: {first_item.get('type')}")
+            else:
+                print(f"⚠️  No items in sequence")
+        else:
+            print(f"❌ GET failed with status {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ GET exception: {e}")
+    
+    # A2: GET on non-existent conference
+    print("\n--- A2: GET on non-existent conference (should return 404) ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/api/conferences/{FAKE_CONF_ID}/presentation-sequence", timeout=10)
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 404:
+            print(f"✅ GET returned 404 as expected")
+        else:
+            print(f"❌ GET returned {resp.status_code}, expected 404")
+    except Exception as e:
+        print(f"❌ GET exception: {e}")
+    
+    # A3: GET with auto-derived sequence (delete sequence.json first)
+    print("\n--- A3: GET with auto-derived sequence (delete sequence.json first) ---")
+    backup_exists = backup_sequence_file()
+    delete_sequence_file()
+    try:
+        resp = requests.get(f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence", timeout=10)
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            seq = data.get("sequence", {})
+            print(f"✅ GET returned 200")
+            print(f"   Source: {seq.get('source')}")
+            print(f"   Items count: {len(seq.get('items', []))}")
+            if seq.get('source') == 'auto':
+                print(f"✅ Source is 'auto' as expected (no saved sequence)")
+            else:
+                print(f"⚠️  Source is '{seq.get('source')}', expected 'auto'")
+            # Check that items are talks only
+            items = seq.get('items', [])
+            if items:
+                all_talks = all(item.get('type') == 'talk' for item in items)
+                if all_talks:
+                    print(f"✅ All items are talks (auto-derived from programme)")
+                else:
+                    print(f"⚠️  Not all items are talks")
+        else:
+            print(f"❌ GET failed with status {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ GET exception: {e}")
+    finally:
+        if backup_exists:
+            restore_sequence_file()
+
+def test_b_put_rbac():
+    """Test B: PUT RBAC"""
+    print("\n" + "="*80)
+    print("TEST B: PUT /api/conferences/:id/presentation-sequence RBAC")
+    print("="*80)
+    
+    test_payload = {
+        "items": [
+            {
+                "id": "test-break-1",
+                "type": "break",
+                "kind": "tea",
+                "title": "Morning Tea",
+                "durationMin": 15
+            }
+        ]
+    }
+    
+    # B1: PUT without Authorization header
+    print("\n--- B1: PUT without Authorization header (should return 401) ---")
+    try:
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 401:
+            print(f"✅ PUT returned 401 as expected")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 401")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # B2: PUT as author
+    print("\n--- B2: PUT as author@scms.io (should return 403) ---")
+    try:
+        headers = {"Authorization": f"Bearer {tokens['author']}"}
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 403:
+            print(f"✅ PUT returned 403 as expected")
+            error_msg = resp.json().get('error', '')
+            if 'Admin' in error_msg or 'Chief' in error_msg or 'Managing' in error_msg:
+                print(f"✅ Error message mentions required roles: {error_msg}")
+            else:
+                print(f"⚠️  Error message doesn't mention required roles: {error_msg}")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 403")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # B3: PUT as committee
+    print("\n--- B3: PUT as committee@scms.io (should return 403) ---")
+    try:
+        headers = {"Authorization": f"Bearer {tokens['committee']}"}
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 403:
+            print(f"✅ PUT returned 403 as expected")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 403")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # B4: PUT as reviewer2
+    print("\n--- B4: PUT as reviewer2@scms.io (should return 403) ---")
+    try:
+        headers = {"Authorization": f"Bearer {tokens['reviewer2']}"}
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 403:
+            print(f"✅ PUT returned 403 as expected")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 403")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # B5: PUT as chief
+    print("\n--- B5: PUT as chief@scms.io (should return 200) ---")
+    try:
+        headers = {"Authorization": f"Bearer {tokens['chief']}"}
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            seq = data.get("sequence", {})
+            print(f"✅ PUT returned 200")
+            print(f"   Source: {seq.get('source')}")
+            print(f"   UpdatedBy: {seq.get('updatedBy')}")
+            if seq.get('source') == 'saved':
+                print(f"✅ Source is 'saved' as expected")
+            else:
+                print(f"⚠️  Source is '{seq.get('source')}', expected 'saved'")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 200: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # B6: PUT as admin
+    print("\n--- B6: PUT as admin@scms.io (should return 200) ---")
+    try:
+        headers = {"Authorization": f"Bearer {tokens['admin']}"}
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=test_payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            print(f"✅ PUT returned 200")
+        else:
+            print(f"❌ PUT returned {resp.status_code}, expected 200: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+
+def test_c_put_validation():
+    """Test C: PUT validation"""
+    print("\n" + "="*80)
+    print("TEST C: PUT /api/conferences/:id/presentation-sequence validation")
+    print("="*80)
+    
+    headers = {"Authorization": f"Bearer {tokens['admin']}"}
+    
+    # C1: Unknown type items (should be dropped)
+    print("\n--- C1: PUT with unknown type 'xyz' (should be dropped) ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "valid-1", "type": "break", "kind": "tea", "durationMin": 10},
+                {"id": "invalid-1", "type": "xyz", "durationMin": 10},
+                {"id": "valid-2", "type": "break", "kind": "lunch", "durationMin": 20}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            print(f"   Items count: {len(items)} (sent 3, expected 2 after dropping unknown type)")
+            if len(items) == 2:
+                print(f"✅ Unknown type item was dropped")
+            else:
+                print(f"⚠️  Expected 2 items, got {len(items)}")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C2: durationMin clamping (9999 → 480)
+    print("\n--- C2: PUT with durationMin=9999 (should clamp to 480) ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "durationMin": 9999}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and items[0].get('durationMin') == 480:
+                print(f"✅ durationMin clamped to 480")
+            else:
+                print(f"⚠️  durationMin is {items[0].get('durationMin')}, expected 480")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C3: durationMin clamping (0 → 1)
+    print("\n--- C3: PUT with durationMin=0 (should clamp to 1) ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "durationMin": 0}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and items[0].get('durationMin') == 1:
+                print(f"✅ durationMin clamped to 1")
+            else:
+                print(f"⚠️  durationMin is {items[0].get('durationMin')}, expected 1")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C4: durationMin clamping (negative → 1)
+    print("\n--- C4: PUT with durationMin=-10 (should clamp to 1) ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "durationMin": -10}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and items[0].get('durationMin') == 1:
+                print(f"✅ durationMin clamped to 1")
+            else:
+                print(f"⚠️  durationMin is {items[0].get('durationMin')}, expected 1")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C5: kind coercion (invalid → 'tea')
+    print("\n--- C5: PUT with kind='party' (should coerce to 'tea') ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "party", "durationMin": 15}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and items[0].get('kind') == 'tea':
+                print(f"✅ kind coerced to 'tea'")
+            else:
+                print(f"⚠️  kind is '{items[0].get('kind')}', expected 'tea'")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C6: String truncation (title 500 chars → 200)
+    print("\n--- C6: PUT with title=500 chars (should truncate to 200) ---")
+    try:
+        long_title = "A" * 500
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "title": long_title, "durationMin": 15}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and len(items[0].get('title', '')) == 200:
+                print(f"✅ title truncated to 200 chars")
+            else:
+                print(f"⚠️  title length is {len(items[0].get('title', ''))}, expected 200")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C7: String truncation (speakerBio 6000 chars → 4000)
+    print("\n--- C7: PUT with speakerBio=6000 chars (should truncate to 4000) ---")
+    try:
+        long_bio = "B" * 6000
+        payload = {
+            "items": [
+                {
+                    "id": "test-1",
+                    "type": "sponsor",
+                    "sponsorName": "Test Sponsor",
+                    "title": "Test Talk",
+                    "speakerName": "Dr. Test",
+                    "speakerBio": long_bio,
+                    "description": "Test description",
+                    "durationMin": 20
+                }
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"Status: {resp.status_code}")
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("sequence", {}).get("items", [])
+            print(f"✅ PUT returned 200")
+            if items and len(items[0].get('speakerBio', '')) == 4000:
+                print(f"✅ speakerBio truncated to 4000 chars")
+            else:
+                print(f"⚠️  speakerBio length is {len(items[0].get('speakerBio', ''))}, expected 4000")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+    
+    # C8: Idempotency
+    print("\n--- C8: PUT idempotency (same payload twice) ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "title": "Test Break", "durationMin": 15}
+            ]
+        }
+        # First PUT
+        resp1 = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"First PUT status: {resp1.status_code}")
+        if resp1.status_code == 200:
+            data1 = resp1.json()
+            items1 = data1.get("sequence", {}).get("items", [])
+            
+            # Second PUT with same payload
+            resp2 = requests.put(
+                f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+                json=payload,
+                headers=headers,
+                timeout=10
+            )
+            print(f"Second PUT status: {resp2.status_code}")
+            if resp2.status_code == 200:
+                data2 = resp2.json()
+                items2 = data2.get("sequence", {}).get("items", [])
+                print(f"✅ Both PUTs returned 200")
+                
+                # Compare items (excluding updatedAt which will differ)
+                if len(items1) == len(items2):
+                    print(f"✅ Items count matches ({len(items1)})")
+                    # Compare first item fields
+                    if items1 and items2:
+                        item1 = {k: v for k, v in items1[0].items() if k != 'updatedAt'}
+                        item2 = {k: v for k, v in items2[0].items() if k != 'updatedAt'}
+                        if item1 == item2:
+                            print(f"✅ Items have identical shape (idempotent)")
+                        else:
+                            print(f"⚠️  Items differ: {item1} vs {item2}")
+                else:
+                    print(f"⚠️  Items count differs: {len(items1)} vs {len(items2)}")
+            else:
+                print(f"❌ Second PUT returned {resp2.status_code}: {resp2.text}")
+        else:
+            print(f"❌ First PUT returned {resp1.status_code}: {resp1.text}")
+    except Exception as e:
+        print(f"❌ PUT exception: {e}")
+
+def test_d_post_integration():
+    """Test D: POST integration — sequence-driven generation"""
+    print("\n" + "="*80)
+    print("TEST D: POST /api/conferences/:id/merged-presentation integration")
+    print("="*80)
+    
+    headers = {"Authorization": f"Bearer {tokens['admin']}"}
+    
+    # D1: POST with saved sequence
+    print("\n--- D1: POST with saved sequence (usedSequence='saved') ---")
+    # First ensure we have a saved sequence
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "title": "Opening Remarks", "durationMin": 10}
+            ]
+        }
+        put_resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"PUT sequence status: {put_resp.status_code}")
+        
+        if put_resp.status_code == 200:
+            # Now POST to generate
+            post_resp = requests.post(
+                f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/merged-presentation",
+                headers=headers,
+                timeout=30
+            )
+            print(f"POST merged-presentation status: {post_resp.status_code}")
+            if post_resp.status_code == 200:
+                data = post_resp.json()
+                pres = data.get("presentation", {})
+                print(f"✅ POST returned 200")
+                print(f"   usedSequence: {pres.get('usedSequence')}")
+                if pres.get('usedSequence') == 'saved':
+                    print(f"✅ usedSequence is 'saved' as expected")
+                else:
+                    print(f"⚠️  usedSequence is '{pres.get('usedSequence')}', expected 'saved'")
+                
+                # Check slideIndex has type field
+                slide_index = pres.get('slideIndex', [])
+                if slide_index:
+                    print(f"   slideIndex entries: {len(slide_index)}")
+                    first_entry = slide_index[0]
+                    if 'type' in first_entry:
+                        print(f"✅ slideIndex entries have 'type' field: {first_entry.get('type')}")
+                    else:
+                        print(f"⚠️  slideIndex entries missing 'type' field")
+            else:
+                print(f"❌ POST returned {post_resp.status_code}: {post_resp.text}")
+        else:
+            print(f"❌ PUT returned {put_resp.status_code}: {put_resp.text}")
+    except Exception as e:
+        print(f"❌ POST exception: {e}")
+    
+    # D2: POST without saved sequence (auto-derived)
+    print("\n--- D2: POST without saved sequence (usedSequence='auto') ---")
+    backup_exists = backup_sequence_file()
+    delete_sequence_file()
+    try:
+        post_resp = requests.post(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/merged-presentation",
+            headers=headers,
+            timeout=30
+        )
+        print(f"POST merged-presentation status: {post_resp.status_code}")
+        if post_resp.status_code == 200:
+            data = post_resp.json()
+            pres = data.get("presentation", {})
+            print(f"✅ POST returned 200")
+            print(f"   usedSequence: {pres.get('usedSequence')}")
+            if pres.get('usedSequence') == 'auto':
+                print(f"✅ usedSequence is 'auto' as expected")
+            else:
+                print(f"⚠️  usedSequence is '{pres.get('usedSequence')}', expected 'auto'")
+        else:
+            print(f"❌ POST returned {post_resp.status_code}: {post_resp.text}")
+    except Exception as e:
+        print(f"❌ POST exception: {e}")
+    finally:
+        if backup_exists:
+            restore_sequence_file()
+    
+    # D3: POST with only breaks (edge case)
+    print("\n--- D3: POST with only breaks (source='saved') ---")
+    try:
+        # PUT a sequence with only breaks
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "title": "Morning Tea", "durationMin": 15},
+                {"id": "test-2", "type": "break", "kind": "lunch", "title": "Lunch Break", "durationMin": 60}
+            ]
+        }
+        put_resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"PUT sequence (only breaks) status: {put_resp.status_code}")
+        
+        if put_resp.status_code == 200:
+            # Now POST to generate
+            post_resp = requests.post(
+                f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/merged-presentation",
+                headers=headers,
+                timeout=30
+            )
+            print(f"POST merged-presentation status: {post_resp.status_code}")
+            if post_resp.status_code == 200:
+                print(f"✅ POST returned 200 (sequence with only breaks is allowed when explicitly saved)")
+                data = post_resp.json()
+                pres = data.get("presentation", {})
+                print(f"   usedSequence: {pres.get('usedSequence')}")
+            elif post_resp.status_code == 400:
+                print(f"⚠️  POST returned 400 (sequence with only breaks rejected): {post_resp.text}")
+            else:
+                print(f"❌ POST returned {post_resp.status_code}: {post_resp.text}")
+        else:
+            print(f"❌ PUT returned {put_resp.status_code}: {put_resp.text}")
+    except Exception as e:
+        print(f"❌ POST exception: {e}")
+    finally:
+        # Restore original sequence
+        if backup_exists:
+            restore_sequence_file()
+
+def test_e_disk_artifacts():
+    """Test E: Disk artifacts"""
+    print("\n" + "="*80)
+    print("TEST E: Disk artifacts")
+    print("="*80)
+    
+    headers = {"Authorization": f"Bearer {tokens['admin']}"}
+    
+    # E1: Verify sequence.json exists after PUT
+    print("\n--- E1: Verify sequence.json exists after PUT ---")
+    try:
+        payload = {
+            "items": [
+                {"id": "test-1", "type": "break", "kind": "tea", "title": "Test Break", "durationMin": 15}
+            ]
+        }
+        resp = requests.put(
+            f"{BASE_URL}/api/conferences/{FEATURED_CONF_ID}/presentation-sequence",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print(f"PUT status: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            seq_path = f"/app/uploads/merged/{FEATURED_CONF_ID}/sequence.json"
+            if os.path.exists(seq_path):
+                print(f"✅ sequence.json exists at {seq_path}")
+                # Read and verify content
+                with open(seq_path, 'r') as f:
+                    content = json.load(f)
+                    if 'items' in content and isinstance(content['items'], list):
+                        print(f"✅ sequence.json contains 'items' array with {len(content['items'])} items")
+                        if content['items'] and content['items'][0].get('type') == 'break':
+                            print(f"✅ First item type matches payload")
+                    else:
+                        print(f"⚠️  sequence.json missing 'items' array")
+            else:
+                print(f"❌ sequence.json does not exist at {seq_path}")
+        else:
+            print(f"❌ PUT returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"❌ Test exception: {e}")
 
 def main():
-    print("=" * 80)
-    print("PRESENTATION PACKAGE ENDPOINTS TEST (Phase 1)")
-    print("=" * 80)
+    """Main test runner"""
+    print("="*80)
+    print("PHASE 2B — PRESENTATION SEQUENCE EDITOR BACKEND TESTS")
+    print("="*80)
+    print(f"Base URL: {BASE_URL}")
+    print(f"Featured Conference ID: {FEATURED_CONF_ID}")
+    print(f"Test started at: {datetime.now().isoformat()}")
     
-    # Step 1: Login as admin and find an ACCEPTED abstract owned by author@scms.io
-    print("\n[STEP 1] Login as admin and find ACCEPTED abstract")
-    admin_token = login("admin@scms.io")
-    if not admin_token:
-        print("❌ CRITICAL: Cannot login as admin")
-        return
+    # Login all users
+    print("\n" + "="*80)
+    print("SETUP: Login all test users")
+    print("="*80)
+    for role in CREDENTIALS.keys():
+        login(role)
     
-    # Get abstracts
-    try:
-        resp = requests.get(f"{BASE_URL}/abstracts", headers=get_headers(admin_token), timeout=10)
-        if resp.status_code != 200:
-            print(f"❌ GET /abstracts → {resp.status_code}")
-            return
-        abstracts = resp.json().get("abstracts", [])
-        print(f"✅ GET /abstracts → 200 ({len(abstracts)} abstracts)")
-        
-        # Find an ACCEPTED abstract owned by author@scms.io
-        accepted_abs = None
-        author_email = "author@scms.io"
-        for abs_item in abstracts:
-            if abs_item.get("currentState") == "ACCEPTED" and abs_item.get("submittedBy", {}).get("email") == author_email:
-                accepted_abs = abs_item
-                break
-        
-        if not accepted_abs:
-            # Try to find any abstract owned by author@scms.io and transition it
-            print(f"⚠️  No ACCEPTED abstract found for {author_email}, looking for any abstract to transition...")
-            author_abs = None
-            for abs_item in abstracts:
-                if abs_item.get("submittedBy", {}).get("email") == author_email:
-                    author_abs = abs_item
-                    break
-            
-            if not author_abs:
-                print(f"❌ No abstract found for {author_email}")
-                return
-            
-            # Transition to ACCEPTED
-            abs_id = author_abs["id"]
-            print(f"📝 Transitioning abstract {author_abs['submissionCode']} to ACCEPTED...")
-            transition_resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/transition",
-                headers=get_headers(admin_token),
-                json={"newState": "ACCEPTED", "comment": "Test transition for presentation package testing"},
-                timeout=10
-            )
-            if transition_resp.status_code == 200:
-                print(f"✅ POST /abstracts/{abs_id}/transition → 200 (transitioned to ACCEPTED)")
-                accepted_abs = transition_resp.json().get("abstract", author_abs)
-                accepted_abs["id"] = abs_id
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/transition → {transition_resp.status_code}")
-                print(f"   Response: {transition_resp.text[:200]}")
-                return
-        
-        abs_id = accepted_abs["id"]
-        print(f"✅ Found ACCEPTED abstract: {accepted_abs['submissionCode']} (ID: {abs_id})")
-        
-    except Exception as e:
-        print(f"❌ Error finding abstract: {e}")
-        return
+    # Run tests
+    test_a_get_sequence()
+    test_b_put_rbac()
+    test_c_put_validation()
+    test_d_post_integration()
+    test_e_disk_artifacts()
     
-    # Step 2: Login as author@scms.io (owner)
-    print("\n[STEP 2] Login as author@scms.io (owner)")
-    author_token = login("author@scms.io")
-    if not author_token:
-        print("❌ CRITICAL: Cannot login as author@scms.io")
-        return
-    
-    # Step 3: Happy path - Upload presentation (small .pptx)
-    print("\n[STEP 3] Happy path - Upload presentation (~200 KB .pptx)")
-    try:
-        file_buf, filename = create_fake_file(200, "pptx")
-        files = {"file": (filename, file_buf, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/presentation",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=15
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            pres_path = data.get("abstract", {}).get("presentationPath")
-            print(f"✅ POST /abstracts/{abs_id}/presentation → 200")
-            print(f"   presentationPath: {pres_path}")
-            if pres_path and pres_path.startswith("/api/uploads/presentations/"):
-                print(f"   ✅ Path format correct")
-            else:
-                print(f"   ❌ Path format incorrect: {pres_path}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/presentation → {resp.status_code}")
-            print(f"   Response: {resp.text[:200]}")
-    except Exception as e:
-        print(f"❌ Upload presentation failed: {e}")
-    
-    # Step 4: Size limit - Upload 55 MB file (expect 400)
-    print("\n[STEP 4] Size limit - Upload 55 MB file (expect 400)")
-    try:
-        file_buf, filename = create_fake_file(55 * 1024, "pptx")  # 55 MB
-        files = {"file": (filename, file_buf, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/presentation",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=20
-        )
-        if resp.status_code == 400:
-            print(f"✅ POST /abstracts/{abs_id}/presentation (55 MB) → 400 (correctly rejected)")
-            print(f"   Error: {resp.json().get('error', 'N/A')}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/presentation (55 MB) → {resp.status_code} (expected 400)")
-    except Exception as e:
-        print(f"❌ Size limit test failed: {e}")
-    
-    # Step 5: Type restriction - Upload .txt file (expect 400)
-    print("\n[STEP 5] Type restriction - Upload .txt file (expect 400)")
-    try:
-        file_buf, filename = create_fake_file(10, "txt")
-        files = {"file": (filename, file_buf, "text/plain")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/presentation",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=15
-        )
-        if resp.status_code == 400:
-            print(f"✅ POST /abstracts/{abs_id}/presentation (.txt) → 400 (correctly rejected)")
-            print(f"   Error: {resp.json().get('error', 'N/A')}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/presentation (.txt) → {resp.status_code} (expected 400)")
-    except Exception as e:
-        print(f"❌ Type restriction test failed: {e}")
-    
-    # Step 6: DELETE presentation
-    print("\n[STEP 6] DELETE presentation")
-    try:
-        resp = requests.delete(
-            f"{BASE_URL}/abstracts/{abs_id}/presentation",
-            headers=get_headers(author_token),
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            pres_path = data.get("abstract", {}).get("presentationPath")
-            print(f"✅ DELETE /abstracts/{abs_id}/presentation → 200")
-            if pres_path is None:
-                print(f"   ✅ presentationPath is null")
-            else:
-                print(f"   ❌ presentationPath not null: {pres_path}")
-        else:
-            print(f"❌ DELETE /abstracts/{abs_id}/presentation → {resp.status_code}")
-    except Exception as e:
-        print(f"❌ DELETE presentation failed: {e}")
-    
-    # Step 7: Author photo happy path - Upload small PNG
-    print("\n[STEP 7] Author photo happy path - Upload ~50 KB PNG")
-    try:
-        file_buf, filename = create_fake_image(50, "png")
-        files = {"file": (filename, file_buf, "image/png")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=15
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            photo_path = data.get("abstract", {}).get("authorPhotoPath")
-            print(f"✅ POST /abstracts/{abs_id}/author-photo → 200")
-            print(f"   authorPhotoPath: {photo_path}")
-            if photo_path and photo_path.startswith("/api/uploads/photos/"):
-                print(f"   ✅ Path format correct")
-            else:
-                print(f"   ❌ Path format incorrect: {photo_path}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/author-photo → {resp.status_code}")
-            print(f"   Response: {resp.text[:200]}")
-    except Exception as e:
-        print(f"❌ Upload author photo failed: {e}")
-    
-    # Step 8: Photo size limit - Upload 3 MB image (expect 400)
-    print("\n[STEP 8] Photo size limit - Upload 3 MB image (expect 400)")
-    try:
-        file_buf, filename = create_fake_image(3 * 1024, "png")  # 3 MB
-        files = {"file": (filename, file_buf, "image/png")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=15
-        )
-        if resp.status_code == 400:
-            print(f"✅ POST /abstracts/{abs_id}/author-photo (3 MB) → 400 (correctly rejected)")
-            print(f"   Error: {resp.json().get('error', 'N/A')}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/author-photo (3 MB) → {resp.status_code} (expected 400)")
-    except Exception as e:
-        print(f"❌ Photo size limit test failed: {e}")
-    
-    # Step 9: Photo type check - Upload .pdf (expect 400)
-    print("\n[STEP 9] Photo type check - Upload .pdf (expect 400)")
-    try:
-        file_buf, filename = create_fake_file(50, "pdf")
-        files = {"file": (filename, file_buf, "application/pdf")}
-        resp = requests.post(
-            f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-            headers=get_headers(author_token),
-            files=files,
-            timeout=15
-        )
-        if resp.status_code == 400:
-            print(f"✅ POST /abstracts/{abs_id}/author-photo (.pdf) → 400 (correctly rejected)")
-            print(f"   Error: {resp.json().get('error', 'N/A')}")
-        else:
-            print(f"❌ POST /abstracts/{abs_id}/author-photo (.pdf) → {resp.status_code} (expected 400)")
-    except Exception as e:
-        print(f"❌ Photo type check test failed: {e}")
-    
-    # Step 10: DELETE photo
-    print("\n[STEP 10] DELETE author photo")
-    try:
-        resp = requests.delete(
-            f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-            headers=get_headers(author_token),
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            photo_path = data.get("abstract", {}).get("authorPhotoPath")
-            print(f"✅ DELETE /abstracts/{abs_id}/author-photo → 200")
-            if photo_path is None:
-                print(f"   ✅ authorPhotoPath is null")
-            else:
-                print(f"   ❌ authorPhotoPath not null: {photo_path}")
-        else:
-            print(f"❌ DELETE /abstracts/{abs_id}/author-photo → {resp.status_code}")
-    except Exception as e:
-        print(f"❌ DELETE photo failed: {e}")
-    
-    # Step 11: Biography - PUT with normal text
-    print("\n[STEP 11] Biography - PUT with normal text")
-    try:
-        bio_text = "Dr Test Author is a Cardiologist with 15 years of experience in interventional cardiology."
-        resp = requests.put(
-            f"{BASE_URL}/abstracts/{abs_id}/biography",
-            headers=get_headers(author_token),
-            json={"biography": bio_text},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            bio = data.get("abstract", {}).get("biography")
-            print(f"✅ PUT /abstracts/{abs_id}/biography → 200")
-            if bio == bio_text:
-                print(f"   ✅ Biography matches: {bio[:50]}...")
-            else:
-                print(f"   ❌ Biography mismatch. Expected: {bio_text[:50]}..., Got: {bio[:50] if bio else 'None'}...")
-        else:
-            print(f"❌ PUT /abstracts/{abs_id}/biography → {resp.status_code}")
-            print(f"   Response: {resp.text[:200]}")
-    except Exception as e:
-        print(f"❌ Biography PUT failed: {e}")
-    
-    # Step 12: Biography truncation - PUT with 5000 chars (expect truncation to 4000)
-    print("\n[STEP 12] Biography truncation - PUT with 5000 chars (expect truncation to 4000)")
-    try:
-        long_bio = "A" * 5000
-        resp = requests.put(
-            f"{BASE_URL}/abstracts/{abs_id}/biography",
-            headers=get_headers(author_token),
-            json={"biography": long_bio},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            bio = data.get("abstract", {}).get("biography")
-            print(f"✅ PUT /abstracts/{abs_id}/biography (5000 chars) → 200")
-            if bio and len(bio) == 4000:
-                print(f"   ✅ Biography truncated to 4000 chars (got {len(bio)})")
-            else:
-                print(f"   ❌ Biography length incorrect. Expected: 4000, Got: {len(bio) if bio else 0}")
-        else:
-            print(f"❌ PUT /abstracts/{abs_id}/biography (5000 chars) → {resp.status_code}")
-    except Exception as e:
-        print(f"❌ Biography truncation test failed: {e}")
-    
-    # Step 13: RBAC - author2@scms.io (NOT owner) attempts POST presentation (expect 403)
-    print("\n[STEP 13] RBAC - author2@scms.io (NOT owner) attempts POST presentation (expect 403)")
-    # First check if author2@scms.io exists, if not create it
-    author2_token = login("author2@scms.io")
-    if not author2_token:
-        print("⚠️  author2@scms.io doesn't exist, creating...")
-        try:
-            register_resp = requests.post(
-                f"{BASE_URL}/auth/register",
-                json={
-                    "email": "author2@scms.io",
-                    "password": "password123",
-                    "firstName": "Author",
-                    "lastName": "Two",
-                    "role": "AUTHOR"
-                },
-                timeout=10
-            )
-            if register_resp.status_code == 200:
-                author2_token = register_resp.json().get("token")
-                print(f"✅ Created author2@scms.io")
-            else:
-                print(f"❌ Failed to create author2@scms.io: {register_resp.status_code}")
-                author2_token = None
-        except Exception as e:
-            print(f"❌ Error creating author2@scms.io: {e}")
-            author2_token = None
-    
-    if author2_token:
-        try:
-            file_buf, filename = create_fake_file(100, "pptx")
-            files = {"file": (filename, file_buf, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/presentation",
-                headers=get_headers(author2_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 403:
-                print(f"✅ POST /abstracts/{abs_id}/presentation as author2 → 403 (correctly denied)")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/presentation as author2 → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ RBAC test (author2 presentation) failed: {e}")
-        
-        # Also test photo and biography
-        try:
-            file_buf, filename = create_fake_image(50, "png")
-            files = {"file": (filename, file_buf, "image/png")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-                headers=get_headers(author2_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 403:
-                print(f"✅ POST /abstracts/{abs_id}/author-photo as author2 → 403 (correctly denied)")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/author-photo as author2 → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ RBAC test (author2 photo) failed: {e}")
-        
-        try:
-            resp = requests.put(
-                f"{BASE_URL}/abstracts/{abs_id}/biography",
-                headers=get_headers(author2_token),
-                json={"biography": "Unauthorized bio"},
-                timeout=10
-            )
-            if resp.status_code == 403:
-                print(f"✅ PUT /abstracts/{abs_id}/biography as author2 → 403 (correctly denied)")
-            else:
-                print(f"❌ PUT /abstracts/{abs_id}/biography as author2 → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ RBAC test (author2 biography) failed: {e}")
-    
-    # Step 14: Editor override - chief@scms.io can POST presentation
-    print("\n[STEP 14] Editor override - chief@scms.io can POST presentation")
-    chief_token = login("chief@scms.io")
-    if chief_token:
-        try:
-            file_buf, filename = create_fake_file(150, "pdf")
-            files = {"file": (filename, file_buf, "application/pdf")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/presentation",
-                headers=get_headers(chief_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                pres_path = data.get("abstract", {}).get("presentationPath")
-                print(f"✅ POST /abstracts/{abs_id}/presentation as chief → 200 (editor can replace)")
-                print(f"   presentationPath: {pres_path}")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/presentation as chief → {resp.status_code}")
-        except Exception as e:
-            print(f"❌ Editor override test failed: {e}")
-    
-    # Step 15: Committee editor 403 - committee@scms.io (COMMITTEE_MEMBER) attempts POST
-    print("\n[STEP 15] Committee editor 403 - committee@scms.io attempts POST (expect 403)")
-    committee_token = login("committee@scms.io")
-    if committee_token:
-        try:
-            file_buf, filename = create_fake_file(100, "pptx")
-            files = {"file": (filename, file_buf, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/presentation",
-                headers=get_headers(committee_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 403:
-                print(f"✅ POST /abstracts/{abs_id}/presentation as committee → 403 (correctly denied)")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/presentation as committee → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ Committee RBAC test failed: {e}")
-        
-        # Test photo
-        try:
-            file_buf, filename = create_fake_image(50, "png")
-            files = {"file": (filename, file_buf, "image/png")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/author-photo",
-                headers=get_headers(committee_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 403:
-                print(f"✅ POST /abstracts/{abs_id}/author-photo as committee → 403 (correctly denied)")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/author-photo as committee → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ Committee photo RBAC test failed: {e}")
-        
-        # Test biography
-        try:
-            resp = requests.put(
-                f"{BASE_URL}/abstracts/{abs_id}/biography",
-                headers=get_headers(committee_token),
-                json={"biography": "Unauthorized bio"},
-                timeout=10
-            )
-            if resp.status_code == 403:
-                print(f"✅ PUT /abstracts/{abs_id}/biography as committee → 403 (correctly denied)")
-            else:
-                print(f"❌ PUT /abstracts/{abs_id}/biography as committee → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ Committee biography RBAC test failed: {e}")
-    
-    # Step 16: Reviewer 403 - reviewer1@scms.io attempts POST
-    print("\n[STEP 16] Reviewer 403 - reviewer1@scms.io attempts POST (expect 403)")
-    reviewer_token = login("reviewer1@scms.io")
-    if reviewer_token:
-        try:
-            file_buf, filename = create_fake_file(100, "pptx")
-            files = {"file": (filename, file_buf, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
-            resp = requests.post(
-                f"{BASE_URL}/abstracts/{abs_id}/presentation",
-                headers=get_headers(reviewer_token),
-                files=files,
-                timeout=15
-            )
-            if resp.status_code == 403:
-                print(f"✅ POST /abstracts/{abs_id}/presentation as reviewer → 403 (correctly denied)")
-            else:
-                print(f"❌ POST /abstracts/{abs_id}/presentation as reviewer → {resp.status_code} (expected 403)")
-        except Exception as e:
-            print(f"❌ Reviewer RBAC test failed: {e}")
-    
-    # Step 17: Regression - GET /api/abstracts/:id should return the new fields
-    print("\n[STEP 17] Regression - GET /api/abstracts/:id returns new fields")
-    try:
-        resp = requests.get(
-            f"{BASE_URL}/abstracts/{abs_id}",
-            headers=get_headers(admin_token),
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            abstract = data.get("abstract", {})
-            print(f"✅ GET /abstracts/{abs_id} → 200")
-            
-            # Check for new fields
-            has_pres = "presentationPath" in abstract
-            has_photo = "authorPhotoPath" in abstract
-            has_bio = "biography" in abstract
-            
-            if has_pres and has_photo and has_bio:
-                print(f"   ✅ All new fields present (presentationPath, authorPhotoPath, biography)")
-                print(f"   presentationPath: {abstract.get('presentationPath', 'N/A')}")
-                print(f"   authorPhotoPath: {abstract.get('authorPhotoPath', 'N/A')}")
-                print(f"   biography: {abstract.get('biography', 'N/A')[:50] if abstract.get('biography') else 'N/A'}...")
-            else:
-                print(f"   ❌ Missing fields: presentationPath={has_pres}, authorPhotoPath={has_photo}, biography={has_bio}")
-        else:
-            print(f"❌ GET /abstracts/{abs_id} → {resp.status_code}")
-    except Exception as e:
-        print(f"❌ Regression test failed: {e}")
-    
-    print("\n" + "=" * 80)
-    print("TEST COMPLETE")
-    print("=" * 80)
+    print("\n" + "="*80)
+    print("ALL TESTS COMPLETED")
+    print("="*80)
+    print(f"Test completed at: {datetime.now().isoformat()}")
 
 if __name__ == "__main__":
     main()

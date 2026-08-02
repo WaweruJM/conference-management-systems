@@ -21,7 +21,7 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
-  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw, X,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 const LiveConference = dynamic(() => import('@/components/LiveConference'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
@@ -4339,10 +4339,252 @@ function DelegatesPage() {
       <p className="text-xs text-muted-foreground mt-4">CSV columns: Prefix, First Name, Last Name, Email, Type, Mode, Rank, Unit, Affiliation, Company, Registered. Physical file also contains editors and admin. Name tags are 8 per A4 page (2 columns × 4 rows) — cut along the borders.</p>
 
       {/* Merged Conference Presentation */}
+      {confId && <SequenceEditorPanel confId={confId} />}
       {confId && <MergedPresentationPanel confId={confId} />}
     </div>
   )
 }
+
+// ============ SEQUENCE EDITOR PANEL ============
+// Lets Admin/Chief Editor build the running order of the merged presentation:
+// talks (from the programme), sponsor talks (linked to an exhibition booth for
+// logo re-use), and breaks (tea/lunch/coffee/networking). Each item has an
+// editable duration in minutes; the merged PDF will show the running clock
+// cascading from the previous item's finish time (or any explicit startTime).
+function SequenceEditorPanel({ confId }) {
+  const [items, setItems] = useState([])
+  const [booths, setBooths] = useState([])
+  const [source, setSource] = useState('auto')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  const refresh = () => {
+    setLoading(true)
+    Promise.all([
+      api(`/conferences/${confId}/presentation-sequence`),
+      api(`/conferences/${confId}/booths`).catch(() => ({ booths: [] })),
+    ]).then(([seq, boothsRes]) => {
+      setItems(seq.sequence?.items || [])
+      setSource(seq.sequence?.source || 'auto')
+      setBooths(boothsRes.booths || [])
+      setDirty(false)
+    }).finally(() => setLoading(false))
+  }
+  useEffect(() => { refresh() }, [confId])
+
+  const updateItem = (id, patch) => {
+    setItems(prev => prev.map(it => it.id === id ? { ...it, ...patch } : it))
+    setDirty(true)
+  }
+  const move = (idx, dir) => {
+    const j = idx + dir
+    if (j < 0 || j >= items.length) return
+    const next = [...items]
+    ;[next[idx], next[j]] = [next[j], next[idx]]
+    setItems(next)
+    setDirty(true)
+  }
+  const remove = (idx) => {
+    setItems(prev => prev.filter((_, i) => i !== idx))
+    setDirty(true)
+  }
+  const insertAt = (idx, item) => {
+    const withId = { id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ...item }
+    setItems(prev => [...prev.slice(0, idx), withId, ...prev.slice(idx)])
+    setDirty(true)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const clean = items.map(it => {
+        const base = { id: it.id, type: it.type, durationMin: it.durationMin || 15, startTime: it.startTime || null }
+        if (it.type === 'talk') return { ...base, abstractId: it.abstractId, sessionId: it.sessionId, sessionTitle: it.sessionTitle }
+        if (it.type === 'sponsor') return { ...base, sponsorBoothId: it.sponsorBoothId || null, sponsorName: it.sponsorName || '', title: it.title || '', speakerName: it.speakerName || '', speakerBio: it.speakerBio || '', description: it.description || '' }
+        if (it.type === 'break') return { ...base, kind: it.kind || 'tea', title: it.title || '' }
+        return base
+      })
+      const d = await api(`/conferences/${confId}/presentation-sequence`, { method: 'PUT', body: JSON.stringify({ items: clean }) })
+      setItems(d.sequence?.items || [])
+      setSource('saved')
+      setDirty(false)
+      toast.success('Sequence saved. Click "Regenerate" below to rebuild the merged PDF.')
+    } catch (e) {
+      toast.error(e.message || 'Could not save sequence')
+    } finally { setSaving(false) }
+  }
+
+  const reset = () => {
+    if (!confirm('Reset the sequence to auto-derive from the current programme? Your custom breaks and sponsor talks will be lost.')) return
+    // Filtering out non-talks and restoring order from programme is simplest by
+    // clearing local state and asking the backend for the auto-derived sequence.
+    setItems([])
+    setDirty(true)
+    api(`/conferences/${confId}/presentation-sequence`).then(seq => {
+      setItems(seq.sequence?.items || [])
+      setSource(seq.sequence?.source || 'auto')
+      setDirty(true)
+    })
+  }
+
+  // Running clock preview
+  const withRunningTime = (() => {
+    let clock = null
+    return items.map(it => {
+      const dur = Number(it.durationMin) || 15
+      const start = it.startTime ? new Date(it.startTime) : (clock ? new Date(clock) : null)
+      const end = start ? new Date(start.getTime() + dur * 60_000) : null
+      if (end) clock = end
+      return { ...it, _start: start, _end: end }
+    })
+  })()
+
+  const fmt = (d) => d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'
+
+  const badge = (type) => {
+    if (type === 'talk') return <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200"><Mic /> Talk</Badge>
+    if (type === 'sponsor') return <Badge className="bg-amber-100 text-amber-800 border-amber-200">💼 Sponsor</Badge>
+    if (type === 'break') return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">☕ Break</Badge>
+    return null
+  }
+
+  return (
+    <Card className="mt-6 border-2 border-slate-200">
+      <CardHeader className="bg-gradient-to-r from-slate-50 to-indigo-50">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <CardTitle className="text-lg flex items-center gap-2"><ListChecks className="h-5 w-5 text-indigo-600" /> Presentation sequence editor</CardTitle>
+            <CardDescription className="mt-1">
+              Arrange the running order of the merged conference presentation. Insert sponsor talks and tea/lunch/coffee breaks between talks; durations cascade down so times stay in sync. Save your sequence, then click <b>Regenerate</b> on the panel below to rebuild the PDF.
+              {source === 'auto' && <span className="ml-1 italic">Currently showing an auto-derived sequence from the Programme — save it to lock it in.</span>}
+            </CardDescription>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="outline" onClick={reset} disabled={saving || loading}>Reset from programme</Button>
+            <Button onClick={save} disabled={saving || !dirty} className="bg-indigo-600 hover:bg-indigo-700">
+              {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileUp className="h-4 w-4 mr-1" />}
+              Save sequence
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-5">
+        {loading ? (
+          <div className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 inline animate-spin mr-1" /> Loading…</div>
+        ) : (
+          <div className="space-y-2">
+            <InsertRow index={0} onInsert={(t) => insertAt(0, t)} booths={booths} />
+            {withRunningTime.map((it, idx) => (
+              <div key={it.id}>
+                <div className={`border rounded-lg p-3 flex flex-wrap items-start gap-3 ${it.type === 'talk' ? 'bg-white' : it.type === 'sponsor' ? 'bg-amber-50/50' : 'bg-emerald-50/50'}`}>
+                  <div className="flex flex-col gap-1">
+                    <span className="font-mono text-xs text-muted-foreground">#{idx + 1}</span>
+                    <div className="flex flex-col">
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => move(idx, -1)} disabled={idx === 0}>▲</Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => move(idx, 1)} disabled={idx === items.length - 1}>▼</Button>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-[240px] space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {badge(it.type)}
+                      <span className="text-xs font-mono text-muted-foreground">{fmt(it._start)} – {fmt(it._end)}</span>
+                    </div>
+                    {it.type === 'talk' && (
+                      <div>
+                        <div className="text-sm font-semibold truncate">{it.title || <span className="text-red-600">Talk removed from programme — please delete</span>}</div>
+                        <div className="text-xs text-muted-foreground truncate">{it.sessionTitle} · <span className="font-mono">{it.submissionCode}</span></div>
+                      </div>
+                    )}
+                    {it.type === 'sponsor' && (
+                      <div className="space-y-2">
+                        <Input value={it.title || ''} placeholder="Sponsor talk title" onChange={(e) => updateItem(it.id, { title: e.target.value })} className="text-sm font-semibold" />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] uppercase font-semibold text-amber-800">Sponsor</label>
+                            <select value={it.sponsorBoothId || ''} onChange={(e) => {
+                              const b = booths.find(x => x.id === e.target.value)
+                              updateItem(it.id, { sponsorBoothId: e.target.value || null, sponsorName: b ? b.sponsorName : it.sponsorName })
+                            }} className="w-full border rounded px-2 py-1 text-sm bg-white">
+                              <option value="">— Pick from exhibition booths —</option>
+                              {booths.map(b => <option key={b.id} value={b.id}>{b.sponsorName}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] uppercase font-semibold text-amber-800">Or type sponsor name</label>
+                            <Input value={it.sponsorName || ''} placeholder="Custom sponsor name" onChange={(e) => updateItem(it.id, { sponsorName: e.target.value })} className="text-sm" />
+                          </div>
+                          <Input value={it.speakerName || ''} placeholder="Speaker name" onChange={(e) => updateItem(it.id, { speakerName: e.target.value })} className="text-sm" />
+                          <Input value={it.description || ''} placeholder="Short description of the talk" onChange={(e) => updateItem(it.id, { description: e.target.value })} className="text-sm" />
+                        </div>
+                        <textarea value={it.speakerBio || ''} placeholder="Speaker biography (2-3 sentences)" onChange={(e) => updateItem(it.id, { speakerBio: e.target.value })} rows={2} className="w-full border rounded px-2 py-1 text-sm resize-none bg-white" />
+                      </div>
+                    )}
+                    {it.type === 'break' && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <select value={it.kind || 'tea'} onChange={(e) => updateItem(it.id, { kind: e.target.value })} className="border rounded px-2 py-1 text-sm bg-white">
+                          <option value="tea">🫖 Tea break</option>
+                          <option value="coffee">☕ Coffee break</option>
+                          <option value="lunch">🍽 Lunch</option>
+                          <option value="networking">🤝 Networking</option>
+                          <option value="other">📌 Other</option>
+                        </select>
+                        <Input value={it.title || ''} placeholder="Custom label (optional)" onChange={(e) => updateItem(it.id, { title: e.target.value })} className="text-sm max-w-[280px]" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-col items-end">
+                      <label className="text-[10px] uppercase font-semibold text-muted-foreground">Duration</label>
+                      <div className="flex items-center gap-1">
+                        <Input type="number" min="1" max="480" value={it.durationMin || 15} onChange={(e) => updateItem(it.id, { durationMin: Number(e.target.value) })} className="text-sm w-20" />
+                        <span className="text-xs text-muted-foreground">min</span>
+                      </div>
+                    </div>
+                    <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => remove(idx)} title="Remove from sequence"><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+                <InsertRow index={idx + 1} onInsert={(t) => insertAt(idx + 1, t)} booths={booths} />
+              </div>
+            ))}
+            {items.length === 0 && (
+              <div className="text-sm text-muted-foreground bg-slate-50 rounded-lg p-4 text-center">
+                No items in the sequence yet. Insert a talk, sponsor talk or break using the + buttons above.
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function InsertRow({ index, onInsert, booths }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative flex items-center justify-center h-2 group my-1">
+      <div className="absolute inset-x-0 top-1/2 h-px bg-transparent group-hover:bg-indigo-200 transition-colors" />
+      {!open ? (
+        <button onClick={() => setOpen(true)} className="relative z-10 opacity-40 group-hover:opacity-100 transition-opacity">
+          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+            <Plus className="h-3 w-3" /> Insert here
+          </span>
+        </button>
+      ) : (
+        <div className="relative z-10 flex gap-1 bg-white border border-indigo-200 rounded-full px-2 py-1 shadow-sm">
+          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { onInsert({ type: 'sponsor', durationMin: 15, sponsorName: '', title: '', speakerName: '', description: '', speakerBio: '' }); setOpen(false) }}>💼 Sponsor talk</Button>
+          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { onInsert({ type: 'break', kind: 'tea', title: '', durationMin: 15 }); setOpen(false) }}>🫖 Tea</Button>
+          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { onInsert({ type: 'break', kind: 'coffee', title: '', durationMin: 15 }); setOpen(false) }}>☕ Coffee</Button>
+          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { onInsert({ type: 'break', kind: 'lunch', title: '', durationMin: 60 }); setOpen(false) }}>🍽 Lunch</Button>
+          <Button size="sm" variant="ghost" className="h-6 text-xs text-red-600" onClick={() => setOpen(false)}><X className="h-3 w-3" /></Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Small mic icon for talk badge
+function Mic() { return <span className="mr-1">🎤</span> }
 
 // ============ MERGED CONFERENCE PRESENTATION PANEL ============
 // Admin / Chief Editor generates a single PDF combining all scheduled talks in
