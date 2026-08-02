@@ -1273,9 +1273,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "New rule: DRAFT abstracts only visible to their author (submittedBy) + SYSTEM_ADMIN. GET /api/abstracts (list) silently excludes drafts for non-owners; GET /api/abstracts/:id returns 403 for drafts opened by anyone other than owner/admin."
-    - "New endpoint: PUT /api/abstracts/:id updates a DRAFT owned by the caller (title/body/keywords/theme/reportType/coverLetter/disclosure/authors). Enforces 20-word title, 300-word body limits. Rejects 403 if not owner, 409 if abstract is no longer DRAFT."
-    - "Regression: Author can still POST a new draft, save it, later POST /submit to move DRAFT → SUBMITTED. Submitted abstracts still appear in the editorial office list."
+    - "Bug fix: GET /api/abstracts?scope=assigned now returns EDITOR-scope assignments (editorAssignments) for users with COMMITTEE_MEMBER role (previously they were incorrectly routed to the reviewer branch). Anyone with MANAGING_EDITOR / CHIEF_EDITOR / COMMITTEE_EDITOR / COMMITTEE_MEMBER now sees the abstracts they were assigned as editor. Only EXTERNAL_REVIEWER without any editor role falls through to the reviewer branch."
+    - "Regression: Chief Editor / Managing Editor / Committee Editor assigned to abstracts continue to see them in the workspace. Reviewer /reviewer/assignments endpoint (used by ReviewerWorkspace) unaffected."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2657,5 +2656,117 @@ agent_communication:
       [email] resend ok → admin@scms.io [MEDICAL SCIENTIFIC CONFERENCE] Review received — MEDICAL SCIENTIFIC CONFERENCE-000025
       [email] resend ok → chief@scms.io [MEDICAL SCIENTIFIC CONFERENCE] Review received — MEDICAL SCIENTIFIC CONFERENCE-000025
       ```
+      
+      All backend endpoints working correctly. No code changes made - verification only.
+
+
+  - task: "Committee Editor workspace visibility bug fix (GET /api/abstracts?scope=assigned)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ COMMITTEE EDITOR WORKSPACE VISIBILITY REGRESSION TEST COMPLETE (13/13 tests passed = 100% SUCCESS RATE)
+          
+          **Bug Reported:**
+          A Committee Editor with COMMITTEE_MEMBER role couldn't see abstracts assigned to them in "My Editor Workspace" because GET /api/abstracts?scope=assigned was routing users with COMMITTEE_MEMBER role to the reviewer branch (filtering by reviewAssignments) instead of the editor branch (filtering by editorAssignments).
+          
+          **Fix Applied:**
+          Backend now checks editor roles first (MANAGING_EDITOR, CHIEF_EDITOR, COMMITTEE_EDITOR, COMMITTEE_MEMBER) → returns editorAssignments. Falls through to EXTERNAL_REVIEWER for the reviewer branch. (Lines 625-636 in /app/app/api/[[...path]]/route.js)
+          
+          **Test Scenarios:**
+          
+          ✅ **STEP 1: Setup (3/3 tests passed)**
+          - Logged in as chief@scms.io (CHIEF_EDITOR) ✅
+          - Found 3 suitable abstracts in SUBMITTED/TECHNICAL_CHECK/EDITORIAL_ASSIGNMENT states ✅
+          - Assigned committee@scms.io (COMMITTEE_MEMBER) to abstract MEDICAL SCIENTIFIC CONFERENCE-000033 ✅
+          - Assigned committee2@scms.io (COMMITTEE_EDITOR) to abstract MEDICAL SCIENTIFIC CONFERENCE-000031 ✅
+          - Assigned managing@scms.io (MANAGING_EDITOR) to abstract MEDICAL SCIENTIFIC CONFERENCE-000028 ✅
+          
+          ✅ **STEP 2: Fix verified - Committee Editor with COMMITTEE_MEMBER sees editor assignments (2/2 tests passed)**
+          - Logged in as committee@scms.io (COMMITTEE_MEMBER) ✅
+          - GET /api/abstracts?scope=assigned → 200 with 4 abstracts ✅
+          - Confirmed abstract MEDICAL SCIENTIFIC CONFERENCE-000033 is in the list ✅
+          - Confirmed committee@scms.io does NOT see abstracts assigned to others (abs2, abs3) ✅
+          - **THIS IS THE FIX** - Previously returned empty list, now correctly returns editor assignments ✅
+          
+          ✅ **STEP 3: Regression - Committee Editor with COMMITTEE_EDITOR role (2/2 tests passed)**
+          - Logged in as committee2@scms.io (COMMITTEE_EDITOR) ✅
+          - GET /api/abstracts?scope=assigned → 200 with 2 abstracts ✅
+          - Confirmed abstract MEDICAL SCIENTIFIC CONFERENCE-000031 is in the list ✅
+          - Confirmed committee2@scms.io does NOT see abstracts assigned to committee@scms.io ✅
+          
+          ✅ **STEP 4: Regression - Managing Editor (1/1 test passed)**
+          - Logged in as managing@scms.io (MANAGING_EDITOR + COMMITTEE_EDITOR) ✅
+          - GET /api/abstracts?scope=assigned → 200 with 1 abstract ✅
+          - Confirmed abstract MEDICAL SCIENTIFIC CONFERENCE-000028 is in the list ✅
+          
+          ✅ **STEP 5: Regression - External Reviewer path still works (1/1 test passed)**
+          - Logged in as reviewer1@scms.io (EXTERNAL_REVIEWER) ✅
+          - GET /api/abstracts?scope=assigned → 200 with 2 abstracts ✅
+          - Correctly filters by review assignments (not editor assignments) ✅
+          - Endpoint does not throw error ✅
+          
+          ✅ **STEP 6: Regression - Notification on assign-editor (1/1 test passed)**
+          - GET /api/notifications as committee@scms.io → 200 with 24 notifications ✅
+          - Found ASSIGNMENT notification with title "New editor assignment" ✅
+          - Body: "You have been assigned to MEDICAL SCIENTIFIC CONFERENCE-000033" ✅
+          - Notification created correctly when editor was assigned ✅
+          
+          ✅ **STEP 7: Abstract accessible via detail endpoint (1/1 test passed)**
+          - GET /api/abstracts/{absId} as committee@scms.io → 200 ✅
+          - Committee Editor can access abstract detail for assigned abstract ✅
+          
+          ✅ **STEP 8: Non-regression on other endpoints (2/2 tests passed)**
+          - GET /api/abstracts (no scope) as committee@scms.io → 200 with 13 abstracts ✅
+          - GET /api/reviewer/assignments as committee@scms.io → 200 with 0 assignments ✅
+          - Both endpoints work correctly without errors ✅
+          
+          **Summary:**
+          All 13 tests passed successfully. The bug fix is working correctly:
+          1. Committee Editors with COMMITTEE_MEMBER role now see their editor assignments ✅
+          2. Committee Editors with COMMITTEE_EDITOR role still see their editor assignments ✅
+          3. Managing Editors still see their editor assignments ✅
+          4. External Reviewers still see their review assignments (not editor assignments) ✅
+          5. Notifications are created when editors are assigned ✅
+          6. Assigned editors can access abstract details ✅
+          7. Other endpoints (GET /abstracts, GET /reviewer/assignments) work without errors ✅
+          
+          No code changes made - verification only. Bug fix confirmed working as expected.
+
+
+  - agent: "testing"
+    message: |
+      ✅ COMMITTEE EDITOR WORKSPACE VISIBILITY REGRESSION TEST COMPLETE (13/13 tests passed = 100% SUCCESS RATE)
+      
+      **Test Scope:** Regression test for Committee Editor workspace visibility bug fix per review request.
+      
+      **Bug Fixed:**
+      Committee Editors with COMMITTEE_MEMBER role couldn't see abstracts assigned to them in "My Editor Workspace" because GET /api/abstracts?scope=assigned was routing them to the reviewer branch instead of the editor branch.
+      
+      **Fix Verified:**
+      Backend now checks editor roles first (MANAGING_EDITOR, CHIEF_EDITOR, COMMITTEE_EDITOR, COMMITTEE_MEMBER) → returns editorAssignments. Falls through to EXTERNAL_REVIEWER for reviewer branch. (Lines 625-636 in route.js)
+      
+      **Test Results:**
+      - Step 1: Setup complete - 3 editors assigned to 3 different abstracts ✅
+      - Step 2: committee@scms.io (COMMITTEE_MEMBER) sees assigned abstract (FIX VERIFIED) ✅
+      - Step 3: committee2@scms.io (COMMITTEE_EDITOR) sees assigned abstract (regression OK) ✅
+      - Step 4: managing@scms.io (MANAGING_EDITOR) sees assigned abstract (regression OK) ✅
+      - Step 5: reviewer1@scms.io (EXTERNAL_REVIEWER) path still works (regression OK) ✅
+      - Step 6: ASSIGNMENT notification created on assign-editor (regression OK) ✅
+      - Step 7: Assigned editor can access abstract detail (regression OK) ✅
+      - Step 8: Other endpoints work without errors (regression OK) ✅
+      
+      **Key Findings:**
+      1. The bug fix is working correctly - COMMITTEE_MEMBER role now routes to editor branch ✅
+      2. All existing functionality remains intact - no regressions ✅
+      3. POST /api/abstracts/:id/assign-editor creates notifications correctly ✅
+      4. GET /api/abstracts/:id allows assigned editors to access abstracts ✅
+      5. External reviewer path (scope=assigned) still filters by review assignments ✅
       
       All backend endpoints working correctly. No code changes made - verification only.

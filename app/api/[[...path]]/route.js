@@ -623,11 +623,16 @@ async function handleAbstracts(route, method, request) {
     }
     if (scope === 'mine') where.submittedById = user.id
     if (scope === 'assigned') {
-      // editor or reviewer assignments
-      if (hasRole(user, 'EXTERNAL_REVIEWER', 'COMMITTEE_MEMBER')) {
-        where.reviewAssignments = { some: { reviewerId: user.id } }
-      } else if (hasRole(user, 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR')) {
+      // Prefer editor-scope for any user with an editor role. COMMITTEE_MEMBER is treated
+      // as an editor role too because the UI labels both COMMITTEE_EDITOR and COMMITTEE_MEMBER
+      // as "Committee Editor" — otherwise a Committee Editor with only the COMMITTEE_MEMBER
+      // role would see nothing in "My Editor Workspace" because the reviewer branch would
+      // filter by reviewAssignments instead of editorAssignments. External reviewers still
+      // fall through to the reviewer branch.
+      if (hasRole(user, 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) {
         where.editorAssignments = { some: { editorId: user.id, active: true } }
+      } else if (hasRole(user, 'EXTERNAL_REVIEWER')) {
+        where.reviewAssignments = { some: { reviewerId: user.id } }
       }
     }
     // authors see only their own by default
