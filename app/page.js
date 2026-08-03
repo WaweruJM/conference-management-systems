@@ -1048,7 +1048,7 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
       localStorage.setItem('scmsChatLastSeen', String(Date.now()))
       setChatUnread(0)
     }
-    if (route.name === 'logistics') {
+    if (route.name === 'logistics-chat') {
       localStorage.setItem('scmsLogChatLastSeen', String(Date.now()))
       setLogisticsUnread(0)
     }
@@ -1067,7 +1067,8 @@ function AppShell({ user, setUser, route, setRoute, onLogout }) {
     // Reviewer-focused — placed AFTER My Editor Workspace per editor sidebar preference
     { key: 'reviews', label: 'My Review workspace', icon: Award, show: isReviewer, group: 'reviewer' },
     // Logistics-focused
-    { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
+    { key: 'logistics', label: 'Logistics Boardroom', icon: Building2, show: isLogistics || isAdmin, group: 'logistics' },
+    { key: 'logistics-chat', label: 'Logistics Chat', icon: MessageSquare, show: isLogistics || isAdmin, badge: logisticsUnread, group: 'logistics' },
     // Sponsor Dashboard (sponsors + admin + chief logistics)
     { key: 'sponsors', label: 'Sponsor Dashboard', icon: Award, show: isSponsor || isAdmin || isChiefLogistics, group: 'general' },
     // Virtual Exhibition Hall — sits right below Sponsor Dashboard for sponsors, chief logistics, and admin
@@ -1229,7 +1230,8 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'programme') return <Programme />
   if (route.name === 'templates') return <TemplatesPage user={user} isAdmin={isAdmin} isEditor={isEditor} />
   if (route.name === 'announcements') return <AnnouncementsBoard user={user} channel="EDITORIAL" />
-  if (route.name === 'logistics') return <LogisticsBoardroom user={user} />
+  if (route.name === 'logistics') return <LogisticsBoardroom user={user} setRoute={setRoute} />
+  if (route.name === 'logistics-chat') return <AnnouncementsBoard user={user} channel="LOGISTICS" />
   if (route.name === 'sponsors') return <SponsorsPage user={user} featured={featured} setRoute={setRoute} />
   if (route.name === 'booths') return <ExhibitionBoothsPublic conf={featured} />
   if (route.name === 'sponsorship-tiers') return <SponsorshipTiersAdmin />
@@ -5468,9 +5470,11 @@ function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold">{isLogistics ? 'Logistics Boardroom Chat' : "Editors' Chat & Announcements"}</h1>
+        <h1 className={`text-3xl font-bold flex items-center gap-2 ${isLogistics ? 'text-amber-700' : ''}`}>
+          {isLogistics ? <><MessageSquare className="h-7 w-7" /> Logistics Chat</> : "Editors' Chat & Announcements"}
+        </h1>
         <p className="text-muted-foreground">{isLogistics
-          ? 'Private board for the logistics committee — operations, venue, sponsorship coordination, and other on-the-ground matters.'
+          ? 'Private board for the logistics committee — operations, venue, sponsorship coordination and other on-the-ground matters. Every new post shows an unread badge on the sidebar until you open this page.'
           : 'Common board for editorial office announcements and discussions. Visible to all editors.'}</p>
       </div>
       <Card>
@@ -5478,7 +5482,7 @@ function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
           <div className="max-h-[540px] overflow-auto p-4 space-y-2 bg-slate-50">
             {list.length === 0 ? <div className="text-center text-sm text-muted-foreground py-8">No messages yet. Start the conversation.</div>
             : list.map(a => (
-              <div key={a.id} className={`p-3 rounded-md ${a.authorId === user.id ? 'bg-indigo-100 ml-16' : 'bg-white border mr-16'}`}>
+              <div key={a.id} className={`p-3 rounded-md ${a.authorId === user.id ? (isLogistics ? 'bg-amber-100 ml-16' : 'bg-indigo-100 ml-16') : 'bg-white border mr-16'}`}>
                 <div className="flex justify-between items-center mb-1">
                   <div className="text-xs font-semibold">{a.author?.firstName} {a.author?.lastName}
                     <span className="ml-2 font-normal text-muted-foreground">{ROLE_LABELS[a.author?.roles?.[0]?.role] || ''}</span>
@@ -5491,7 +5495,7 @@ function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
           </div>
           <div className="p-3 border-t bg-white flex gap-2">
             <Input placeholder={isLogistics ? 'Type a logistics message…' : 'Type an announcement or message…'} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() } }} />
-            <Button onClick={post} className="bg-indigo-600 hover:bg-indigo-700"><Send className="h-4 w-4 mr-1" /> Post</Button>
+            <Button onClick={post} className={isLogistics ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}><Send className="h-4 w-4 mr-1" /> Post</Button>
           </div>
         </CardContent>
       </Card>
@@ -5500,7 +5504,7 @@ function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
 }
 
 // ============ LOGISTICS BOARDROOM ============
-function LogisticsBoardroom({ user }) {
+function LogisticsBoardroom({ user, setRoute }) {
   const [members, setMembers] = useState([])
   const [requests, setRequests] = useState([])
   const [selectedRequest, setSelectedRequest] = useState(null)
@@ -5629,8 +5633,23 @@ function LogisticsBoardroom({ user }) {
         </CardContent>
       </Card>
 
-      {/* Chat channel */}
-      <AnnouncementsBoard user={user} channel="LOGISTICS" />
+      {/* Chat channel — now moved to a dedicated "Logistics Chat" page for
+          visibility and unread alerts. Show a pointer card here so members
+          know where to find it. */}
+      <Card className="border-amber-200 bg-amber-50/50">
+        <CardContent className="p-4 flex items-center gap-3 flex-wrap">
+          <div className="h-10 w-10 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0">
+            <MessageSquare className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-[220px]">
+            <div className="font-semibold text-slate-800">Committee chat has moved</div>
+            <div className="text-xs text-muted-foreground">Open <b>Logistics Chat</b> in the sidebar for the private committee board. New messages are counted with an unread badge.</div>
+          </div>
+          <Button className="bg-amber-600 hover:bg-amber-700" onClick={() => setRoute && setRoute({ name: 'logistics-chat' })}>
+            <MessageSquare className="h-4 w-4 mr-1" /> Open Logistics Chat
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }
