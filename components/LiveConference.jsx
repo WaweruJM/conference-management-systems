@@ -36,7 +36,7 @@ async function api(path, opts = {}) {
   return d
 }
 
-export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn }) {
+export default function LiveConference({ conf, isAdmin, isChair, fallback, onNeedsSignIn }) {
   const [status, setStatus] = useState({ isLive: false, checked: false })
   const [tokenData, setTokenData] = useState(null)
   const [error, setError] = useState('')
@@ -177,14 +177,14 @@ export default function LiveConference({ conf, isAdmin, fallback, onNeedsSignIn 
   }
 
   return (
-    <LiveKitConnected tokenData={tokenData} conf={conf} isAdmin={isAdmin} merged={merged}
+    <LiveKitConnected tokenData={tokenData} conf={conf} isAdmin={isAdmin} isChair={isChair} merged={merged}
       onLeave={() => setTokenData(null)}
       onEnd={isAdmin ? () => { toggleLive(false); setTokenData(null) } : null}
     />
   )
 }
 
-function LiveKitConnected({ tokenData, conf, isAdmin, merged, onLeave, onEnd }) {
+function LiveKitConnected({ tokenData, conf, isAdmin, isChair, merged, onLeave, onEnd }) {
   const wrapRef = useRef(null)
   const [showSlides, setShowSlides] = useState(!!merged?.url)
 
@@ -228,7 +228,7 @@ function LiveKitConnected({ tokenData, conf, isAdmin, merged, onLeave, onEnd }) 
         >
           <RoomAudioRenderer />
           {showSlides && merged?.url && (
-            <SlidesPanel merged={merged} isHost={tokenData.role === 'host'} onClose={() => setShowSlides(false)} />
+            <SlidesPanel merged={merged} isHost={tokenData.role === 'host'} isChair={isChair || isAdmin} onClose={() => setShowSlides(false)} />
           )}
           <div className="flex-1 flex flex-col bg-black relative min-w-0">
             <div className="flex-1 relative overflow-hidden">
@@ -248,7 +248,7 @@ function LiveKitConnected({ tokenData, conf, isAdmin, merged, onLeave, onEnd }) 
 // SlidesPanel: renders the merged presentation and syncs the current page across
 // all connected participants using the LiveKit data channel topic "slides".
 // Only the host can advance slides; every viewer follows the host's page.
-function SlidesPanel({ merged, isHost, onClose }) {
+function SlidesPanel({ merged, isHost, isChair, onClose }) {
   const [page, setPage] = useState(1)
   const { send, message } = useDataChannel('slides')
 
@@ -284,15 +284,18 @@ function SlidesPanel({ merged, isHost, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost])
 
+  const showTimer = isHost || (isChair && !isHost)
+
   return (
     <div className="w-[42%] min-w-[380px] max-w-[720px] border-r border-white/10 bg-slate-950 flex flex-col relative">
       <div className="h-9 bg-slate-800 text-white text-xs flex items-center px-3 gap-2 shrink-0">
         <Presentation className="h-3.5 w-3.5" />
         <span className="font-semibold">Slides</span>
         {isHost && <Badge className="bg-indigo-600 text-[9px] px-1 py-0">CONTROLLING</Badge>}
+        {!isHost && isChair && <Badge className="bg-purple-600 text-[9px] px-1 py-0">CHAIR VIEW</Badge>}
         <Button size="sm" variant="ghost" className="text-white hover:bg-white/10 h-6 w-6 p-0 ml-auto" onClick={onClose}><X className="h-3 w-3" /></Button>
       </div>
-      {isHost && <PresenterTimer slideIndex={merged.slideIndex || []} currentPage={page} />}
+      {showTimer && <PresenterTimer slideIndex={merged.slideIndex || []} currentPage={page} isHost={isHost} />}
       <div className="flex-1 overflow-hidden">
         <MergedPresentationViewer
           url={merged.url}
@@ -323,17 +326,36 @@ function SlidesPanel({ merged, isHost, onClose }) {
 // State per talk (keyed by slideIndex.itemId) is stored in a ref so state
 // survives slide navigation and even Live-Conference layout re-renders.
 // ─────────────────────────────────────────────────────────────────────────────
-function PresenterTimer({ slideIndex, currentPage }) {
+function PresenterTimer({ slideIndex, currentPage, isHost }) {
   const stateRef = useRef({})       // { [itemId]: { remainingMs, running, alerts: {t120,t30,t0} } }
   const lastTickAtRef = useRef(null)
   const lastItemIdRef = useRef(null)
   const [, forceRender] = useState(0)
+  const { send, message } = useDataChannel('slide-timer')
 
   const currentItem = slideIndex.find(t => currentPage >= t.coverPage && currentPage <= t.endPage)
+
+  // If we're a chair (isHost=false), we listen to the host's broadcasts and mirror state.
+  useEffect(() => {
+    if (isHost || !message) return
+    try {
+      const raw = new TextDecoder().decode(message.payload)
+      const data = JSON.parse(raw)
+      if (data && data.itemId) {
+        stateRef.current[data.itemId] = {
+          remainingMs: Number(data.remainingMs) || 0,
+          running: !!data.running,
+          alerts: {}, // chairs don't chime
+        }
+        forceRender(v => v + 1)
+      }
+    } catch {}
+  }, [message, isHost])
 
   // Ensure state exists for the active item; auto-start on first entry.
   useEffect(() => {
     if (!currentItem) return
+    if (!isHost) return // Chair receives state via data channel, does not auto-init.
     const id = currentItem.itemId
     if (!stateRef.current[id]) {
       const durMs = new Date(currentItem.endTime) - new Date(currentItem.startTime)
@@ -343,16 +365,15 @@ function PresenterTimer({ slideIndex, currentPage }) {
         alerts: {},
       }
     }
-    // Reset tick anchor when switching items so a partial second isn't
-    // charged against the new item.
     if (lastItemIdRef.current !== id) {
       lastTickAtRef.current = Date.now()
       lastItemIdRef.current = id
     }
-  }, [currentItem?.itemId, currentItem?.endTime, currentItem?.startTime])
+  }, [currentItem?.itemId, currentItem?.endTime, currentItem?.startTime, isHost])
 
-  // 500-ms ticker that decrements the currently-active item.
+  // 500-ms ticker that decrements the currently-active item (host only).
   useEffect(() => {
+    if (!isHost) return
     const iv = setInterval(() => {
       const item = slideIndex.find(t => currentPage >= t.coverPage && currentPage <= t.endPage)
       if (!item) return
@@ -362,21 +383,40 @@ function PresenterTimer({ slideIndex, currentPage }) {
       const delta = now - (lastTickAtRef.current || now)
       lastTickAtRef.current = now
       s.remainingMs -= delta
-      // Chimes (T-120, T-30, T-0), presenter only. Play once per threshold.
       if (s.remainingMs <= 120_000 && !s.alerts.t120) { s.alerts.t120 = true; chime(660, 250) }
       if (s.remainingMs <= 30_000 && !s.alerts.t30) { s.alerts.t30 = true; chime(880, 250) }
       if (s.remainingMs <= 0 && !s.alerts.t0) { s.alerts.t0 = true; chime(440, 700) }
       forceRender(v => v + 1)
     }, 500)
     return () => clearInterval(iv)
-  }, [slideIndex, currentPage])
+  }, [slideIndex, currentPage, isHost])
+
+  // Broadcast timer state to chairs every 2 seconds (host only).
+  useEffect(() => {
+    if (!isHost) return
+    const iv = setInterval(() => {
+      const item = slideIndex.find(t => currentPage >= t.coverPage && currentPage <= t.endPage)
+      if (!item) return
+      const s = stateRef.current[item.itemId]
+      if (!s) return
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({
+          itemId: item.itemId, remainingMs: s.remainingMs, running: s.running, ts: Date.now(),
+        }))
+        send(payload, { reliable: false, topic: 'slide-timer' }).catch(() => {})
+      } catch {}
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [slideIndex, currentPage, isHost, send])
 
   const item = currentItem
   const s = item ? stateRef.current[item.itemId] : null
   if (!item || !s) return (
     <div className="bg-slate-800 text-white text-xs px-3 py-2 flex items-center gap-2 border-b border-slate-700">
       <Clock className="h-3.5 w-3.5 opacity-50" />
-      <span className="opacity-60">Timer will start when you open a talk slide</span>
+      <span className="opacity-60">
+        {isHost ? 'Timer will start when you open a talk slide' : 'Waiting for the presenter to open a talk…'}
+      </span>
     </div>
   )
 
@@ -385,8 +425,9 @@ function PresenterTimer({ slideIndex, currentPage }) {
   const mm = Math.floor(abs / 60_000)
   const ss = String(Math.floor((abs % 60_000) / 1000)).padStart(2, '0')
 
-  const toggle = () => { s.running = !s.running; lastTickAtRef.current = Date.now(); forceRender(v => v + 1) }
+  const toggle = () => { if (!isHost) return; s.running = !s.running; lastTickAtRef.current = Date.now(); forceRender(v => v + 1) }
   const reset = () => {
+    if (!isHost) return
     const durMs = new Date(item.endTime) - new Date(item.startTime)
     s.remainingMs = durMs > 0 ? durMs : 15 * 60_000
     s.alerts = {}; s.running = true
@@ -407,14 +448,18 @@ function PresenterTimer({ slideIndex, currentPage }) {
       <span className="ml-2 text-[10px] opacity-80 truncate max-w-[160px]" title={item.title}>
         {item.type === 'break' ? '☕ ' + item.title : item.type === 'sponsor' ? '💼 ' + item.title : item.title}
       </span>
-      <div className="ml-auto flex gap-1">
-        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={toggle} title={s.running ? 'Pause timer' : 'Resume timer'}>
-          {s.running ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-        </Button>
-        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={reset} title="Reset timer for this item">
-          <RotateCcw className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      {isHost ? (
+        <div className="ml-auto flex gap-1">
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={toggle} title={s.running ? 'Pause timer' : 'Resume timer'}>
+            {s.running ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={reset} title="Reset timer for this item">
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ) : (
+        <span className="ml-auto text-[10px] uppercase opacity-90 font-semibold">👀 Chair view</span>
+      )}
     </div>
   )
 }

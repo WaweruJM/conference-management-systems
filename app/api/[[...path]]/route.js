@@ -1003,10 +1003,12 @@ async function handleAbstracts(route, method, request) {
       await fs.writeFile(filePath, buf)
       const publicPath = `/api/uploads/presentations/${presMatch[1]}/${safeName}`
       const updated = await prisma.abstract.update({ where: { id: presMatch[1] }, data: { presentationPath: publicPath } })
+      await markMergedDeckStale(updated.conferenceId, user.id, `${user.firstName || 'A presenter'} updated the slide deck for ${updated.submissionCode || 'an accepted abstract'}.`).catch(() => {})
       return ok({ abstract: updated })
     }
     // DELETE — clear the field so the author can upload afresh
     const updated = await prisma.abstract.update({ where: { id: presMatch[1] }, data: { presentationPath: null } })
+    await markMergedDeckStale(updated.conferenceId, user.id, `${user.firstName || 'A presenter'} removed the slide deck for ${updated.submissionCode || 'an accepted abstract'}.`).catch(() => {})
     return ok({ abstract: updated })
   }
   const photoMatch = route.match(/^\/abstracts\/([^\/]+)\/author-photo$/)
@@ -1030,9 +1032,11 @@ async function handleAbstracts(route, method, request) {
       await fs.writeFile(filePath, buf)
       const publicPath = `/api/uploads/photos/${photoMatch[1]}/${safeName}`
       const updated = await prisma.abstract.update({ where: { id: photoMatch[1] }, data: { authorPhotoPath: publicPath } })
+      await markMergedDeckStale(updated.conferenceId, user.id, `${user.firstName || 'A presenter'} updated the author photo for ${updated.submissionCode || 'an accepted abstract'}.`).catch(() => {})
       return ok({ abstract: updated })
     }
     const updated = await prisma.abstract.update({ where: { id: photoMatch[1] }, data: { authorPhotoPath: null } })
+    await markMergedDeckStale(updated.conferenceId, user.id, `${user.firstName || 'A presenter'} removed the author photo for ${updated.submissionCode || 'an accepted abstract'}.`).catch(() => {})
     return ok({ abstract: updated })
   }
   const bioMatch = route.match(/^\/abstracts\/([^\/]+)\/biography$/)
@@ -1045,6 +1049,7 @@ async function handleAbstracts(route, method, request) {
     const body = await request.json()
     const bio = (body.biography || '').toString().slice(0, 4000)
     const updated = await prisma.abstract.update({ where: { id: bioMatch[1] }, data: { biography: bio } })
+    await markMergedDeckStale(updated.conferenceId, user.id, `${user.firstName || 'A presenter'} updated the biography for ${updated.submissionCode || 'an accepted abstract'}.`).catch(() => {})
     return ok({ abstract: updated })
   }
 
@@ -1753,6 +1758,56 @@ async function handleProgramme(route, method, request) {
 }
 
 // ============ MERGED CONFERENCE PRESENTATION (PDF) ============
+
+/**
+ * Marks the merged deck for a conference as "out of date" and pings every
+ * Chief Editor / Managing Editor / Admin who oversees the conference.
+ * Called whenever a presenter uploads a new presentation, photo or biography.
+ * We write a lightweight marker file next to merged.pdf so the metadata
+ * endpoint can surface "🟡 Deck out of date" in the UI, and we emit
+ * Notifications so editors see the alert in their tray immediately.
+ * Deduplicated per conference to avoid alert-storms (one ping every 30 min).
+ */
+async function markMergedDeckStale(conferenceId, actorId, reasonText) {
+  if (!conferenceId) return
+  const outDir = path.join(UPLOAD_DIR, 'merged', conferenceId)
+  const markerAbs = path.join(outDir, 'stale-since.json')
+  const now = new Date().toISOString()
+  await fs.mkdir(outDir, { recursive: true })
+  // Debounce: only notify if the last ping was >30 minutes ago (or never).
+  let shouldNotify = true
+  try {
+    const raw = await fs.readFile(markerAbs, 'utf-8')
+    const prev = JSON.parse(raw)
+    if (prev.lastNotifiedAt) {
+      const dt = Date.now() - new Date(prev.lastNotifiedAt).getTime()
+      if (dt < 30 * 60_000) shouldNotify = false
+    }
+  } catch {}
+  await fs.writeFile(markerAbs, JSON.stringify({
+    staleSince: now,
+    lastNotifiedAt: shouldNotify ? now : (await fs.readFile(markerAbs, 'utf-8').then(r => JSON.parse(r).lastNotifiedAt).catch(() => now)),
+    lastReason: reasonText || null,
+  }, null, 2))
+  if (!shouldNotify) return
+  const editors = await prisma.user.findMany({
+    where: { roles: { some: { role: { in: ['SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR'] } } } },
+    select: { id: true },
+  }).catch(() => [])
+  const ids = editors.map(u => u.id).filter(id => id !== actorId)
+  if (ids.length === 0) return
+  await prisma.notification.createMany({
+    data: ids.map(uid => ({
+      userId: uid,
+      type: 'GENERIC',
+      title: '📄 Merged presentation is out of date',
+      body: (reasonText ? reasonText + ' ' : '') + 'Head to the Delegates page and click Regenerate to refresh the deck.',
+      link: '/delegates',
+    })),
+  }).catch(() => {})
+}
+
+
 // - POST /api/conferences/:id/merged-presentation           -> (Admin/Chief Editor) generates & stores merged PDF
 // - GET  /api/conferences/:id/merged-presentation           -> metadata (url, index, generatedAt)
 // - GET  /api/conferences/:id/presentation-sequence         -> ordered sequence (talks + sponsor talks + breaks); auto-derived from programme when never saved
@@ -1883,6 +1938,14 @@ async function handleMergedPresentation(route, method, request) {
       const st = await fs.stat(pdfAbs)
       const raw = await fs.readFile(idxAbs, 'utf-8').catch(() => '{}')
       const parsed = JSON.parse(raw || '{}')
+      let staleSince = null
+      try {
+        const marker = JSON.parse(await fs.readFile(path.join(outDir, 'stale-since.json'), 'utf-8'))
+        // Only surface stale if the marker is NEWER than the last generation
+        if (marker.staleSince && new Date(marker.staleSince) > st.mtime) {
+          staleSince = marker.staleSince
+        }
+      } catch {}
       return {
         url: publicUrl,
         generatedAt: st.mtime.toISOString(),
@@ -1890,9 +1953,16 @@ async function handleMergedPresentation(route, method, request) {
         slideIndex: parsed.slideIndex || [],
         totalPages: parsed.totalPages || 0,
         usedSequence: parsed.usedSequence || 'auto',
+        staleSince,
       }
     } catch {
-      return null
+      // No merged.pdf yet — but perhaps a marker was created (deck was uploaded but never generated).
+      try {
+        const marker = JSON.parse(await fs.readFile(path.join(outDir, 'stale-since.json'), 'utf-8'))
+        return { url: null, staleSince: marker.staleSince || null, slideIndex: [], totalPages: 0, sizeBytes: 0, usedSequence: null, generatedAt: null }
+      } catch {
+        return null
+      }
     }
   }
 
@@ -1951,6 +2021,8 @@ async function handleMergedPresentation(route, method, request) {
     await fs.mkdir(outDir, { recursive: true })
     await fs.writeFile(pdfAbs, Buffer.from(pdfBytes))
     await fs.writeFile(idxAbs, JSON.stringify({ slideIndex, totalPages, generatedAt: new Date().toISOString(), usedSequence }, null, 2))
+    // Regeneration clears the "out of date" marker.
+    await fs.unlink(path.join(outDir, 'stale-since.json')).catch(() => {})
 
     await logAudit({ actorId: user.id, action: 'GENERATE_MERGED_PRESENTATION', entityType: 'Conference', entityId: conferenceId }).catch(() => {})
 
@@ -2165,11 +2237,14 @@ async function handleTechnicalScore(route, method, request) {
 
 // ============ EDITORS' / LOGISTICS ANNOUNCEMENT BOARD ============
 async function handleAnnouncements(route, method, request) {
-  if (route !== '/announcements') return null
+  // /announcements                → list & post
+  // /announcements/members        → list of users allowed in this channel (for @-mentions)
+  // /announcements/attachments    → POST multipart file upload → returns {url,name,mime,sizeBytes}
+  if (!route.startsWith('/announcements')) return null
+
   const user = await getCurrentUser(request)
   if (!user) return err('Unauthenticated', 401)
 
-  // Channel is chosen via ?channel= (defaults to EDITORIAL)
   const url = new URL(request.url)
   const channel = (url.searchParams.get('channel') || 'EDITORIAL').toUpperCase()
   const validChannels = ['EDITORIAL', 'LOGISTICS']
@@ -2179,6 +2254,41 @@ async function handleAnnouncements(route, method, request) {
   const logisticsRoles = ['SYSTEM_ADMIN', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS']
   const allowedRoles = channel === 'LOGISTICS' ? logisticsRoles : editorialRoles
   if (!hasRole(user, ...allowedRoles)) return err(`Only ${channel === 'LOGISTICS' ? 'logistics committee' : 'editors'} may access this channel`, 403)
+
+  // ---- List members allowed in the channel (used by frontend @-mention picker) ----
+  if (route === '/announcements/members' && method === 'GET') {
+    const roleFilter = channel === 'LOGISTICS' ? logisticsRoles : editorialRoles
+    const members = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: roleFilter } } } },
+      select: { id: true, firstName: true, lastName: true, email: true, roles: { select: { role: true } } },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      take: 200,
+    })
+    return ok({ members })
+  }
+
+  // ---- Attachment upload (multipart form) ----
+  if (route === '/announcements/attachments' && method === 'POST') {
+    const form = await request.formData().catch(() => null)
+    if (!form) return err('Multipart form-data required', 400)
+    const file = form.get('file')
+    if (!file || typeof file === 'string') return err('No file uploaded', 400)
+    const buf = Buffer.from(await file.arrayBuffer())
+    const maxBytes = 15 * 1024 * 1024
+    if (buf.length > maxBytes) return err('File too large (max 15 MB)', 400)
+    const origName = String(file.name || 'attachment').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120)
+    const safeName = `${Date.now()}_${origName}`
+    const outDir = path.join(UPLOAD_DIR, 'announcements', channel.toLowerCase())
+    await fs.mkdir(outDir, { recursive: true })
+    await fs.writeFile(path.join(outDir, safeName), buf)
+    const attachment = {
+      url: `/api/uploads/announcements/${channel.toLowerCase()}/${safeName}`,
+      name: origName,
+      mime: file.type || 'application/octet-stream',
+      sizeBytes: buf.length,
+    }
+    return ok({ attachment })
+  }
 
   if (route === '/announcements' && method === 'GET') {
     const list = await prisma.editorAnnouncement.findMany({
@@ -2192,9 +2302,53 @@ async function handleAnnouncements(route, method, request) {
     return ok({ announcements: list.map(a => ({ ...a, author: map[a.authorId] })) })
   }
   if (route === '/announcements' && method === 'POST') {
-    const { body: msgBody } = await request.json()
-    if (!msgBody || !msgBody.trim()) return err('Body required')
-    const a = await prisma.editorAnnouncement.create({ data: { authorId: user.id, body: msgBody.trim(), channel } })
+    const { body: msgBody, mentionUserIds = [], attachments = [] } = await request.json()
+    if ((!msgBody || !msgBody.trim()) && (!attachments || attachments.length === 0)) return err('Body or attachment required')
+    // Sanitise arrays
+    const cleanMentionIds = Array.isArray(mentionUserIds) ? [...new Set(mentionUserIds.map(String).filter(Boolean))].slice(0, 50) : []
+    const cleanAttachments = Array.isArray(attachments) ? attachments.slice(0, 5).map(x => ({
+      url: String(x.url || '').slice(0, 500),
+      name: String(x.name || 'file').slice(0, 200),
+      mime: String(x.mime || 'application/octet-stream').slice(0, 120),
+      sizeBytes: Math.max(0, Number(x.sizeBytes || 0)),
+    })).filter(x => x.url) : []
+
+    const a = await prisma.editorAnnouncement.create({
+      data: {
+        authorId: user.id,
+        body: (msgBody || '').trim(),
+        channel,
+        mentionUserIds: cleanMentionIds,
+        attachments: cleanAttachments.length ? cleanAttachments : null,
+      },
+    })
+
+    // Notify mentioned users (skip self-mentions & users outside channel scope).
+    if (cleanMentionIds.length) {
+      const roleFilter = channel === 'LOGISTICS' ? logisticsRoles : editorialRoles
+      const validMentions = await prisma.user.findMany({
+        where: { id: { in: cleanMentionIds }, roles: { some: { role: { in: roleFilter } } } },
+        select: { id: true },
+      })
+      const ids = validMentions.map(u => u.id).filter(id => id !== user.id)
+      if (ids.length) {
+        const authorName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email
+        const preview = String(msgBody || '').replace(/@\[[^\]]+\]\(([^)]+)\)/g, (_, uid) => {
+          // strip @[Name](userId) markup down to just the name for the preview
+          return `@…`
+        }).slice(0, 140)
+        await prisma.notification.createMany({
+          data: ids.map(uid => ({
+            userId: uid,
+            type: 'MESSAGE',
+            title: `${authorName} mentioned you in ${channel === 'LOGISTICS' ? 'Logistics Chat' : "Editors' Chat"}`,
+            body: preview || '(attachment)',
+            link: channel === 'LOGISTICS' ? '/logistics-chat' : '/editors-chat',
+          })),
+        })
+      }
+    }
+
     return ok({ announcement: a })
   }
   return null

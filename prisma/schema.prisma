@@ -607,11 +607,13 @@ model TechnicalScore {
 }
 
 model EditorAnnouncement {
-  id        String   @id @default(uuid())
-  authorId  String
-  body      String   @db.Text
-  channel   String   @default("EDITORIAL")  // EDITORIAL or LOGISTICS
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  authorId       String
+  body           String   @db.Text
+  channel        String   @default("EDITORIAL")  // EDITORIAL or LOGISTICS
+  mentionUserIds String[] @default([])           // User IDs @-mentioned in the body
+  attachments    Json?                            // Array of {url, name, mime, sizeBytes}
+  createdAt      DateTime @default(now())
   @@index([createdAt])
   @@index([channel])
 }

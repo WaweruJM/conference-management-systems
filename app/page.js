@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -4621,25 +4621,33 @@ function MergedPresentationPanel({ confId }) {
 
   return (
     <>
-    <Card className="mt-6 border-2 border-indigo-200">
-      <CardHeader className="bg-gradient-to-r from-indigo-50 to-purple-50">
+    <Card className={`mt-6 border-2 ${meta?.staleSince ? 'border-amber-400' : 'border-indigo-200'}`}>
+      <CardHeader className={meta?.staleSince ? 'bg-gradient-to-r from-amber-50 to-yellow-50' : 'bg-gradient-to-r from-indigo-50 to-purple-50'}>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <CardTitle className="text-lg flex items-center gap-2"><Presentation className="h-5 w-5 text-indigo-600" /> Merged conference presentation</CardTitle>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Presentation className={`h-5 w-5 ${meta?.staleSince ? 'text-amber-600' : 'text-indigo-600'}`} /> Merged conference presentation
+              {meta?.staleSince && <Badge className="bg-amber-500 text-white ml-1 animate-pulse">🟡 Out of date</Badge>}
+            </CardTitle>
             <CardDescription className="mt-1">
               A single PDF combining every scheduled talk in programme order — cover page with title, author photo, bio and time slot, followed by the presenter's slide deck. Auto-loaded in the Live Conference room so slides sync to every viewer.
+              {meta?.staleSince && (
+                <span className="block mt-2 text-amber-800 font-medium">
+                  ⚠ A presenter uploaded new material since this deck was generated {new Date(meta.staleSince).toLocaleString()}. Click <b>Regenerate</b> to refresh.
+                </span>
+              )}
             </CardDescription>
           </div>
-          <Button onClick={generate} disabled={generating} className="bg-indigo-600 hover:bg-indigo-700 whitespace-nowrap">
+          <Button onClick={generate} disabled={generating} className={meta?.staleSince ? 'bg-amber-600 hover:bg-amber-700 whitespace-nowrap' : 'bg-indigo-600 hover:bg-indigo-700 whitespace-nowrap'}>
             {generating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-            {meta ? 'Regenerate' : 'Generate merged presentation'}
+            {meta?.url ? (meta?.staleSince ? 'Refresh now' : 'Regenerate') : 'Generate merged presentation'}
           </Button>
         </div>
       </CardHeader>
       <CardContent className="p-5">
         {loading ? (
           <div className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 inline animate-spin mr-1" /> Loading…</div>
-        ) : meta ? (
+        ) : (meta && meta.url) ? (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
               <div className="bg-slate-50 rounded-lg p-3">
@@ -5457,16 +5465,154 @@ function PresentationCard({ abstract: initialAbs, user }) {
 }
 
 // ============ ANNOUNCEMENTS BOARD ============
+// Body format for @-mentions: "@[John Doe](userId)" (Slack-style). This lets
+// the backend collect mentionUserIds without a separate parse, and the
+// frontend can render mentions as pill/link. Attachments live in the
+// `attachments` column as [{url,name,mime,sizeBytes}].
 function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
   const [list, setList] = useState([])
   const [text, setText] = useState('')
+  const [members, setMembers] = useState([])
+  const [attaching, setAttaching] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState([])
+  const [mentionQuery, setMentionQuery] = useState(null) // { q, pos } while typing after '@'
+  const [mentionIdx, setMentionIdx] = useState(0)
+  const inputRef = useRef(null)
+  const fileRef = useRef(null)
+
   const refresh = () => api(`/announcements?channel=${channel}`).then(d => setList(d.announcements || [])).catch(() => {})
-  useEffect(() => { refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i) }, [channel])
-  const post = async () => {
-    if (!text.trim()) return
-    try { await api(`/announcements?channel=${channel}`, { method: 'POST', body: JSON.stringify({ body: text }) }); setText(''); refresh() } catch (e) { toast.error(e.message) }
-  }
+  useEffect(() => {
+    refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i)
+  }, [channel])
+  useEffect(() => {
+    api(`/announcements/members?channel=${channel}`).then(d => setMembers(d.members || [])).catch(() => {})
+  }, [channel])
+
   const isLogistics = channel === 'LOGISTICS'
+
+  // Parse "@[Name](userId)" tokens out of body → array of userIds
+  const extractMentions = (body) => {
+    const ids = []
+    body.replace(/@\[[^\]]+\]\(([^)]+)\)/g, (_, uid) => { ids.push(uid); return '' })
+    return [...new Set(ids)]
+  }
+
+  const post = async () => {
+    if (!text.trim() && pendingAttachments.length === 0) return
+    try {
+      await api(`/announcements?channel=${channel}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          body: text,
+          mentionUserIds: extractMentions(text),
+          attachments: pendingAttachments,
+        }),
+      })
+      setText(''); setPendingAttachments([]); refresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  // Detect if user is currently typing a mention (after a bare "@" character)
+  const onChange = (e) => {
+    const v = e.target.value
+    setText(v)
+    const pos = e.target.selectionStart || v.length
+    // Look for the most recent "@" that isn't already part of a completed mention
+    const before = v.slice(0, pos)
+    const m = before.match(/(^|\s)@([\p{L}\d]{0,30})$/u)
+    if (m) { setMentionQuery({ q: m[2].toLowerCase(), pos }); setMentionIdx(0) } else { setMentionQuery(null) }
+  }
+
+  const insertMention = (u) => {
+    const el = inputRef.current
+    if (!el) return
+    const val = text
+    const pos = el.selectionStart || val.length
+    // Find the "@..." we're replacing
+    const before = val.slice(0, pos)
+    const idx = before.lastIndexOf('@')
+    if (idx < 0) return
+    const name = `${u.firstName || ''} ${u.lastName || ''}`.trim()
+    const token = `@[${name}](${u.id}) `
+    const next = val.slice(0, idx) + token + val.slice(pos)
+    setText(next)
+    setMentionQuery(null)
+    setTimeout(() => { el.focus(); const p = idx + token.length; el.setSelectionRange(p, p) }, 0)
+  }
+
+  const filteredMembers = mentionQuery
+    ? members.filter(m => {
+        const n = `${m.firstName || ''} ${m.lastName || ''}`.toLowerCase()
+        const e = (m.email || '').toLowerCase()
+        return m.id !== user.id && (n.includes(mentionQuery.q) || e.includes(mentionQuery.q))
+      }).slice(0, 6)
+    : []
+
+  const onKey = (e) => {
+    if (mentionQuery && filteredMembers.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx(i => (i + 1) % filteredMembers.length); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx(i => (i - 1 + filteredMembers.length) % filteredMembers.length); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(filteredMembers[mentionIdx]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setMentionQuery(null); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() }
+  }
+
+  const uploadAttachment = async (file) => {
+    if (!file) return
+    setAttaching(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const token = getToken()
+      const r = await fetch(`/api/announcements/attachments?channel=${channel}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Upload failed')
+      setPendingAttachments(prev => [...prev, d.attachment].slice(0, 5))
+    } catch (e) { toast.error(e.message) } finally { setAttaching(false); if (fileRef.current) fileRef.current.value = '' }
+  }
+
+  const removePending = (idx) => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))
+
+  // Render body with @[Name](userId) → coloured pill, and preserve newlines
+  const renderBody = (body) => {
+    if (!body) return null
+    const parts = []
+    let i = 0
+    const rx = /@\[([^\]]+)\]\(([^)]+)\)/g
+    let m
+    while ((m = rx.exec(body)) !== null) {
+      if (m.index > i) parts.push(body.slice(i, m.index))
+      const isYou = m[2] === user.id
+      parts.push(
+        <span key={m.index} className={`inline-block px-1.5 py-0.5 rounded-md text-[11px] font-semibold mr-0.5 ${isYou ? 'bg-rose-500 text-white' : (isLogistics ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-indigo-100 text-indigo-800 border border-indigo-200')}`}>
+          @{m[1]}
+        </span>
+      )
+      i = m.index + m[0].length
+    }
+    if (i < body.length) parts.push(body.slice(i))
+    return <span className="text-sm whitespace-pre-wrap">{parts}</span>
+  }
+
+  const renderAttachment = (att, i) => {
+    const isImg = (att.mime || '').startsWith('image/')
+    const kb = (att.sizeBytes / 1024).toFixed(0)
+    return (
+      <a key={i} href={att.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 mt-2 mr-2 px-3 py-2 border rounded-lg bg-white hover:bg-slate-50 hover:shadow-sm transition">
+        {isImg ? <img src={att.url} alt={att.name} className="h-16 w-16 object-cover rounded" /> : <FileText className="h-6 w-6 text-slate-500" />}
+        <div className="text-xs">
+          <div className="font-medium truncate max-w-[220px]">{att.name}</div>
+          <div className="text-muted-foreground">{kb} KB · {att.mime}</div>
+        </div>
+      </a>
+    )
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
@@ -5476,26 +5622,74 @@ function AnnouncementsBoard({ user, channel = 'EDITORIAL' }) {
         <p className="text-muted-foreground">{isLogistics
           ? 'Private board for the logistics committee — operations, venue, sponsorship coordination and other on-the-ground matters. Every new post shows an unread badge on the sidebar until you open this page.'
           : 'Common board for editorial office announcements and discussions. Visible to all editors.'}</p>
+        <p className="text-xs text-muted-foreground mt-1">💡 Type <b>@</b> to mention a member. Attach a file with the paperclip.</p>
       </div>
       <Card>
         <CardContent className="p-0">
           <div className="max-h-[540px] overflow-auto p-4 space-y-2 bg-slate-50">
             {list.length === 0 ? <div className="text-center text-sm text-muted-foreground py-8">No messages yet. Start the conversation.</div>
-            : list.map(a => (
-              <div key={a.id} className={`p-3 rounded-md ${a.authorId === user.id ? (isLogistics ? 'bg-amber-100 ml-16' : 'bg-indigo-100 ml-16') : 'bg-white border mr-16'}`}>
-                <div className="flex justify-between items-center mb-1">
-                  <div className="text-xs font-semibold">{a.author?.firstName} {a.author?.lastName}
-                    <span className="ml-2 font-normal text-muted-foreground">{ROLE_LABELS[a.author?.roles?.[0]?.role] || ''}</span>
+            : list.map(a => {
+              const mine = a.authorId === user.id
+              const mentionedMe = Array.isArray(a.mentionUserIds) && a.mentionUserIds.includes(user.id)
+              return (
+                <div key={a.id} className={`p-3 rounded-md ${mine ? (isLogistics ? 'bg-amber-100 ml-16' : 'bg-indigo-100 ml-16') : 'bg-white border mr-16'} ${mentionedMe && !mine ? 'ring-2 ring-rose-400' : ''}`}>
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="text-xs font-semibold">
+                      {a.author?.firstName} {a.author?.lastName}
+                      <span className="ml-2 font-normal text-muted-foreground">{ROLE_LABELS[a.author?.roles?.[0]?.role] || ''}</span>
+                      {mentionedMe && !mine && <Badge className="ml-2 bg-rose-500 text-white text-[9px]">MENTIONED YOU</Badge>}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{new Date(a.createdAt).toLocaleString()}</div>
                   </div>
-                  <div className="text-[10px] text-muted-foreground">{new Date(a.createdAt).toLocaleString()}</div>
+                  {a.body && renderBody(a.body)}
+                  {Array.isArray(a.attachments) && a.attachments.length > 0 && (
+                    <div className="mt-1 flex flex-wrap">{a.attachments.map((att, i) => renderAttachment(att, i))}</div>
+                  )}
                 </div>
-                <p className="text-sm whitespace-pre-wrap">{a.body}</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
-          <div className="p-3 border-t bg-white flex gap-2">
-            <Input placeholder={isLogistics ? 'Type a logistics message…' : 'Type an announcement or message…'} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); post() } }} />
-            <Button onClick={post} className={isLogistics ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}><Send className="h-4 w-4 mr-1" /> Post</Button>
+          {/* Composer */}
+          <div className="border-t bg-white">
+            {/* Pending attachments preview */}
+            {pendingAttachments.length > 0 && (
+              <div className="p-2 border-b flex flex-wrap gap-2 bg-slate-50/60">
+                {pendingAttachments.map((att, i) => (
+                  <div key={i} className="inline-flex items-center gap-2 px-2 py-1 border rounded-md bg-white text-xs">
+                    <FileText className="h-3 w-3 text-slate-500" />
+                    <span className="truncate max-w-[180px]">{att.name}</span>
+                    <button className="text-red-500 hover:text-red-700" onClick={() => removePending(i)}><X className="h-3 w-3" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="p-3 flex gap-2 relative">
+              <input ref={fileRef} type="file" hidden onChange={(e) => uploadAttachment(e.target.files?.[0])} />
+              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={attaching || pendingAttachments.length >= 5} title="Attach file (max 15 MB, up to 5 per message)">
+                {attaching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              </Button>
+              <div className="flex-1 relative">
+                <Input ref={inputRef} placeholder={isLogistics ? 'Type a logistics message… @mention someone' : 'Type an announcement… @mention someone'} value={text} onChange={onChange} onKeyDown={onKey} />
+                {/* Mention autocomplete popup */}
+                {mentionQuery && filteredMembers.length > 0 && (
+                  <div className="absolute bottom-full left-0 mb-1 bg-white border rounded-lg shadow-lg overflow-hidden z-30 min-w-[240px]">
+                    {filteredMembers.map((m, i) => (
+                      <button key={m.id} onMouseEnter={() => setMentionIdx(i)} onClick={() => insertMention(m)}
+                        className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${i === mentionIdx ? (isLogistics ? 'bg-amber-100' : 'bg-indigo-100') : 'hover:bg-slate-50'}`}>
+                        <div className={`h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-semibold ${isLogistics ? 'bg-amber-600' : 'bg-indigo-600'}`}>
+                          {(m.firstName?.[0] || '').toUpperCase()}{(m.lastName?.[0] || '').toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{m.firstName} {m.lastName}</div>
+                          <div className="text-[10px] text-muted-foreground truncate">{ROLE_LABELS[m.roles?.[0]?.role] || m.email}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <Button onClick={post} className={isLogistics ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}><Send className="h-4 w-4 mr-1" /> Post</Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -7454,6 +7648,10 @@ function LiveConferencePage({ user, setRoute }) {
   useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }).catch(() => {}) }, [])
   const conf = confs.find(c => c.id === confId)
   const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r.role || r))
+  // Chair view (mirror of the presenter timer inside the slides panel) is granted
+  // to every editorial role, so committee editors and managing editors can help
+  // the chair signal when a speaker is over time.
+  const isChair = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'].includes(r.role || r))
 
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
 
@@ -7467,7 +7665,7 @@ function LiveConferencePage({ user, setRoute }) {
           <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <LiveConference conf={conf} isAdmin={isAdmin} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+      <LiveConference conf={conf} isAdmin={isAdmin} isChair={isChair} fallback={<ExhibitionBoothsPublic conf={conf} />} />
     </div>
   )
 }
