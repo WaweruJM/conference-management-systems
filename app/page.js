@@ -5827,23 +5827,9 @@ function LogisticsBoardroom({ user, setRoute }) {
         </CardContent>
       </Card>
 
-      {/* Chat channel — now moved to a dedicated "Logistics Chat" page for
-          visibility and unread alerts. Show a pointer card here so members
-          know where to find it. */}
-      <Card className="border-amber-200 bg-amber-50/50">
-        <CardContent className="p-4 flex items-center gap-3 flex-wrap">
-          <div className="h-10 w-10 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0">
-            <MessageSquare className="h-5 w-5" />
-          </div>
-          <div className="flex-1 min-w-[220px]">
-            <div className="font-semibold text-slate-800">Committee chat has moved</div>
-            <div className="text-xs text-muted-foreground">Open <b>Logistics Chat</b> in the sidebar for the private committee board. New messages are counted with an unread badge.</div>
-          </div>
-          <Button className="bg-amber-600 hover:bg-amber-700" onClick={() => setRoute && setRoute({ name: 'logistics-chat' })}>
-            <MessageSquare className="h-4 w-4 mr-1" /> Open Logistics Chat
-          </Button>
-        </CardContent>
-      </Card>
+      {/* Chat channel has been relocated to a dedicated "Logistics Chat"
+          sidebar page. No pointer card here — members already know via the
+          nav item. */}
     </div>
   )
 }
