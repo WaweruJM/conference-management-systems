@@ -59,6 +59,24 @@ async function rateLimit(key, max, windowMs) {
   b.count += 1
   return true
 }
+// Check-only variant: returns true if the key IS still under `max` without
+// incrementing the counter. Pair with `rateLimitBump` on failure so successful
+// requests do not consume attempts against a legitimate user's budget.
+function rateLimitCheck(key, max, windowMs) {
+  const now = Date.now()
+  const b = _rlBuckets.get(key)
+  if (!b || b.windowStart + windowMs < now) return true
+  return b.count < max
+}
+function rateLimitBump(key, windowMs) {
+  const now = Date.now()
+  const b = _rlBuckets.get(key)
+  if (!b || b.windowStart + windowMs < now) {
+    _rlBuckets.set(key, { windowStart: now, count: 1 })
+  } else {
+    b.count += 1
+  }
+}
 // Prune old buckets every 5 min to prevent unbounded memory growth.
 if (typeof globalThis.__rlPruneStarted === 'undefined') {
   globalThis.__rlPruneStarted = true
@@ -100,6 +118,31 @@ function isDangerousUpload(fileName, mimeType) {
   return false
 }
 
+// SECURITY: server-side password policy — mirrored on the frontend meter.
+// A password is acceptable when: length ≥ 8, at least 2 character classes,
+// not in a small deny-list of common passwords, and doesn't contain the
+// user's name/email as a substring. Returns { acceptable, missing } so the
+// caller can bubble the specific reason back to the UI.
+const COMMON_PASSWORDS_SERVER = new Set([
+  'password', 'password1', 'password123', 'qwerty', 'qwerty123', '12345678',
+  '123456789', '1234567890', 'letmein', 'welcome', 'welcome1', 'admin', 'admin123',
+  'iloveyou', 'monkey', 'dragon', 'football', 'baseball', 'trustno1', 'sunshine',
+  'master', 'shadow', 'passw0rd', 'p@ssw0rd', 'p@ssword', 'p@ssword1',
+  'scms', 'scms2026', 'scms2027', 'conference', 'medical', 'hospital', 'kenya', 'nairobi',
+])
+function evaluatePasswordStrength(pw, ctx = {}) {
+  const missing = []
+  if (typeof pw !== 'string') return { acceptable: false, missing: ['a password'] }
+  if (pw.length < 8) missing.push('at least 8 characters')
+  const classes = [/[a-z]/.test(pw), /[A-Z]/.test(pw), /\d/.test(pw), /[^A-Za-z0-9]/.test(pw)].filter(Boolean).length
+  if (classes < 2) missing.push('a mix of upper/lowercase letters, digits or symbols')
+  const low = pw.toLowerCase()
+  if (COMMON_PASSWORDS_SERVER.has(low)) missing.push('avoid common passwords like "password" or "123456"')
+  const contextParts = [ctx.email, ctx.firstName, ctx.lastName].filter(Boolean).map(s => String(s).toLowerCase())
+  if (contextParts.some(c => c.length >= 3 && low.includes(c))) missing.push('avoid using your name or email in the password')
+  return { acceptable: missing.length === 0, missing }
+}
+
 // SECURITY: canAccessAbstract — the single source of truth for "may this user
 // see the private artefacts (documents, messages, presentation, photo, bio)
 // attached to this abstract?" Called on every read/write path that touches
@@ -130,11 +173,23 @@ async function canAccessAbstract(user, abstractId, { forWrite = false } = {}) {
 
 async function handleAuth(route, method, request) {
   if (route === '/auth/register' && method === 'POST') {
+    // SECURITY: rate-limit new registrations per IP to defeat automated
+    // account creation. Small window for burst protection, larger window for
+    // total daily volume.
+    const ip = getClientIp(request)
+    if (!await rateLimit(`reg:${ip}:hour`, 5, 60 * 60_000)) {
+      return err('Too many sign-ups from this address in the last hour. Please try again shortly. If this is a genuine event registration drive, contact the SCMS editorial office to be temporarily whitelisted.', 429)
+    }
+    if (!await rateLimit(`reg:${ip}:day`, 20, 24 * 60 * 60_000)) {
+      return err('Daily sign-up limit for this address reached. Please try again tomorrow or contact the SCMS editorial office if you need bulk-registration support.', 429)
+    }
     const body = await request.json()
     const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty } = body
     if (!email || !password || !firstName || !lastName) return err('Missing required fields')
-    // SECURITY: enforce basic input hygiene. Reject weak passwords before hashing.
-    if (typeof password !== 'string' || password.length < 8) return err('Password must be at least 8 characters')
+    // SECURITY: enforce strong password policy (same rules as the frontend
+    // meter — reject weak passwords server-side so a bypassed client is safe).
+    const pwCheck = evaluatePasswordStrength(password, { email, firstName, lastName })
+    if (!pwCheck.acceptable) return err('Password is too weak: ' + pwCheck.missing.join(', '))
     if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 200) return err('Invalid email address')
     // Trim, cap lengths
     const clean = (s, max = 120) => (typeof s === 'string' ? s.trim().slice(0, max) : '')
@@ -228,15 +283,27 @@ async function handleAuth(route, method, request) {
     const { email, password } = await request.json()
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return err('Invalid credentials', 401)
     const emailNorm = email.trim().toLowerCase().slice(0, 200)
-    // SECURITY: rate-limit login attempts per IP + per email. The per-email
-    // rule (8/15min) is intentionally tighter than the per-IP rule (20/15min)
-    // to defeat password-spraying: an attacker who cycles IPs but keeps
-    // hammering the same account still hits the account-level lockout first.
     const ip = getClientIp(request)
-    if (!await rateLimit(`login:${ip}`, 20, 15 * 60_000)) return err('Too many login attempts from this address. Please try again in 15 minutes.', 429)
-    if (!await rateLimit(`login-user:${emailNorm}`, 8, 15 * 60_000)) return err('Too many login attempts for this account. Please try again in 15 minutes.', 429)
+    // SECURITY: Only FAILED login attempts consume the rate-limit budget.
+    // We check the current count first (without incrementing) and refuse to
+    // even validate credentials once the limit is exceeded, then bump only if
+    // authentication actually fails. Successful sign-ins never count against
+    // a user's budget, so a legitimate user typing the right password on the
+    // first try can log in freely no matter what the aggregate load looks like.
+    const ipKey = `login:${ip}`, ipMax = 20, ipWin = 15 * 60_000
+    const emailKey = `login-user:${emailNorm}`, emailMax = 8, emailWin = 15 * 60_000
+    const dayKey = `login-user:${emailNorm}:day`, dayMax = 30, dayWin = 24 * 60 * 60_000
+    if (!rateLimitCheck(ipKey, ipMax, ipWin)) return err('Too many failed sign-in attempts from this address. Please try again in 15 minutes.', 429)
+    if (!rateLimitCheck(emailKey, emailMax, emailWin)) return err('Too many failed sign-in attempts for this account. Please try again in 15 minutes, or use "Forgot password" if you cannot remember your password.', 429)
+    if (!rateLimitCheck(dayKey, dayMax, dayWin)) return err('This account has been temporarily locked for the day due to too many failed login attempts. Please use "Forgot password" to reset your password.', 429)
+
     const user = await prisma.user.findUnique({ where: { email: emailNorm }, include: { roles: true, institution: true } })
-    if (!user || !(await verifyPassword(password, user.passwordHash))) return err('Invalid credentials', 401)
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      rateLimitBump(ipKey, ipWin)
+      rateLimitBump(emailKey, emailWin)
+      rateLimitBump(dayKey, dayWin)
+      return err('Invalid credentials', 401)
+    }
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
     const token = signToken({ userId: user.id })
     const c = await cookies(); c.set('scms_token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60*60*24*7 })
@@ -861,6 +928,20 @@ async function handleAbstracts(route, method, request) {
 
   // CREATE
   if (route === '/abstracts' && method === 'POST') {
+    // SECURITY: throttle abstract submissions per user so a compromised or
+    // scripted account can't flood the editorial queue. Rules:
+    //   • Max 5 submissions per hour per user
+    //   • Max 20 submissions per day per user
+    // Editors and admins are exempt from these limits — they may need to
+    // submit on behalf of others in bulk.
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) {
+      if (!await rateLimit(`abs-submit:${user.id}:hour`, 5, 60 * 60_000)) {
+        return err('You have reached the hourly limit of 5 abstract submissions. Please wait before submitting again — genuine users rarely need to submit more than a few abstracts an hour.', 429)
+      }
+      if (!await rateLimit(`abs-submit:${user.id}:day`, 20, 24 * 60 * 60_000)) {
+        return err('You have reached the daily limit of 20 abstract submissions. If you are legitimately submitting on behalf of a large group, please contact the editorial office to be temporarily whitelisted.', 429)
+      }
+    }
     const body = await request.json()
     const { conferenceId, themeId, title, body: absBody, keywords, coverLetter, authors, reportType, disclosureStatement } = body
     if (!conferenceId || !title) return err('conferenceId and title required')
@@ -2370,12 +2451,16 @@ async function handlePasswordReset(route, method, request) {
   if (route === '/auth/reset-password' && method === 'POST') {
     const { token, newPassword } = await request.json()
     if (!token || !newPassword) return err('Token and new password required')
-    // SECURITY: raise minimum password length to 8 chars.
-    if (typeof newPassword !== 'string' || newPassword.length < 8) return err('Password must be at least 8 characters')
     const ip = getClientIp(request)
     if (!await rateLimit(`reset:${ip}`, 10, 60 * 60_000)) return err('Too many attempts. Please try again in an hour.', 429)
     const t = await prisma.passwordResetToken.findUnique({ where: { token } })
     if (!t || t.usedAt || t.expiresAt < new Date()) return err('Invalid or expired token', 400)
+    // Look up the user to include name/email in the password-strength context
+    // (prevents "helenavasquez123" as a password when the account belongs to
+    // Helena Vasquez).
+    const user = await prisma.user.findUnique({ where: { id: t.userId } })
+    const pwCheck = evaluatePasswordStrength(newPassword, { email: user?.email, firstName: user?.firstName, lastName: user?.lastName })
+    if (!pwCheck.acceptable) return err('Password is too weak: ' + pwCheck.missing.join(', '))
     await prisma.user.update({
       where: { id: t.userId },
       data: { passwordHash: await hashPassword(newPassword) },

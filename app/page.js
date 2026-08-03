@@ -264,6 +264,73 @@ function downloadGuidelines() {
   link.click()
 }
 
+// ============ PASSWORD STRENGTH ============
+// Lightweight, dependency-free password scorer. Returns a score 0..4 (0=very
+// weak, 4=very strong), a colour hint and a list of missing requirements
+// the user can act on. The same rules are enforced server-side in
+// /api/auth/register so a client bypass gains nothing.
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password123', 'qwerty', 'qwerty123', '12345678',
+  '123456789', '1234567890', 'letmein', 'welcome', 'welcome1', 'admin', 'admin123',
+  'iloveyou', 'monkey', 'dragon', 'football', 'baseball', 'trustno1', 'sunshine',
+  'master', 'shadow', 'ashley', 'michael', 'jennifer', 'jordan', 'superman',
+  'harley', 'freedom', 'whatever', 'starwars', 'passw0rd', 'p@ssw0rd', 'p@ssword',
+  'p@ssword1', 'scms', 'scms2026', 'scms2027', 'conference', 'medical', 'hospital',
+  'kenya', 'nairobi',
+])
+function passwordScore(password, ctx = {}) {
+  const pw = String(password || '')
+  const missing = []
+  if (!pw) return { score: 0, label: 'Empty', missing: ['Enter a password'], color: 'bg-slate-300' }
+  // Contextual weakness — matching the user's name or email hurts.
+  const contextParts = [ctx.email, ctx.firstName, ctx.lastName].filter(Boolean).map(s => String(s).toLowerCase())
+  const pwLow = pw.toLowerCase()
+  const hasContext = contextParts.some(c => c.length >= 3 && pwLow.includes(c))
+  const hasCommon = COMMON_PASSWORDS.has(pwLow)
+  const classes = [/[a-z]/.test(pw), /[A-Z]/.test(pw), /\d/.test(pw), /[^A-Za-z0-9]/.test(pw)].filter(Boolean).length
+
+  if (pw.length < 8) missing.push('at least 8 characters')
+  if (classes < 2) missing.push('mix of upper/lowercase letters, digits or symbols')
+  if (hasCommon) missing.push('avoid common passwords like "password" or "123456"')
+  if (hasContext) missing.push('avoid using your name or email')
+
+  // Score: length + variety - penalties
+  let score = 0
+  if (pw.length >= 8) score += 1
+  if (pw.length >= 12) score += 1
+  if (classes >= 3) score += 1
+  if (classes === 4 && pw.length >= 12) score += 1
+  if (hasCommon || hasContext || pw.length < 8) score = Math.min(score, 1)
+  if (missing.length === 0 && score < 3) score = 3
+
+  const label = ['Very weak', 'Weak', 'Okay', 'Strong', 'Very strong'][score] || 'Weak'
+  const color = ['bg-red-500', 'bg-red-400', 'bg-amber-400', 'bg-emerald-500', 'bg-emerald-600'][score] || 'bg-red-500'
+  return { score, label, missing, color }
+}
+function PasswordStrengthMeter({ password, email, firstName, lastName }) {
+  const s = passwordScore(password, { email, firstName, lastName })
+  return (
+    <div className="mt-1.5">
+      <div className="flex gap-1 h-1.5">
+        {[0, 1, 2, 3, 4].map(i => (
+          <div key={i} className={`flex-1 rounded ${i <= s.score ? s.color : 'bg-slate-200'} transition-colors`} />
+        ))}
+      </div>
+      <div className="flex justify-between mt-1">
+        <span className={`text-xs font-medium ${s.score <= 1 ? 'text-red-600' : s.score === 2 ? 'text-amber-700' : 'text-emerald-700'}`}>{s.label}</span>
+        {s.score >= 2 && s.missing.length === 0 && <span className="text-[10px] text-emerald-700">✓ Ready to sign up</span>}
+      </div>
+      {s.missing.length > 0 && (
+        <ul className="text-[11px] text-slate-600 mt-1 list-disc list-inside space-y-0.5">
+          {s.missing.map((m, i) => <li key={i}>{m}</li>)}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+
+
 // ============ MAIN APP ============
 function App() {
   const [user, setUser] = useState(null)
@@ -854,12 +921,17 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
     e.preventDefault()
     setError('')
     if (!email || !email.includes('@')) return setError('Please enter a valid email address.')
-    if (!password || password.length < 6) return setError('Password must be at least 6 characters.')
     if (mode === 'register') {
+      // SECURITY: enforce a strong password before registration. The backend
+      // enforces the same rule, but a client-side check keeps the UX snappy.
+      const pw = passwordScore(password, { email, firstName, lastName })
+      if (pw.score < 2) return setError('Password is too weak — ' + pw.missing.join(', '))
       if (!firstName.trim()) return setError('Please enter your first name.')
       if (!lastName.trim()) return setError('Please enter your last name.')
       if (isReviewerInvite && !specialty.trim()) return setError('Please enter your area of specialty.')
       if (attendeeGateClosed) return setError('Attendee registration is not yet open. Please choose Author or Sponsor / Industry / Pharma instead, or check back closer to the conference date.')
+    } else {
+      if (!password || password.length < 6) return setError('Password required.')
     }
     setLoading(true)
     try {
@@ -957,7 +1029,11 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
               </>
             )}
             <div><Label>Email</Label><Input type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }} required readOnly={isReviewerInvite} className={isReviewerInvite ? 'bg-slate-50' : ''} /></div>
-            <div><Label>Password</Label><Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }} required /></div>
+            <div>
+              <Label>Password</Label>
+              <Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }} required />
+              {mode === 'register' && password.length > 0 && <PasswordStrengthMeter password={password} email={email} firstName={firstName} lastName={lastName} />}
+            </div>
           </CardContent>
           <CardFooter className="flex-col gap-2 items-stretch">
             <Button type="submit" disabled={loading || attendeeGateClosed} className="bg-indigo-600 hover:bg-indigo-700">
@@ -6369,7 +6445,11 @@ function ResetPasswordPage({ token, onDone }) {
         <form onSubmit={submit}>
           <CardContent className="space-y-3">
             {error && <div className="p-3 rounded bg-red-50 border border-red-300 text-red-800 text-sm">{error}</div>}
-            <div><Label>New password (min 6 chars)</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
+            <div>
+              <Label>New password (min 8 chars, strong)</Label>
+              <Input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+              {password.length > 0 && <PasswordStrengthMeter password={password} />}
+            </div>
           </CardContent>
           <CardFooter><Button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700">{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Reset password</Button></CardFooter>
         </form>
