@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Loader2, Radio, Video, Maximize2, Send, Users, MessageSquare, Building2, Presentation, X } from 'lucide-react'
+import { Loader2, Radio, Video, Maximize2, Send, Users, MessageSquare, Building2, Presentation, X, Clock, Pause, Play, RotateCcw, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 
@@ -292,6 +292,7 @@ function SlidesPanel({ merged, isHost, onClose }) {
         {isHost && <Badge className="bg-indigo-600 text-[9px] px-1 py-0">CONTROLLING</Badge>}
         <Button size="sm" variant="ghost" className="text-white hover:bg-white/10 h-6 w-6 p-0 ml-auto" onClick={onClose}><X className="h-3 w-3" /></Button>
       </div>
+      {isHost && <PresenterTimer slideIndex={merged.slideIndex || []} currentPage={page} />}
       <div className="flex-1 overflow-hidden">
         <MergedPresentationViewer
           url={merged.url}
@@ -304,6 +305,140 @@ function SlidesPanel({ merged, isHost, onClose }) {
       </div>
     </div>
   )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PresenterTimer
+//
+// Live countdown visible ONLY to the presenter (host). Design decisions the
+// user asked us to lock in:
+//   • Show timer to presenter only — viewers see nothing so they aren't
+//     distracted or pressured.
+//   • When the presenter navigates backwards to a previous talk, the timer
+//     keeps counting from where it left off (does NOT reset) — mirrors real
+//     wall-clock stage timing.
+//   • Audible chimes at T-2:00, T-0:30 and T-0:00 for the presenter only.
+//     Overrun mode counts up in red.
+//
+// State per talk (keyed by slideIndex.itemId) is stored in a ref so state
+// survives slide navigation and even Live-Conference layout re-renders.
+// ─────────────────────────────────────────────────────────────────────────────
+function PresenterTimer({ slideIndex, currentPage }) {
+  const stateRef = useRef({})       // { [itemId]: { remainingMs, running, alerts: {t120,t30,t0} } }
+  const lastTickAtRef = useRef(null)
+  const lastItemIdRef = useRef(null)
+  const [, forceRender] = useState(0)
+
+  const currentItem = slideIndex.find(t => currentPage >= t.coverPage && currentPage <= t.endPage)
+
+  // Ensure state exists for the active item; auto-start on first entry.
+  useEffect(() => {
+    if (!currentItem) return
+    const id = currentItem.itemId
+    if (!stateRef.current[id]) {
+      const durMs = new Date(currentItem.endTime) - new Date(currentItem.startTime)
+      stateRef.current[id] = {
+        remainingMs: durMs > 0 ? durMs : 15 * 60_000,
+        running: true,
+        alerts: {},
+      }
+    }
+    // Reset tick anchor when switching items so a partial second isn't
+    // charged against the new item.
+    if (lastItemIdRef.current !== id) {
+      lastTickAtRef.current = Date.now()
+      lastItemIdRef.current = id
+    }
+  }, [currentItem?.itemId, currentItem?.endTime, currentItem?.startTime])
+
+  // 500-ms ticker that decrements the currently-active item.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const item = slideIndex.find(t => currentPage >= t.coverPage && currentPage <= t.endPage)
+      if (!item) return
+      const s = stateRef.current[item.itemId]
+      if (!s || !s.running) { lastTickAtRef.current = Date.now(); return }
+      const now = Date.now()
+      const delta = now - (lastTickAtRef.current || now)
+      lastTickAtRef.current = now
+      s.remainingMs -= delta
+      // Chimes (T-120, T-30, T-0), presenter only. Play once per threshold.
+      if (s.remainingMs <= 120_000 && !s.alerts.t120) { s.alerts.t120 = true; chime(660, 250) }
+      if (s.remainingMs <= 30_000 && !s.alerts.t30) { s.alerts.t30 = true; chime(880, 250) }
+      if (s.remainingMs <= 0 && !s.alerts.t0) { s.alerts.t0 = true; chime(440, 700) }
+      forceRender(v => v + 1)
+    }, 500)
+    return () => clearInterval(iv)
+  }, [slideIndex, currentPage])
+
+  const item = currentItem
+  const s = item ? stateRef.current[item.itemId] : null
+  if (!item || !s) return (
+    <div className="bg-slate-800 text-white text-xs px-3 py-2 flex items-center gap-2 border-b border-slate-700">
+      <Clock className="h-3.5 w-3.5 opacity-50" />
+      <span className="opacity-60">Timer will start when you open a talk slide</span>
+    </div>
+  )
+
+  const overrun = s.remainingMs < 0
+  const abs = Math.max(0, Math.abs(s.remainingMs))
+  const mm = Math.floor(abs / 60_000)
+  const ss = String(Math.floor((abs % 60_000) / 1000)).padStart(2, '0')
+
+  const toggle = () => { s.running = !s.running; lastTickAtRef.current = Date.now(); forceRender(v => v + 1) }
+  const reset = () => {
+    const durMs = new Date(item.endTime) - new Date(item.startTime)
+    s.remainingMs = durMs > 0 ? durMs : 15 * 60_000
+    s.alerts = {}; s.running = true
+    lastTickAtRef.current = Date.now(); forceRender(v => v + 1)
+  }
+
+  const bg = overrun ? 'bg-red-600 animate-pulse' : s.remainingMs < 120_000 ? 'bg-amber-500' : 'bg-emerald-600'
+
+  return (
+    <div className={`text-white text-xs px-3 py-2 flex items-center gap-2 border-b border-slate-700 shrink-0 ${bg}`}>
+      {overrun ? <AlertTriangle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+      <span className="font-mono text-lg font-bold tracking-tight tabular-nums leading-none">
+        {overrun ? '+' : ''}{mm}:{ss}
+      </span>
+      <span className="text-[9px] uppercase font-semibold opacity-90 leading-none">
+        {overrun ? 'Over' : 'Remaining'}
+      </span>
+      <span className="ml-2 text-[10px] opacity-80 truncate max-w-[160px]" title={item.title}>
+        {item.type === 'break' ? '☕ ' + item.title : item.type === 'sponsor' ? '💼 ' + item.title : item.title}
+      </span>
+      <div className="ml-auto flex gap-1">
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={toggle} title={s.running ? 'Pause timer' : 'Resume timer'}>
+          {s.running ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        </Button>
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white hover:bg-white/10" onClick={reset} title="Reset timer for this item">
+          <RotateCcw className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// Web Audio API "beep" — small, dependency-free chime for the presenter.
+function chime(freq = 660, durationMs = 200) {
+  if (typeof window === 'undefined') return
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (!AC) return
+    const ctx = new AC()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    osc.connect(gain); gain.connect(ctx.destination)
+    const t0 = ctx.currentTime
+    const t1 = t0 + durationMs / 1000
+    gain.gain.setValueAtTime(0.0001, t0)
+    gain.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t1)
+    osc.start(t0); osc.stop(t1 + 0.02)
+    setTimeout(() => ctx.close().catch(() => {}), durationMs + 250)
+  } catch { /* audio blocked or unsupported — silently ignore */ }
 }
 
 function VideoStage() {

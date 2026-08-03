@@ -7432,7 +7432,7 @@ function EditorWorkspace({ setRoute, user }) {
 function LiveConferencePage({ user, setRoute }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
-  useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }) }, [])
+  useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }).catch(() => {}) }, [])
   const conf = confs.find(c => c.id === confId)
   const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r.role || r))
 

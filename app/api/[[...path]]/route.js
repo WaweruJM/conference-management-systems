@@ -1848,7 +1848,7 @@ async function handleMergedPresentation(route, method, request) {
       const items = raw.map((it, i) => {
         const base = {
           id: String(it.id || `item-${Date.now()}-${i}`),
-          durationMin: Math.max(1, Math.min(480, Number(it.durationMin) || 15)),
+          durationMin: Math.max(1, Math.min(480, Number(it.durationMin ?? 15) || 15)),
           startTime: it.startTime || null,
         }
         if (it.type === 'talk') return { ...base, type: 'talk', abstractId: String(it.abstractId || ''), sessionId: it.sessionId || null, sessionTitle: String(it.sessionTitle || '').slice(0, 200) }
