@@ -9,23 +9,121 @@ import crypto from 'crypto'
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/app/uploads'
 
-function ok(data, status = 200) {
-  const res = NextResponse.json(data, { status })
-  res.headers.set('Access-Control-Allow-Origin', '*')
-  res.headers.set('Access-Control-Allow-Credentials', 'true')
+// SECURITY: CORS is intentionally restrictive. The frontend is served from the
+// same origin as this API, so no cross-origin requests should be needed. If a
+// separate origin is required in the future, list it explicitly here rather
+// than using a wildcard.
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+
+function applyCors(res, request) {
+  // Same-origin requests: no Access-Control-Allow-* headers required.
+  const origin = request?.headers?.get?.('origin')
+  if (origin && CORS_ALLOWED_ORIGINS.includes(origin)) {
+    res.headers.set('Access-Control-Allow-Origin', origin)
+    res.headers.set('Access-Control-Allow-Credentials', 'true')
+    res.headers.set('Vary', 'Origin')
+  }
   return res
-}
-function err(msg, status = 400) {
-  return ok({ error: msg }, status)
 }
 
-export async function OPTIONS() {
+function ok(data, status = 200, request = null) {
+  const res = NextResponse.json(data, { status })
+  return applyCors(res, request)
+}
+function err(msg, status = 400) {
+  // SECURITY: sanitised outward-facing error message. Never surface a raw
+  // Prisma / stack trace to the client — always produce a short, safe string.
+  const safe = String(msg || 'Error').slice(0, 240)
+  return NextResponse.json({ error: safe }, { status })
+}
+
+export async function OPTIONS(request) {
   const res = new NextResponse(null, { status: 200 })
-  res.headers.set('Access-Control-Allow-Origin', '*')
   res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
   res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  res.headers.set('Access-Control-Allow-Credentials', 'true')
-  return res
+  return applyCors(res, request)
+}
+
+// ─── Rate limiter ────────────────────────────────────────────────────────────
+// Simple in-memory token bucket keyed by identifier. Good enough for a single
+// Next.js instance (typical deployment). For multi-node scale, back with Redis.
+const _rlBuckets = new Map()
+async function rateLimit(key, max, windowMs) {
+  const now = Date.now()
+  const b = _rlBuckets.get(key)
+  if (!b || b.windowStart + windowMs < now) {
+    _rlBuckets.set(key, { windowStart: now, count: 1 })
+    return true
+  }
+  if (b.count >= max) return false
+  b.count += 1
+  return true
+}
+// Prune old buckets every 5 min to prevent unbounded memory growth.
+if (typeof globalThis.__rlPruneStarted === 'undefined') {
+  globalThis.__rlPruneStarted = true
+  setInterval(() => {
+    const cut = Date.now() - 30 * 60_000
+    for (const [k, b] of _rlBuckets) if (b.windowStart < cut) _rlBuckets.delete(k)
+  }, 5 * 60_000).unref?.()
+}
+
+function getClientIp(request) {
+  try {
+    const h = request.headers
+    return h.get('x-forwarded-for')?.split(',')[0]?.trim()
+      || h.get('x-real-ip')
+      || h.get('cf-connecting-ip')
+      || 'unknown'
+  } catch { return 'unknown' }
+}
+
+// SECURITY (SEC-003): dangerous extensions & MIME types that must never be
+// accepted as user uploads because they can execute in the browser (XSS via
+// SVG, HTML), can be delivered as malware (.exe, .bat, .msi), or bypass MIME
+// sniffing (empty extension). Server-side check applied to every upload path.
+const DANGEROUS_EXT = new Set([
+  '.svg', '.html', '.htm', '.xhtml', '.xml', // active-content in browsers
+  '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx',
+  '.exe', '.bat', '.cmd', '.msi', '.sh', '.ps1', '.jar', '.com', '.scr', '.vbs', '.pif',
+  '.php', '.php5', '.phtml', '.jsp', '.asp', '.aspx',
+])
+const DANGEROUS_MIME = new Set([
+  'image/svg+xml', 'text/html', 'application/xhtml+xml', 'application/xml',
+  'text/javascript', 'application/javascript', 'application/x-msdownload',
+  'application/x-msdos-program', 'application/x-sh', 'application/x-httpd-php',
+])
+function isDangerousUpload(fileName, mimeType) {
+  const ext = String(fileName || '').toLowerCase().match(/\.[a-z0-9]+$/)?.[0] || ''
+  if (DANGEROUS_EXT.has(ext)) return true
+  if (DANGEROUS_MIME.has(String(mimeType || '').toLowerCase())) return true
+  return false
+}
+
+// SECURITY: canAccessAbstract — the single source of truth for "may this user
+// see the private artefacts (documents, messages, presentation, photo, bio)
+// attached to this abstract?" Called on every read/write path that touches
+// abstract-scoped files. Fails closed.
+async function canAccessAbstract(user, abstractId, { forWrite = false } = {}) {
+  if (!user || !abstractId) return false
+  if (hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR')) return true
+  const abs = await prisma.abstract.findUnique({
+    where: { id: abstractId },
+    select: {
+      id: true, submittedById: true, conferenceId: true, currentState: true,
+      authors: { select: { userId: true } },
+      reviewAssignments: { select: { reviewerId: true } },
+      editorAssignments: { select: { editorId: true, active: true } },
+    },
+  }).catch(() => null)
+  if (!abs) return false
+  if (abs.submittedById === user.id) return true
+  if (abs.authors?.some(a => a.userId === user.id)) return true
+  if (!forWrite && abs.reviewAssignments?.some(a => a.reviewerId === user.id)) return true
+  if (abs.editorAssignments?.some(a => a.editorId === user.id && a.active)) return true
+  // Editorial staff for the parent conference
+  if (hasRole(user, 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER')) return true
+  return false
 }
 
 // ============ HANDLERS ============
@@ -35,17 +133,30 @@ async function handleAuth(route, method, request) {
     const body = await request.json()
     const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty } = body
     if (!email || !password || !firstName || !lastName) return err('Missing required fields')
-    const exists = await prisma.user.findUnique({ where: { email } })
+    // SECURITY: enforce basic input hygiene. Reject weak passwords before hashing.
+    if (typeof password !== 'string' || password.length < 8) return err('Password must be at least 8 characters')
+    if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 200) return err('Invalid email address')
+    // Trim, cap lengths
+    const clean = (s, max = 120) => (typeof s === 'string' ? s.trim().slice(0, max) : '')
+    const emailNorm = clean(email, 200).toLowerCase()
+    const exists = await prisma.user.findUnique({ where: { email: emailNorm } })
     if (exists) return err('Email already registered', 409)
-    // Resolve role: if invitation token is present, force EXTERNAL_REVIEWER role
-    let actualRole = role || 'AUTHOR'
+
+    // SECURITY (SEC-001): self-signup is only allowed for AUTHOR / ATTENDEE /
+    // SPONSOR. Every other role — editorial, logistics, admin — must be
+    // assigned by a system administrator via the admin console. We NEVER
+    // trust the `role` field from the browser for privileged assignment.
+    const SELF_SIGNUP_ROLES = ['AUTHOR', 'ATTENDEE', 'SPONSOR']
+    let actualRole = SELF_SIGNUP_ROLES.includes(role) ? role : 'AUTHOR'
+
+    // Reviewer-invitation flow overrides role (server-verified via invite token).
     let matchingInvite = null
     if (inviteToken) {
       matchingInvite = await prisma.reviewerInvitation.findUnique({ where: { token: inviteToken } })
       if (matchingInvite) actualRole = 'EXTERNAL_REVIEWER'
     }
-    // Attendee gate: signing up as a Conference Attendee is only permitted when the
-    // organisers have opened attendee registration on the featured/latest conference.
+
+    // Attendee gate.
     if (actualRole === 'ATTENDEE') {
       const gateConf = await prisma.conference.findFirst({ where: { isFeatured: true } })
         || await prisma.conference.findFirst({ where: { status: { not: 'DRAFT' } }, orderBy: { updatedAt: 'desc' } })
@@ -59,10 +170,11 @@ async function handleAuth(route, method, request) {
     }
     const user = await prisma.user.create({
       data: {
-        email,
+        email: emailNorm,
         passwordHash: await hashPassword(password),
-        firstName, lastName, title, affiliation, country,
-        specialties: specialty ? [specialty] : [],
+        firstName: clean(firstName, 80), lastName: clean(lastName, 80),
+        title: clean(title, 40), affiliation: clean(affiliation, 200), country: clean(country, 80),
+        specialties: specialty ? [clean(specialty, 100)] : [],
         roles: { create: { role: actualRole } },
       },
       include: { roles: true },
@@ -106,18 +218,24 @@ async function handleAuth(route, method, request) {
       })
     } catch (e) { /* non-fatal */ }
     const token = signToken({ userId: user.id })
-    const c = await cookies(); c.set('scms_token', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60*60*24*30 })
+    const c = await cookies(); c.set('scms_token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60*60*24*7 })
     await logAudit({ actorId: user.id, action: 'REGISTER', entityType: 'User', entityId: user.id })
     return ok({ user: sanitizeUser(user), token, welcome: `Welcome, ${user.firstName}! Your registration was successful.` })
   }
 
   if (route === '/auth/login' && method === 'POST') {
     const { email, password } = await request.json()
-    const user = await prisma.user.findUnique({ where: { email }, include: { roles: true, institution: true } })
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return err('Invalid credentials', 401)
+    const emailNorm = email.trim().toLowerCase().slice(0, 200)
+    // SECURITY: rate-limit login attempts per IP + per email.
+    const ip = getClientIp(request)
+    if (!await rateLimit(`login:${ip}`, 20, 15 * 60_000)) return err('Too many login attempts from this address. Please try again in 15 minutes.', 429)
+    if (!await rateLimit(`login-user:${emailNorm}`, 8, 15 * 60_000)) return err('Too many login attempts for this account. Please try again in 15 minutes.', 429)
+    const user = await prisma.user.findUnique({ where: { email: emailNorm }, include: { roles: true, institution: true } })
     if (!user || !(await verifyPassword(password, user.passwordHash))) return err('Invalid credentials', 401)
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
     const token = signToken({ userId: user.id })
-    const c = await cookies(); c.set('scms_token', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60*60*24*30 })
+    const c = await cookies(); c.set('scms_token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60*60*24*7 })
     await logAudit({ actorId: user.id, action: 'LOGIN', entityType: 'User', entityId: user.id })
     return ok({ user: sanitizeUser(user), token })
   }
@@ -585,14 +703,57 @@ async function handleUploadServe(route, method, request) {
   const m = route.match(/^\/uploads\/(.+)$/)
   if (!m) return null
   const relative = m[1]
-  const abs = path.join(UPLOAD_DIR, relative)
-  // Prevent traversal
-  if (!abs.startsWith(UPLOAD_DIR)) return err('Bad path', 400)
+  // SECURITY: harden against path traversal by resolving to an absolute path
+  // and requiring it to remain under UPLOAD_DIR.
+  const abs = path.resolve(UPLOAD_DIR, relative)
+  const root = path.resolve(UPLOAD_DIR)
+  if (!(abs === root || abs.startsWith(root + path.sep))) return err('Bad path', 400)
+
+  // SECURITY (SEC-002): Categorise which uploads are public vs. private.
+  // Public folders serve conference-branding assets. Everything else is
+  // private and requires authentication + authorization.
+  const PUBLIC_PREFIXES = ['hero/', 'booths/', 'announcements/', 'merged/', 'templates/']
+  const isPublic = PUBLIC_PREFIXES.some(p => relative.startsWith(p))
+
+  if (!isPublic) {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    // Files under an abstract folder: relative path is like "<abstractId>/<filename>",
+    // "presentations/<abstractId>/<filename>", or "photos/<abstractId>/<filename>".
+    const parts = relative.split('/')
+    let abstractId = null
+    if (parts.length >= 2 && (parts[0] === 'presentations' || parts[0] === 'photos')) abstractId = parts[1]
+    else if (parts.length >= 2) abstractId = parts[0]
+    if (abstractId) {
+      const allowed = await canAccessAbstract(user, abstractId).catch(() => false)
+      if (!allowed) return err('Forbidden', 403)
+    }
+  }
+
   try {
     const buf = await fs.readFile(abs)
     const ext = path.extname(abs).toLowerCase()
-    const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' }
-    return new NextResponse(buf, { status: 200, headers: { 'Content-Type': mimeMap[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' } })
+    // SECURITY (SEC-003): map only the safe MIME types inline. Anything else
+    // is served as octet-stream with an explicit attachment disposition so it
+    // cannot execute in the browser. .svg is served as text/plain (also as
+    // attachment) — this way any legacy SVG that slipped through pre-fix
+    // uploads still cannot execute scripts on our origin.
+    const inlineMimeMap = {
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.gif': 'image/gif', '.webp': 'image/webp',
+      '.pdf': 'application/pdf',
+    }
+    const inline = inlineMimeMap[ext]
+    const headers = {
+      'Content-Type': inline || 'application/octet-stream',
+      'Cache-Control': isPublic ? 'public, max-age=3600' : 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    }
+    if (!inline) {
+      const safeName = path.basename(abs).replace(/[^\w.\-]/g, '_').slice(0, 120)
+      headers['Content-Disposition'] = `attachment; filename="${safeName}"`
+    }
+    return new NextResponse(buf, { status: 200, headers })
   } catch {
     return err('Not found', 404)
   }
@@ -991,12 +1152,14 @@ async function handleAbstracts(route, method, request) {
     if (method === 'POST') {
       const fd = await request.formData()
       const file = fd.get('file')
-      if (!file) return err('No file')
+      if (!file || typeof file === 'string') return err('No file')
       if (file.size > 50 * 1024 * 1024) return err('Presentation exceeds 50 MB limit')
-      const ext = (file.name.split('.').pop() || '').toLowerCase()
+      const rawName = String(file.name || 'presentation')
+      const ext = (rawName.split('.').pop() || '').toLowerCase()
       if (!['ppt', 'pptx', 'pdf'].includes(ext)) return err('Only PPT, PPTX or PDF files are accepted')
+      if (isDangerousUpload(rawName, file.type)) return err('This file type is not allowed', 400)
       const buf = Buffer.from(await file.arrayBuffer())
-      const safeName = `presentation_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      const safeName = `presentation_${Date.now()}_${rawName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)}`
       const dir = path.join(UPLOAD_DIR, 'presentations', presMatch[1])
       await fs.mkdir(dir, { recursive: true })
       const filePath = path.join(dir, safeName)
@@ -1021,11 +1184,17 @@ async function handleAbstracts(route, method, request) {
     if (method === 'POST') {
       const fd = await request.formData()
       const file = fd.get('file')
-      if (!file) return err('No file')
+      if (!file || typeof file === 'string') return err('No file')
       if (file.size > 2 * 1024 * 1024) return err('Photo exceeds 2 MB limit (please use a passport-size image)')
-      if (!file.type.startsWith('image/')) return err('Please upload a JPG or PNG image')
+      // SECURITY (SEC-003): explicit allow-list — SVG intentionally excluded.
+      const allowedPhotoMime = new Set(['image/jpeg', 'image/png', 'image/webp'])
+      if (!allowedPhotoMime.has(String(file.type || '').toLowerCase())) {
+        return err('Please upload a JPG, PNG or WebP image (SVG is not allowed)', 400)
+      }
+      const rawName = String(file.name || 'photo')
+      if (isDangerousUpload(rawName, file.type)) return err('This file type is not allowed', 400)
       const buf = Buffer.from(await file.arrayBuffer())
-      const safeName = `photo_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      const safeName = `photo_${Date.now()}_${rawName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)}`
       const dir = path.join(UPLOAD_DIR, 'photos', photoMatch[1])
       await fs.mkdir(dir, { recursive: true })
       const filePath = path.join(dir, safeName)
@@ -1265,7 +1434,7 @@ async function handleAbstracts(route, method, request) {
             <b>Reference:</b> ${abs?.submissionCode || ''} — ${(abs?.title || '').replace(/</g,'&lt;')}<br />
             <b>Sender:</b> ${user.firstName} ${user.lastName} (${user.email})<br />
             <b>Sent:</b> ${new Date().toLocaleString()}<br />
-            ${attachments.length > 0 ? `<b>Attachments:</b> ${attachments.map(a => a.filename).join(', ')}` : ''}
+            ${attachments.length > 0 ? `<b>Attachments:</b> ${attachments.map(a => String(a.filename || '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))).join(', ')}` : ''}
           </div>
         </div>
         <div style="text-align: center; padding: 12px; font-size: 11px; color: #94a3b8; background: #f8fafc; border: 1px solid #e2e8f0; border-top: 0;">
@@ -1290,6 +1459,9 @@ async function handleAbstracts(route, method, request) {
   // Documents (list)
   const docListMatch = route.match(/^\/abstracts\/([^\/]+)\/documents$/)
   if (docListMatch && method === 'GET') {
+    // SECURITY (SEC-002): only owners / co-authors / assigned reviewers /
+    // editorial staff may enumerate an abstract's documents.
+    if (!await canAccessAbstract(user, docListMatch[1])) return err('Forbidden', 403)
     const docs = await prisma.document.findMany({
       where: { abstractId: docListMatch[1], isDeleted: false },
       orderBy: { createdAt: 'desc' },
@@ -1299,12 +1471,18 @@ async function handleAbstracts(route, method, request) {
   }
   // Upload document (multipart)
   if (docListMatch && method === 'POST') {
+    if (!await canAccessAbstract(user, docListMatch[1], { forWrite: true })) return err('Forbidden', 403)
     const formData = await request.formData()
     const file = formData.get('file')
     const category = formData.get('category') || 'OTHER'
-    if (!file) return err('No file')
+    if (!file || typeof file === 'string') return err('No file')
+    // SECURITY (SEC-003): enforce size + type allow-list on document uploads.
     const buf = Buffer.from(await file.arrayBuffer())
-    const safeName = `${crypto.randomUUID()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const MAX = 25 * 1024 * 1024 // 25 MB
+    if (buf.length > MAX) return err('File too large (max 25 MB)', 400)
+    const rawName = String(file.name || 'file')
+    if (isDangerousUpload(rawName, file.type)) return err('This file type is not allowed for security reasons. Please upload PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, or common image files.', 400)
+    const safeName = `${crypto.randomUUID()}_${rawName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)}`
     const abstractDir = path.join(UPLOAD_DIR, docListMatch[1])
     await fs.mkdir(abstractDir, { recursive: true })
     const filePath = path.join(abstractDir, safeName)
@@ -1313,9 +1491,9 @@ async function handleAbstracts(route, method, request) {
       data: {
         abstractId: docListMatch[1],
         category,
-        fileName: file.name,
+        fileName: rawName.slice(0, 200),
         storagePath: filePath,
-        mimeType: file.type || null,
+        mimeType: (file.type || 'application/octet-stream').slice(0, 120),
         sizeBytes: buf.length,
         uploadedById: user.id,
       },
@@ -1530,6 +1708,15 @@ async function handleUsers(route, method, request) {
     const role = url.searchParams.get('role')
     const where = {}
     if (role) where.roles = { some: { role } }
+
+    // SECURITY (SEC-004): the full user directory (with emails, affiliations,
+    // last-login) is only exposed to editorial staff and administrators.
+    // Regular users (AUTHORs, ATTENDEEs, SPONSORs, EXTERNAL_REVIEWERs) get
+    // no user directory at all — the frontend paths that need to render a
+    // co-author picker use the abstract-scoped author-search endpoint.
+    if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS')) {
+      return err('Forbidden', 403)
+    }
     const users = await prisma.user.findMany({
       where,
       include: { roles: true, institution: true, _count: { select: { reviewAssignments: true } } },
@@ -1584,7 +1771,10 @@ async function handleNotifications(route, method, request) {
   }
   const readMatch = route.match(/^\/notifications\/([^\/]+)\/read$/)
   if (readMatch && method === 'POST') {
-    await prisma.notification.update({ where: { id: readMatch[1] }, data: { isRead: true } })
+    // SECURITY: scope the update to the caller's own notifications so a user
+    // cannot mark another user's notifications as read.
+    const updated = await prisma.notification.updateMany({ where: { id: readMatch[1], userId: user.id }, data: { isRead: true } })
+    if (updated.count === 0) return err('Not found', 404)
     return ok({ ok: true })
   }
   if (route === '/notifications/read-all' && method === 'POST') {
@@ -2055,12 +2245,24 @@ async function handleDocumentDownload(route, method, request) {
     if (!user) return err('Unauthenticated', 401)
     const doc = await prisma.document.findUnique({ where: { id: dlMatch[1] }, include: { abstract: true } })
     if (!doc || doc.isDeleted) return err('Not found', 404)
-    const buf = await fs.readFile(doc.storagePath)
+    // SECURITY (SEC-002): only owners / co-authors / assigned reviewers /
+    // editorial staff may download a document.
+    if (!await canAccessAbstract(user, doc.abstractId)) return err('Forbidden', 403)
+    // Prevent path-traversal: verify the storagePath still lives under UPLOAD_DIR.
+    const abs = path.resolve(doc.storagePath)
+    const root = path.resolve(UPLOAD_DIR)
+    if (!abs.startsWith(root + path.sep) && abs !== root) return err('Not found', 404)
+    const buf = await fs.readFile(abs).catch(() => null)
+    if (!buf) return err('Not found', 404)
+    // SECURITY (SEC-003): force downloads for potentially-active content types.
+    const safeMime = isDangerousUpload(doc.fileName, doc.mimeType) ? 'application/octet-stream' : (doc.mimeType || 'application/octet-stream')
+    const asciiName = String(doc.fileName || 'download').replace(/[^\w.\-]/g, '_').slice(0, 120)
     const res = new NextResponse(buf, {
       status: 200,
       headers: {
-        'Content-Type': doc.mimeType || 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${doc.fileName}"`,
+        'Content-Type': safeMime,
+        'Content-Disposition': `attachment; filename="${asciiName}"`,
+        'X-Content-Type-Options': 'nosniff',
       },
     })
     return res
@@ -2136,8 +2338,13 @@ async function handleTemplates(route, method, request) {
 async function handlePasswordReset(route, method, request) {
   if (route === '/auth/forgot-password' && method === 'POST') {
     const { email } = await request.json()
-    if (!email) return err('Email required')
-    const user = await prisma.user.findUnique({ where: { email } })
+    if (typeof email !== 'string' || !email) return err('Email required')
+    const emailNorm = email.trim().toLowerCase().slice(0, 200)
+    // SECURITY: rate-limit password reset requests per IP + per email.
+    const ip = getClientIp(request)
+    if (!await rateLimit(`forgot:${ip}`, 10, 60 * 60_000)) return ok({ ok: true, message: 'If that email is registered, a reset link has been sent.' })
+    if (!await rateLimit(`forgot-user:${emailNorm}`, 3, 60 * 60_000)) return ok({ ok: true, message: 'If that email is registered, a reset link has been sent.' })
+    const user = await prisma.user.findUnique({ where: { email: emailNorm } })
     if (user) {
       const token = crypto.randomBytes(32).toString('hex')
       await prisma.passwordResetToken.create({
@@ -2159,7 +2366,10 @@ async function handlePasswordReset(route, method, request) {
   if (route === '/auth/reset-password' && method === 'POST') {
     const { token, newPassword } = await request.json()
     if (!token || !newPassword) return err('Token and new password required')
-    if (newPassword.length < 6) return err('Password must be at least 6 characters')
+    // SECURITY: raise minimum password length to 8 chars.
+    if (typeof newPassword !== 'string' || newPassword.length < 8) return err('Password must be at least 8 characters')
+    const ip = getClientIp(request)
+    if (!await rateLimit(`reset:${ip}`, 10, 60 * 60_000)) return err('Too many attempts. Please try again in an hour.', 429)
     const t = await prisma.passwordResetToken.findUnique({ where: { token } })
     if (!t || t.usedAt || t.expiresAt < new Date()) return err('Invalid or expired token', 400)
     await prisma.user.update({
@@ -2276,6 +2486,8 @@ async function handleAnnouncements(route, method, request) {
     const buf = Buffer.from(await file.arrayBuffer())
     const maxBytes = 15 * 1024 * 1024
     if (buf.length > maxBytes) return err('File too large (max 15 MB)', 400)
+    // SECURITY (SEC-003): block dangerous types entirely.
+    if (isDangerousUpload(file.name, file.type)) return err('This file type is not allowed for security reasons.', 400)
     const origName = String(file.name || 'attachment').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120)
     const safeName = `${Date.now()}_${origName}`
     const outDir = path.join(UPLOAD_DIR, 'announcements', channel.toLowerCase())
@@ -2284,7 +2496,7 @@ async function handleAnnouncements(route, method, request) {
     const attachment = {
       url: `/api/uploads/announcements/${channel.toLowerCase()}/${safeName}`,
       name: origName,
-      mime: file.type || 'application/octet-stream',
+      mime: (file.type || 'application/octet-stream').slice(0, 120),
       sizeBytes: buf.length,
     }
     return ok({ attachment })
@@ -3209,21 +3421,23 @@ async function router(request, { params }) {
     return err(`Route ${route} not found`, 404)
   } catch (e) {
     console.error('API Error', e)
-    // Return concise error messages (avoid leaking stack traces)
-    let msg = (e && e.message) ? String(e.message) : 'Internal server error'
+    // SECURITY: return only sanitised, safe error messages. Prisma internals,
+    // file paths, or stack traces should NEVER be exposed to callers because
+    // they aid attackers in fingerprinting the stack.
+    let msg = 'Server error. Please try again or contact support.'
     if (e && e.code === 'P2002') msg = 'A record with that value already exists.'
     else if (e && e.code === 'P2025') msg = 'Record not found.'
     else if (e && e.code === 'P2003') msg = 'Referenced item does not exist.'
-    else if (msg.includes("Can't reach database")) msg = 'Database temporarily unavailable. Please try again.'
-    else if (msg.includes('Unknown argument')) {
-      const m = msg.match(/Unknown argument `([^`]+)`/)
-      msg = m ? `Server schema mismatch on field "${m[1]}". Please contact support.` : 'Server schema mismatch. Please contact support.'
-    } else if (msg.length > 300) {
-      // Prisma verbose errors: get the first meaningful line
-      const line = msg.split('\n').map(s => s.trim()).find(s => s && !s.startsWith('?') && !s.startsWith('{') && s.length < 200)
-      msg = line || 'Server error. Please try again or contact support.'
+    else if (e && e.code && String(e.code).startsWith('P')) msg = 'Database validation error. Please review your input.'
+    else if (e && typeof e.message === 'string') {
+      const raw = e.message
+      // Preserve short, non-sensitive messages that our own code threw with
+      // clear intent (e.g. "Photo exceeds 2 MB limit"). Anything long or
+      // starting with a Prisma banner is collapsed to a generic string.
+      if (raw.length <= 200 && !/prisma|schema|\.js:\d|Object\.\w+ \(/i.test(raw) && !raw.includes('\n')) {
+        msg = raw
+      }
     }
-    if (!msg || !msg.trim()) msg = 'Server error. Please try again or contact support.'
     return err(msg, 500)
   }
 }
