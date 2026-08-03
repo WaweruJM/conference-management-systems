@@ -143,10 +143,11 @@ async function handleAuth(route, method, request) {
     if (exists) return err('Email already registered', 409)
 
     // SECURITY (SEC-001): self-signup is only allowed for AUTHOR / ATTENDEE /
-    // SPONSOR. Every other role — editorial, logistics, admin — must be
-    // assigned by a system administrator via the admin console. We NEVER
-    // trust the `role` field from the browser for privileged assignment.
-    const SELF_SIGNUP_ROLES = ['AUTHOR', 'ATTENDEE', 'SPONSOR']
+    // INDUSTRY_PARTNER (sponsors). Every other role — editorial, logistics,
+    // admin — must be assigned by a system administrator via the admin
+    // console. We NEVER trust the `role` field from the browser for
+    // privileged assignment.
+    const SELF_SIGNUP_ROLES = ['AUTHOR', 'ATTENDEE', 'INDUSTRY_PARTNER']
     let actualRole = SELF_SIGNUP_ROLES.includes(role) ? role : 'AUTHOR'
 
     // Reviewer-invitation flow overrides role (server-verified via invite token).
@@ -227,7 +228,10 @@ async function handleAuth(route, method, request) {
     const { email, password } = await request.json()
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return err('Invalid credentials', 401)
     const emailNorm = email.trim().toLowerCase().slice(0, 200)
-    // SECURITY: rate-limit login attempts per IP + per email.
+    // SECURITY: rate-limit login attempts per IP + per email. The per-email
+    // rule (8/15min) is intentionally tighter than the per-IP rule (20/15min)
+    // to defeat password-spraying: an attacker who cycles IPs but keeps
+    // hammering the same account still hits the account-level lockout first.
     const ip = getClientIp(request)
     if (!await rateLimit(`login:${ip}`, 20, 15 * 60_000)) return err('Too many login attempts from this address. Please try again in 15 minutes.', 429)
     if (!await rateLimit(`login-user:${emailNorm}`, 8, 15 * 60_000)) return err('Too many login attempts for this account. Please try again in 15 minutes.', 429)
