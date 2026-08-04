@@ -781,9 +781,12 @@ async function handleUploadServe(route, method, request) {
   if (!(abs === root || abs.startsWith(root + path.sep))) return err('Bad path', 400)
 
   // SECURITY (SEC-002): Categorise which uploads are public vs. private.
-  // Public folders serve conference-branding assets. Everything else is
-  // private and requires authentication + authorization.
-  const PUBLIC_PREFIXES = ['hero/', 'booths/', 'announcements/', 'merged/', 'templates/']
+  // Public folders serve conference-branding assets (hero background, site
+  // header logo, venue photo, sponsor booth images, merged conference deck,
+  // email templates, chat attachments). Everything else — author photos,
+  // presentation slides, abstract documents — is private and requires
+  // authentication + authorization.
+  const PUBLIC_PREFIXES = ['hero/', 'header/', 'hotel/', 'booths/', 'announcements/', 'merged/', 'templates/']
   const isPublic = PUBLIC_PREFIXES.some(p => relative.startsWith(p))
 
   if (!isPublic) {
