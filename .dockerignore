@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .dockerignore — keep the build context small & the image clean.
+# Anything listed here is NOT sent to the Docker daemon during `docker build`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Node / build artefacts
+node_modules
+.next
+out
+dist
+build
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store
+
+# Environment & secrets — NEVER bake into the image
+.env
+.env.*
+!.env.example
+
+# Local dev artefacts
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.swp
+*.swo
+coverage
+.nyc_output
+
+# Git & CI
+.git
+.gitignore
+.github
+.gitlab-ci.yml
+
+# Docker itself (avoid recursive copy)
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+.dockerignore
+
+# Runtime data that must live on a volume — never ship in the image
+uploads
+tmp
+*.sqlite
+*.sqlite3
+
+# Emergent / testing / memory scratch files
+.emergent
+memory
+test_result.md
+tests_output.txt
+*.md.bak
+
+# Editor / OS
+*.tmp
+*.bak

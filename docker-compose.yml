@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SCMS — docker-compose
+#
+# Runs a local Postgres container alongside the Next.js app so the whole stack
+# can boot offline with a single `docker compose up`.
+#
+# For production against Neon (or any managed Postgres), override DATABASE_URL
+# via env var / compose override file and comment out the `db` service.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  # ───────────────────────── Postgres 16 ─────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: scms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scms_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-scms}
+    volumes:
+      - scms_pgdata:/var/lib/postgresql/data
+    ports:
+      # Exposed on localhost only for developer tooling (pgAdmin, DBeaver, ...)
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scms} -d ${POSTGRES_DB:-scms}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [scms_net]
+
+  # ───────────────────────── Next.js app ─────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Baked into the client bundle at build time. Override for production.
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
+    image: scms-app:latest
+    container_name: scms-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Runtime env — these override anything baked at build time.
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      UPLOAD_DIR: /app/uploads
+
+      # Database (points at the local Postgres service above by default).
+      DATABASE_URL: >-
+        postgresql://${POSTGRES_USER:-scms}:${POSTGRES_PASSWORD:-scms_dev_password}@db:5432/${POSTGRES_DB:-scms}?schema=public
+
+      # ── Secrets & 3rd-party keys (override in a .env file or the shell) ──
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_TO_A_LONG_RANDOM_STRING}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+
+      # Email (Resend)
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-resend}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-SCMS}
+
+      # LiveKit
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-}
+
+      # Legacy Mongo vars (kept blank — schema fully migrated to Postgres)
+      MONGO_URL: ""
+      DB_NAME: ""
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist user uploads outside the container FS
+      - scms_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/public/config"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks: [scms_net]
+
+volumes:
+  scms_pgdata:
+    name: scms_pgdata
+  scms_uploads:
+    name: scms_uploads
+
+networks:
+  scms_net:
+    name: scms_net
+    driver: bridge
