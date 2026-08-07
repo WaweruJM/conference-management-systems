@@ -44,14 +44,30 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build-time env — supply anything needed at compile time (e.g. NEXT_PUBLIC_*).
-# Do NOT pass secrets here; secrets are injected at runtime.
+# Do NOT pass real secrets here; the placeholders below only exist so that
+# module-level guards (which throw on missing env) don't abort `next build`
+# during page-data collection. Real values are injected at runtime by compose.
 ARG NEXT_PUBLIC_BASE_URL
 ENV NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# ── Build-only placeholders (NOT baked into the runner image) ──────────────
+# Some server modules validate env vars at import time (e.g. JWT_SECRET must
+# be >=32 chars). Next.js touches these modules while collecting page data,
+# so we supply harmless placeholders here. The runner stage overrides them
+# with real values from the environment / docker-compose.
+ENV JWT_SECRET="build_time_placeholder_do_not_use_in_prod_change_me_now"
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
+
 # Generate Prisma client, then compile Next.js. The postinstall/build scripts
 # in package.json already invoke `prisma generate && next build`.
 RUN yarn build
+
+# Fail the stage explicitly if Next.js didn't produce the standalone output.
+# (Safeguard against the previous package.json build script that swallowed
+# non-zero exit codes via trailing `|| true` chains.)
+RUN test -d .next/standalone \
+      || (echo "❌ .next/standalone missing — next build failed silently" && exit 1)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 3: runner — minimal runtime image
