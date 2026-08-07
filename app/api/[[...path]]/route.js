@@ -837,6 +837,73 @@ async function _unused() {
   return null
 }
 
+
+// ============ ABSTRACT BACKUP EMAIL TO CHIEF EDITORS ============
+// Sends every Chief Editor / Managing Editor / System Admin a plain-text copy
+// of the abstract body plus metadata on submission and on every revision.
+// Serves as an off-platform backup so if the SCMS platform is ever lost, all
+// submissions survive in the editorial team's inboxes.
+async function sendAbstractBackupToChiefEditors(abstractId, kindLabel) {
+  try {
+    const abs = await prisma.abstract.findUnique({
+      where: { id: abstractId },
+      include: {
+        conference: { select: { name: true, code: true } },
+        theme: { select: { name: true } },
+        authors: { orderBy: { orderIndex: 'asc' } },
+        versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
+        submittedBy: { select: { firstName: true, lastName: true, email: true } },
+      },
+    })
+    if (!abs) return
+    const editors = await prisma.user.findMany({
+      where: { roles: { some: { role: { in: ['SYSTEM_ADMIN', 'CHIEF_EDITOR', 'MANAGING_EDITOR'] } } } },
+      select: { email: true, firstName: true },
+    })
+    if (editors.length === 0) return
+    const latest = abs.versions[0]
+    const authorsLine = abs.authors.map(a => `${a.fullName}${a.isCorresponding ? ' *' : ''} — ${a.affiliation || '—'}`).join('\n')
+    const subject = `[SCMS BACKUP · ${kindLabel}] ${abs.submissionCode} — ${abs.title}`
+    const escapeHtml = (s) => String(s || '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))
+    const bodyPlain = [
+      `SCMS Off-Platform Backup — ${kindLabel}`,
+      ``,
+      `Conference : ${abs.conference?.name || '-'} (${abs.conference?.code || '-'})`,
+      `Submission : ${abs.submissionCode}`,
+      `Title      : ${abs.title}`,
+      `Type       : ${abs.reportType || '-'}`,
+      `Theme      : ${abs.theme?.name || '-'}`,
+      `State      : ${abs.currentState}`,
+      `Submitted  : ${abs.submittedBy?.firstName || ''} ${abs.submittedBy?.lastName || ''} <${abs.submittedBy?.email || ''}>`,
+      `Version    : ${latest?.versionNumber ?? '-'}  (created ${latest?.createdAt ? new Date(latest.createdAt).toLocaleString('en-GB') : '-'})`,
+      `Keywords   : ${(abs.keywords || []).join(', ')}`,
+      ``,
+      `Authors:`,
+      authorsLine,
+      ``,
+      latest?.coverLetter ? `Cover letter:\n${latest.coverLetter}\n` : '',
+      `Abstract body:`,
+      latest?.body || '(empty)',
+    ].join('\n')
+    const html = `<div style="font-family:system-ui,Arial,sans-serif;font-size:13px;line-height:1.5;color:#111">
+      <div style="background:#4f46e5;color:#fff;padding:10px 14px;border-radius:8px 8px 0 0"><b>SCMS OFF-PLATFORM BACKUP · ${escapeHtml(kindLabel)}</b></div>
+      <div style="border:1px solid #e5e7eb;border-top:0;padding:14px;border-radius:0 0 8px 8px">
+        <div><b>${escapeHtml(abs.submissionCode)}</b> · ${escapeHtml(abs.title)}</div>
+        <div style="color:#64748b;font-size:11px;margin-top:2px">${escapeHtml(abs.conference?.name || '')} · ${escapeHtml(abs.currentState)} · v${latest?.versionNumber ?? '-'}</div>
+        <hr style="border:0;border-top:1px solid #e5e7eb;margin:10px 0"/>
+        <div style="white-space:pre-wrap">${escapeHtml(bodyPlain)}</div>
+      </div>
+      <p style="color:#94a3b8;font-size:11px;margin-top:10px">This is an automated backup of every submission and revision, sent to every Chief Editor / Managing Editor / Admin. Keep for archive purposes.</p>
+    </div>`
+    const { sendEmail } = await import('@/lib/email')
+    // BCC every editor — do not reveal each editor's address to the others.
+    await Promise.all(editors.map(e => sendEmail({ to: e.email, subject, text: bodyPlain, html })))
+  } catch (e) {
+    console.error('sendAbstractBackupToChiefEditors error', e)
+  }
+}
+
+
 async function handleAbstracts(route, method, request) {
   // Skip if route doesn't belong to this handler
   if (!route.startsWith('/abstracts') && !route.startsWith('/documents')) return null
@@ -1177,6 +1244,10 @@ async function handleAbstracts(route, method, request) {
     for (const e of editors) {
       await createNotification(e.userId, 'SUBMISSION_RECEIVED', `New submission ${abs.submissionCode}`, abs.title, `/abstracts/${abs.id}`)
     }
+    // BACKUP COPY: email every Chief Editor (and MANAGING_EDITOR, SYSTEM_ADMIN)
+    // with the full submitted abstract body and metadata. Serves as a
+    // human-readable off-platform backup in case of catastrophic data loss.
+    sendAbstractBackupToChiefEditors(abs.id, 'SUBMISSION').catch(e => console.error('chief editor backup failed', e))
     return ok({ abstract: updated })
   }
 
@@ -1203,6 +1274,9 @@ async function handleAbstracts(route, method, request) {
     if (['MAJOR_REVISION', 'MINOR_REVISION'].includes(abs.currentState)) {
       await transitionState(abs.id, 'REVISION_SUBMITTED', user.id, `Revision v${nextVer} submitted`)
     }
+    // BACKUP COPY: email every Chief Editor with the new revision so they have
+    // an off-platform copy of every version of every abstract.
+    sendAbstractBackupToChiefEditors(abs.id, `REVISION v${nextVer}`).catch(e => console.error('chief editor backup failed', e))
     return ok({ version: v })
   }
 

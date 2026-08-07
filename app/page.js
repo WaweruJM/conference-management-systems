@@ -1745,6 +1745,94 @@ function EmptyState({ label, onAction, actionLabel }) {
 }
 
 // ============ SUBMIT ABSTRACT (enhanced per guidelines) ============
+
+// ============ ABSTRACT BODY SECTIONS ============
+// Renders 6 labelled textareas that behind the scenes concatenate to a single
+// `body` string with ALL-CAPS headings, matching the format the PDF generator
+// and reviewer view already understand. On mount we parse the existing body
+// into sections (best-effort) so returning to a saved draft preserves each
+// author's earlier text in the correct box.
+const BODY_SECTION_LABELS = ['Introduction / Background', 'Methodology', 'Results', 'Analysis', 'Discussion', 'Recommendations']
+function parseBodyIntoSections(body) {
+  const out = Object.fromEntries(BODY_SECTION_LABELS.map(k => [k, '']))
+  if (!body || !body.trim()) return out
+  // Split on any of our labels as headings (case insensitive, allow "and", "/", "&")
+  const raw = String(body)
+  const patterns = BODY_SECTION_LABELS.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\/|\s+|and|&/gi, '[\\s/&]*(?:and)?[\\s]*'))
+  const rx = new RegExp(`^\\s*(?:#+\\s*)?(${patterns.join('|')})\\s*:?\\s*$`, 'gim')
+  const marks = []
+  let m
+  while ((m = rx.exec(raw)) !== null) {
+    marks.push({ label: m[1], start: m.index, endHeading: m.index + m[0].length })
+  }
+  if (marks.length === 0) {
+    // Legacy body — dump everything into "Introduction / Background" so nothing is lost.
+    out['Introduction / Background'] = raw.trim()
+    return out
+  }
+  const normalize = (heading) => {
+    const h = heading.toLowerCase().replace(/[^a-z]/g, '')
+    if (h.startsWith('introduction') || h.startsWith('background')) return 'Introduction / Background'
+    if (h.startsWith('method')) return 'Methodology'
+    if (h.startsWith('result')) return 'Results'
+    if (h.startsWith('analysis')) return 'Analysis'
+    if (h.startsWith('discussion') || h.startsWith('conclusion')) return 'Discussion'
+    if (h.startsWith('recommend')) return 'Recommendations'
+    return 'Introduction / Background'
+  }
+  for (let i = 0; i < marks.length; i++) {
+    const cur = marks[i]
+    const next = marks[i + 1]
+    const content = raw.slice(cur.endHeading, next ? next.start : raw.length).trim()
+    const key = normalize(cur.label)
+    out[key] = (out[key] ? out[key] + '\n\n' + content : content).trim()
+  }
+  return out
+}
+function serialiseSectionsToBody(sections) {
+  return BODY_SECTION_LABELS
+    .map(k => sections[k]?.trim() ? `${k.toUpperCase()}\n${sections[k].trim()}` : '')
+    .filter(Boolean)
+    .join('\n\n')
+}
+function AbstractBodySections({ body, onChange, sections: hints, invalid = false, rows = 5 }) {
+  const [values, setValues] = useState(() => parseBodyIntoSections(body))
+  // If the parent body changes externally (e.g. Word-document import), reparse.
+  const [lastExternalBody, setLastExternalBody] = useState(body)
+  useEffect(() => {
+    if (body !== lastExternalBody) {
+      const own = serialiseSectionsToBody(values)
+      if (body !== own) {
+        setValues(parseBodyIntoSections(body))
+      }
+      setLastExternalBody(body)
+    }
+  }, [body])
+  const setSection = (k, v) => {
+    const next = { ...values, [k]: v }
+    setValues(next)
+    onChange(serialiseSectionsToBody(next))
+  }
+  const hintMap = Object.fromEntries((hints || []).map(([k, h]) => [k, h]))
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Type each section of your abstract in its own box below. Section headings are added automatically when we save.</p>
+      {BODY_SECTION_LABELS.map(k => (
+        <div key={k}>
+          <div className="flex items-baseline justify-between mb-1">
+            <label className="text-sm font-semibold text-slate-800">{k}</label>
+            <span className="text-[10px] text-muted-foreground">{(values[k] || '').trim().split(/\s+/).filter(Boolean).length} words</span>
+          </div>
+          <Textarea rows={rows} value={values[k] || ''} onChange={e => setSection(k, e.target.value)}
+            className={invalid ? 'border-red-300' : ''}
+            placeholder={hintMap[k] || ''} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+
 function SubmitAbstract({ setRoute, user, draftId }) {
   const [conferences, setConferences] = useState([])
   const [conferenceId, setConferenceId] = useState('')
@@ -1918,21 +2006,27 @@ function SubmitAbstract({ setRoute, user, draftId }) {
     } finally { setLoading(false) }
   }
 
+  // NOTE: `body` is stored as a single concatenated string in the DB so the
+  // rest of the system (double-blind PDF, reviewer view, merged deck, etc.)
+  // does not need changes. Authors edit it via 6 labelled sub-textareas
+  // below (Introduction/Background, Methodology, Results, Analysis,
+  // Discussion, Recommendations) which we serialise/parse using clear ALL-CAPS
+  // headings.
   const SECTION_HINTS_ORIG = [
-    ['Background', 'Crucial background to enable readers to understand your research from the onset.'],
-    ['Objective', 'Aligned with the research problem/gap; must be SMART.'],
-    ['Methods', 'Study design, population, sampling, data collection, analysis.'],
-    ['Results', 'Summary of major findings with p-values where appropriate.'],
-    ['Conclusion', 'Brief interpretation; key take-home message.'],
-    ['Recommendation', 'Broader implications, future research.'],
+    ['Introduction / Background', 'Crucial background to enable readers to understand your research from the onset. Include the problem, rationale, and objective (SMART).'],
+    ['Methodology', 'Study design, population, sampling, data collection procedures. Be concise but reproducible.'],
+    ['Results', 'Summary of major findings with p-values, effect sizes and confidence intervals where appropriate.'],
+    ['Analysis', 'Statistical or thematic analysis approach. Note any assumptions or corrections applied.'],
+    ['Discussion', 'Interpret the findings, compare with the literature, and highlight novelty and limitations.'],
+    ['Recommendations', 'Broader implications for clinical practice, policy, and future research.'],
   ]
   const SECTION_HINTS_CASE = [
-    ['Background', 'Concise rationale — what is known/unknown, what makes it notable.'],
-    ['Objective', 'Aim of the case report/series.'],
-    ['Case Presentation', 'Logical/chronological description. Summarise each case.'],
-    ['Case Discussion', 'Interpretation, comparison with literature, novelty.'],
-    ['Conclusion', 'Main clinical message/takeaway.'],
-    ['Recommendation', 'Practical suggestions — research, clinical practice, policy.'],
+    ['Introduction / Background', 'Concise rationale — what is known / unknown, what makes this case notable.'],
+    ['Methodology', 'Case identification, work-up, investigations and consent process.'],
+    ['Results', 'Chronological case presentation — history, examination, investigations, management, outcome.'],
+    ['Analysis', 'Interpretation of the clinical findings and reasoning behind the diagnosis / management.'],
+    ['Discussion', 'Comparison with published cases, novelty, learning points, limitations.'],
+    ['Recommendations', 'Practical suggestions for research, clinical practice, or policy.'],
   ]
   const sectionHints = reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES' ? SECTION_HINTS_CASE : SECTION_HINTS_ORIG
 
@@ -2124,9 +2218,7 @@ function SubmitAbstract({ setRoute, user, draftId }) {
           <CardContent className="pt-4">
             <div className="grid md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <Textarea rows={12} value={body} onChange={e => setBody(e.target.value)}
-                  className={!bodyValid ? 'border-red-400' : ''}
-                  placeholder={`Structure your abstract with:\n\n${sectionHints.map(([h, hint]) => `${h}: ${hint}`).join('\n\n')}`} />
+                <AbstractBodySections body={body} onChange={setBody} sections={sectionHints} invalid={!bodyValid} />
               </div>
               <div className="border-2 border-dashed rounded-lg p-3 bg-indigo-50/50 border-indigo-300">
                 <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><FileUp className="h-4 w-4 text-indigo-600" /> Or upload Word document</div>
@@ -2752,7 +2844,7 @@ function RevisionUpload({ abs, onDone }) {
       <CardHeader><CardTitle className="flex items-center gap-2"><AlertCircle className="h-5 w-5 text-amber-600" /> Revision requested</CardTitle><CardDescription>Upload a new version of your abstract</CardDescription></CardHeader>
       <CardContent className="space-y-2">
         <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Revised title" />
-        <Textarea value={body} onChange={e => setBody(e.target.value)} rows={8} placeholder="Revised abstract body" />
+        <AbstractBodySections body={body} onChange={setBody} sections={undefined} rows={4} />
         <Button onClick={submit}>Submit revision</Button>
       </CardContent>
     </Card>
@@ -3853,7 +3945,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
     setError('')
     if (type === 'ATTENDEE') {
       if (!conf.attendeeRegistrationOpen) return setError('Attendee registration is not yet open. The organisers will open it approximately one month before the conference. Please try again later, or register as an Author or Sponsor.')
-      if (!form.fullName || !form.rank || !form.unit || !form.affiliation) return setError('Full name, rank, unit and affiliation are required (used on certificate & name tag).')
+      if (!form.fullName || !form.unit || !form.affiliation) return setError('Full name, unit and affiliation are required (used on certificate & name tag).')
     }
     if (type === 'SPONSOR') {
       if (!form.companyName || !form.industry || !form.companyAddress) return setError('Company name, industry and address are required.')
@@ -3917,7 +4009,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
               </div>
               <div><Label>Full name (as it should appear on certificate & name tag) *</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="e.g. Jane W. Doe" /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Rank / Position *</Label><Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar" /></div>
+                <div><Label>Rank / Position <span className="text-muted-foreground font-normal">(optional)</span></Label><Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar — leave blank if not applicable" /></div>
                 <div><Label>Unit / Department *</Label><Input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="e.g. Cardiology" /></div>
               </div>
               <div><Label>Affiliation (Hospital / Institution) *</Label><Input value={form.affiliation} onChange={e => setForm({ ...form, affiliation: e.target.value })} placeholder="e.g. Nairobi Hospital" /></div>
