@@ -11,7 +11,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: wawerujm/conference-management-systems
 
 jobs:
 
@@ -46,8 +46,8 @@ jobs:
         context: .
         push: true
         tags: |
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ github.sha }}
+          ghcr.io/${{ env.IMAGE_NAME }}:latest
+          ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
         labels: ${{ steps.meta.outputs.labels }}
 
