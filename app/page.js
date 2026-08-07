@@ -465,59 +465,12 @@ function PublicHome({ featured, conferences, onRegister, onLogin }) {
         </section>
       )}
 
-      {/* Modules */}
-      <section className="container mx-auto px-6 py-16">
-        <h2 className="text-2xl font-bold mb-6">Comprehensive conference platform</h2>
-        <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {[
-            { icon: Globe, label: 'Public website' },
-            { icon: ShieldCheck, label: 'Authentication & RBAC' },
-            { icon: FileText, label: 'Author portal' },
-            { icon: ClipboardCheck, label: 'Editorial office' },
-            { icon: Users, label: 'Editor workspace' },
-            { icon: Award, label: 'Reviewer workspace' },
-            { icon: GraduationCap, label: 'Programme committee' },
-            { icon: Upload, label: 'Presentation management' },
-            { icon: Building2, label: 'Conference administration' },
-            { icon: BarChartIcon, label: 'Reporting' },
-            { icon: Sparkles, label: 'Analytics' },
-            { icon: FileText, label: 'Document archive' },
-          ].map(({ icon: Icon, label }) => (
-            <div key={label} className="p-4 rounded-lg border bg-white hover:shadow-md transition">
-              <Icon className="h-5 w-5 text-indigo-600 mb-2" />
-              <div className="font-medium text-sm">{label}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* Modules & directory sections removed from the public homepage per
+          product decision — these are internal signals not meant for public
+          visitors. Admins see them inside the app once signed in. */}
 
-      {conferences.length > 0 && (
-        <section className="container mx-auto px-6 pb-16">
-          <h2 className="text-2xl font-bold mb-6">All conferences</h2>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {conferences.map(c => (
-              <Card key={c.id} className="hover:shadow-lg transition">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <Badge className="bg-indigo-100 text-indigo-800 hover:bg-indigo-100">{c.code}</Badge>
-                    <Badge variant="outline">{stateLabel(c.status)}</Badge>
-                  </div>
-                  <CardTitle className="text-lg mt-2">{c.name}</CardTitle>
-                  <CardDescription>{c.venue}{c.city && `, ${c.city}`}{c.country && `, ${c.country}`}</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground space-y-1">
-                  <div>{formatDateRange(c.startDate, c.endDate)}</div>
-                  <div>{c._count?.abstracts || 0} submissions · {c.themes?.length || 0} themes</div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <div className="text-center text-sm text-muted-foreground py-6 border-t">
-        Demo accounts (password: <code className="bg-slate-100 px-1.5 py-0.5 rounded">password123</code>):{' '}
-        admin@scms.io · chief@scms.io · committee@scms.io · reviewer1@scms.io · author@scms.io · chief.logistics@scms.io · sponsor@scms.io
+      <div className="text-center text-xs text-muted-foreground py-6 border-t">
+        © {new Date().getFullYear()} Scientific Conference Management System
       </div>
     </div>
   )
@@ -883,7 +836,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
     return { first: parts[0] || '', last: parts.slice(1).join(' '), title }
   }
   const parsed = parseName(reviewerInvite?.fullName)
-  const [email, setEmail] = useState(mode === 'login' ? 'managing@scms.io' : (reviewerInvite?.email || ''))
+  const [email, setEmail] = useState(mode === 'login' ? '' : (reviewerInvite?.email || ''))
   const [password, setPassword] = useState(mode === 'login' ? 'password123' : '')
   const [firstName, setFirstName] = useState(parsed.first)
   const [lastName, setLastName] = useState(parsed.last)
