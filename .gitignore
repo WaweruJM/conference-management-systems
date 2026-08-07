@@ -89,3 +89,30 @@ node_modules/@next/swc-linux-arm64-musl/next-swc.linux-arm64-musl.node
 credentials.json
 *.key
 .credentials
+
+# ─────────────────────────────────────────────────────────────
+# Dev / test artefacts — NOT needed for build, run, or deploy
+# ─────────────────────────────────────────────────────────────
+# Legacy pytest / verification scripts (testing-agent only)
+backend_test*.py
+backend_verification_test.py
+bugfix_verification_test.py
+security_hardening_test.py
+test_*.py
+*_test.py
+check_decline_notification.py
+tests/
+test_reports/
+
+# Testing-agent report + scratch memory (may hold credentials)
+test_result.md
+memory/
+.ruff_cache/
+.pytest_cache/
+tests_output.txt
+
+# Runtime user uploads — MUST live on a volume, never in git
+uploads/
+
+# Ensure yarn.lock IS tracked (whitelist, in case of confusion)
+!yarn.lock
