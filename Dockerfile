@@ -15,11 +15,22 @@ WORKDIR /app
 # Alpine needs libc6-compat for some Node native modules (bcrypt, sharp, pdfkit)
 RUN apk add --no-cache libc6-compat openssl
 
-# Copy only the manifest first so this layer is cache-friendly
-COPY package.json yarn.lock ./
+# Copy only the manifest first so this layer is cache-friendly.
+# The trailing '*' on yarn.lock makes it OPTIONAL — if the lockfile isn't
+# committed to the repo yet, the build still succeeds (falls back to a
+# non-frozen install below). For reproducible production builds, commit
+# yarn.lock so `--frozen-lockfile` is used.
+COPY package.json ./
+COPY yarn.lock* ./
 COPY prisma ./prisma
 
-RUN yarn install --frozen-lockfile --network-timeout 300000
+RUN if [ -f yarn.lock ]; then \
+      echo "→ yarn.lock found — running frozen install"; \
+      yarn install --frozen-lockfile --network-timeout 300000; \
+    else \
+      echo "→ yarn.lock MISSING — running non-frozen install (not reproducible!)"; \
+      yarn install --network-timeout 300000; \
+    fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 2: builder — build Next.js standalone bundle + generate Prisma client
