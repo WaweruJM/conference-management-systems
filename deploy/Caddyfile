@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddyfile — production reverse proxy for SCMS
+#
+# Terminates TLS (auto-provisioned via Let's Encrypt HTTP-01) and forwards
+# to the Next.js container listening on 127.0.0.1:3000.
+#
+# Install:
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+# ─────────────────────────────────────────────────────────────────────────────
+
+medals-scms.mod.go.ke {
+    # Reverse proxy to the app container bound on localhost only
+    reverse_proxy 127.0.0.1:3000 {
+        # Preserve original client info
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        # Longer timeouts for large uploads / SSE / streaming
+        transport http {
+            read_timeout 300s
+            write_timeout 300s
+        }
+    }
+
+    # Allow up to 100 MB uploads (matches app-side limits)
+    request_body {
+        max_size 100MB
+    }
+
+    # Gzip + zstd
+    encode zstd gzip
+
+    # HSTS is already emitted by Next.js in production; Caddy will honour it.
+    # Security-header hardening at proxy layer as a second line of defence:
+    header {
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        # Remove server fingerprint
+        -Server
+    }
+
+    # Log to a rotated file
+    log {
+        output file /var/log/caddy/medals-scms.access.log {
+            roll_size 50mb
+            roll_keep 10
+        }
+        format console
+        level  INFO
+    }
+}
