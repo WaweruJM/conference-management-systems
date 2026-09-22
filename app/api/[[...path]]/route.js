@@ -9,6 +9,13 @@ import crypto from 'crypto'
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/app/uploads'
 
+// Force this catch-all API route to be dynamic (never statically pre-rendered).
+// Prevents `next build` "Collecting page data" from evaluating request-dependent
+// code paths at compile time (they'd fail without runtime env like JWT_SECRET
+// or DATABASE_URL). Runtime behaviour is unchanged.
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 // SECURITY: CORS is intentionally restrictive. The frontend is served from the
 // same origin as this API, so no cross-origin requests should be needed. If a
 // separate origin is required in the future, list it explicitly here rather
