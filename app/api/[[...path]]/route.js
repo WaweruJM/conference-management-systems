@@ -437,6 +437,19 @@ async function handleConferences(route, method, request) {
     return ok({ ok: true })
   }
 
+  // Current user's registrations across all conferences — used by the
+  // live-conference gate to check whether the visitor is registered
+  // before granting access to the video room.
+  if (route === '/me/registrations' && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const regs = await prisma.registration.findMany({
+      where: { userId: user.id },
+      select: { id: true, conferenceId: true, type: true, mode: true, createdAt: true },
+    })
+    return ok({ registrations: regs })
+  }
+
   const regMatch = route.match(/^\/conferences\/([^\/]+)\/register$/)
   if (regMatch && method === 'POST') {
     const user = await getCurrentUser(request)
@@ -1990,6 +2003,56 @@ async function handleAnalytics(route, method, request) {
 
 async function handleProgramme(route, method, request) {
   const user = await getCurrentUser(request)
+  // ============ v2: ACCEPTED ABSTRACTS ============
+  // List all abstracts that have reached the ACCEPTED / IN_PROGRAMME state
+  // for a given conference. Used by the Accepted Abstracts container in
+  // the Editorial Office and downstream (programme picker, conference book).
+  const acceptedMatch = route.match(/^\/conferences\/([^\/]+)\/accepted-abstracts$/)
+  if (acceptedMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const accepted = await prisma.abstract.findMany({
+      where: {
+        conferenceId: acceptedMatch[1],
+        currentState: { in: ['ACCEPTED', 'POSTER', 'ORAL'] },
+      },
+      include: {
+        authors: { orderBy: { orderIndex: 'asc' } },
+        submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+      orderBy: { submissionCode: 'asc' },
+    })
+    return ok({ abstracts: accepted })
+  }
+
+  // Word download — formatted abstract in the standard journal layout
+  // (bold caps title, authors with superscript affiliations, corresponding
+  // email, keywords, subsections). Suitable for direct inclusion in the
+  // conference book.
+  const abstractDocxMatch = route.match(/^\/abstracts\/([^\/]+)\/formatted\.docx$/)
+  if (abstractDocxMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const abs = await prisma.abstract.findUnique({
+      where: { id: abstractDocxMatch[1] },
+      include: {
+        authors: { orderBy: { orderIndex: 'asc' } },
+        conference: { select: { name: true, code: true } },
+        versions: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+    })
+    if (!abs) return err('Abstract not found', 404)
+    const latestBody = abs.versions?.[0]?.body || abs.body || ''
+    const { generateAbstractDocx } = await import('@/lib/abstract-docx')
+    const buf = await generateAbstractDocx({ ...abs, latestBody }, abs.conference)
+    const safeCode = (abs.submissionCode || abs.id).replace(/[^\w-]/g, '_')
+    return new Response(buf, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="Abstract_${safeCode}.docx"`,
+      },
+    })
+  }
+
   const progMatch = route.match(/^\/programme\/([^\/.]+)$/)
   if (progMatch && method === 'GET') {
     const sessions = await prisma.programmeSession.findMany({
@@ -2010,6 +2073,11 @@ async function handleProgramme(route, method, request) {
         conferenceId: body.conferenceId, themeId: body.themeId || null,
         title: body.title, room: body.room,
         startTime: new Date(body.startTime), endTime: new Date(body.endTime), chair: body.chair,
+        // v2: session identity fields
+        chairAssistant: body.chairAssistant || null,
+        dayNumber: body.dayNumber ? Number(body.dayNumber) : null,
+        weekday: body.weekday || null,
+        sessionDate: body.sessionDate ? new Date(body.sessionDate) : null,
       },
     })
     return ok({ session: s })
@@ -2019,9 +2087,11 @@ async function handleProgramme(route, method, request) {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const patch = {}
-    ;['title', 'room', 'chair', 'themeId'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    ;['title', 'room', 'chair', 'themeId', 'chairAssistant', 'weekday'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
     if (body.startTime) patch.startTime = new Date(body.startTime)
     if (body.endTime) patch.endTime = new Date(body.endTime)
+    if (body.sessionDate !== undefined) patch.sessionDate = body.sessionDate ? new Date(body.sessionDate) : null
+    if (body.dayNumber !== undefined) patch.dayNumber = body.dayNumber ? Number(body.dayNumber) : null
     const s = await prisma.programmeSession.update({ where: { id: sesMatch[1] }, data: patch })
     return ok({ session: s })
   }
@@ -2034,17 +2104,24 @@ async function handleProgramme(route, method, request) {
   if (itemMatch && method === 'POST') {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
-    // ProgrammeItem has @unique on abstractId, so an abstract can only be in one session
-    // Delete existing item for this abstract if any
-    await prisma.programmeItem.deleteMany({ where: { abstractId: body.abstractId } })
-    // Determine orderIndex
+    // v2: item can be linked to an accepted abstract OR a manual entry
+    // (sponsor talk, keynote, break). Enforce mutual exclusivity of manualTitle
+    // vs abstractId at the API layer.
+    if (body.abstractId) {
+      // Free the abstract from any prior session (one abstract → one slot)
+      await prisma.programmeItem.deleteMany({ where: { abstractId: body.abstractId } })
+    }
     const count = await prisma.programmeItem.count({ where: { sessionId: itemMatch[1] } })
     const item = await prisma.programmeItem.create({
       data: {
         sessionId: itemMatch[1],
-        abstractId: body.abstractId,
+        abstractId: body.abstractId || null,
         orderIndex: body.orderIndex !== undefined ? body.orderIndex : count,
         durationMin: body.durationMin || 15,
+        manualTitle: body.abstractId ? null : (body.manualTitle || body.title || null),
+        manualSpeaker: body.abstractId ? null : (body.manualSpeaker || body.speaker || null),
+        manualStart: body.manualStart ? new Date(body.manualStart) : null,
+        manualEnd: body.manualEnd ? new Date(body.manualEnd) : null,
       },
       include: { abstract: { include: { authors: true } } },
     })

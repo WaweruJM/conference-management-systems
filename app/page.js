@@ -21,7 +21,7 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
-  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw, X,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw, X, Camera, User,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 const LiveConference = dynamic(() => import('@/components/LiveConference'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
@@ -1247,6 +1247,7 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} draftId={route.draftId} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
+  if (route.name === 'accepted-abstracts') return <AcceptedAbstractsPage setRoute={setRoute} />
   if (route.name === 'workspace') return <EditorWorkspace setRoute={setRoute} user={user} />
   if (route.name === 'live') return <LiveConferencePage user={user} />
   if (route.name === 'reviews') return <ReviewerWorkspace setRoute={setRoute} />
@@ -1700,18 +1701,34 @@ function EmptyState({ label, onAction, actionLabel }) {
 // ============ SUBMIT ABSTRACT (enhanced per guidelines) ============
 
 // ============ ABSTRACT BODY SECTIONS ============
-// Renders 6 labelled textareas that behind the scenes concatenate to a single
+// Renders labelled textareas that behind the scenes concatenate to a single
 // `body` string with ALL-CAPS headings, matching the format the PDF generator
 // and reviewer view already understand. On mount we parse the existing body
 // into sections (best-effort) so returning to a saved draft preserves each
 // author's earlier text in the correct box.
-const BODY_SECTION_LABELS = ['Introduction / Background', 'Methodology', 'Results', 'Analysis', 'Discussion', 'Recommendations']
-function parseBodyIntoSections(body) {
-  const out = Object.fromEntries(BODY_SECTION_LABELS.map(k => [k, '']))
+//
+// The label set changes with `reportType`:
+//   • CASE_REPORT / CASE_SERIES → clinical case structure
+//   • everything else           → standard IMRAD variant
+const BODY_SECTION_LABELS_DEFAULT = ['Introduction / Background', 'Methodology', 'Results', 'Analysis', 'Discussion', 'Recommendations']
+const BODY_SECTION_LABELS_CASE    = ['Background', 'Objectives', 'Case Presentation', 'Case Discussion', 'Conclusion', 'Recommendations']
+
+function getSectionLabels(reportType) {
+  return (reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES')
+    ? BODY_SECTION_LABELS_CASE
+    : BODY_SECTION_LABELS_DEFAULT
+}
+
+function parseBodyIntoSections(body, reportType) {
+  const labels = getSectionLabels(reportType)
+  const out = Object.fromEntries(labels.map(k => [k, '']))
   if (!body || !body.trim()) return out
-  // Split on any of our labels as headings (case insensitive, allow "and", "/", "&")
+  // Split on any of our labels as headings (case insensitive)
   const raw = String(body)
-  const patterns = BODY_SECTION_LABELS.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\/|\s+|and|&/gi, '[\\s/&]*(?:and)?[\\s]*'))
+  // Build a permissive regex matching known headings across BOTH label sets so
+  // a draft saved before the reportType toggle can still be re-parsed cleanly.
+  const allLabels = [...new Set([...BODY_SECTION_LABELS_DEFAULT, ...BODY_SECTION_LABELS_CASE])]
+  const patterns = allLabels.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\/|\s+|and|&/gi, '[\\s/&]*(?:and)?[\\s]*'))
   const rx = new RegExp(`^\\s*(?:#+\\s*)?(${patterns.join('|')})\\s*:?\\s*$`, 'gim')
   const marks = []
   let m
@@ -1719,17 +1736,28 @@ function parseBodyIntoSections(body) {
     marks.push({ label: m[1], start: m.index, endHeading: m.index + m[0].length })
   }
   if (marks.length === 0) {
-    // Legacy body — dump everything into "Introduction / Background" so nothing is lost.
-    out['Introduction / Background'] = raw.trim()
+    // Legacy body — dump everything into the first section so nothing is lost.
+    out[labels[0]] = raw.trim()
     return out
   }
   const normalize = (heading) => {
     const h = heading.toLowerCase().replace(/[^a-z]/g, '')
+    // Case-flavour mappings
+    if (reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES') {
+      if (h.startsWith('background') || h.startsWith('introduction')) return 'Background'
+      if (h.startsWith('objective') || h.startsWith('aim')) return 'Objectives'
+      if (h.startsWith('casepresent') || h.startsWith('presentation') || h.startsWith('caseidentification')) return 'Case Presentation'
+      if (h.startsWith('casediscussion') || h.startsWith('discussion')) return 'Case Discussion'
+      if (h.startsWith('conclusion') || h.startsWith('result')) return 'Conclusion'
+      if (h.startsWith('recommend')) return 'Recommendations'
+      return 'Background'
+    }
+    // Default IMRAD mappings
     if (h.startsWith('introduction') || h.startsWith('background')) return 'Introduction / Background'
-    if (h.startsWith('method')) return 'Methodology'
-    if (h.startsWith('result')) return 'Results'
+    if (h.startsWith('method') || h.startsWith('objective') || h.startsWith('casepresent') || h.startsWith('presentation')) return 'Methodology'
+    if (h.startsWith('result') || h.startsWith('conclusion')) return 'Results'
     if (h.startsWith('analysis')) return 'Analysis'
-    if (h.startsWith('discussion') || h.startsWith('conclusion')) return 'Discussion'
+    if (h.startsWith('discussion') || h.startsWith('casediscussion')) return 'Discussion'
     if (h.startsWith('recommend')) return 'Recommendations'
     return 'Introduction / Background'
   }
@@ -1738,39 +1766,45 @@ function parseBodyIntoSections(body) {
     const next = marks[i + 1]
     const content = raw.slice(cur.endHeading, next ? next.start : raw.length).trim()
     const key = normalize(cur.label)
-    out[key] = (out[key] ? out[key] + '\n\n' + content : content).trim()
+    if (out[key] !== undefined) {
+      out[key] = (out[key] ? out[key] + '\n\n' + content : content).trim()
+    }
   }
   return out
 }
-function serialiseSectionsToBody(sections) {
-  return BODY_SECTION_LABELS
+function serialiseSectionsToBody(sections, reportType) {
+  const labels = getSectionLabels(reportType)
+  return labels
     .map(k => sections[k]?.trim() ? `${k.toUpperCase()}\n${sections[k].trim()}` : '')
     .filter(Boolean)
     .join('\n\n')
 }
-function AbstractBodySections({ body, onChange, sections: hints, invalid = false, rows = 5 }) {
-  const [values, setValues] = useState(() => parseBodyIntoSections(body))
-  // If the parent body changes externally (e.g. Word-document import), reparse.
+function AbstractBodySections({ body, onChange, sections: hints, invalid = false, rows = 5, reportType = 'ORIGINAL_RESEARCH' }) {
+  const labels = getSectionLabels(reportType)
+  const [values, setValues] = useState(() => parseBodyIntoSections(body, reportType))
+  // If the parent body OR reportType changes externally, reparse.
   const [lastExternalBody, setLastExternalBody] = useState(body)
+  const [lastReportType, setLastReportType] = useState(reportType)
   useEffect(() => {
-    if (body !== lastExternalBody) {
-      const own = serialiseSectionsToBody(values)
-      if (body !== own) {
-        setValues(parseBodyIntoSections(body))
+    if (body !== lastExternalBody || reportType !== lastReportType) {
+      const own = serialiseSectionsToBody(values, lastReportType)
+      if (body !== own || reportType !== lastReportType) {
+        setValues(parseBodyIntoSections(body, reportType))
       }
       setLastExternalBody(body)
+      setLastReportType(reportType)
     }
-  }, [body])
+  }, [body, reportType])
   const setSection = (k, v) => {
     const next = { ...values, [k]: v }
     setValues(next)
-    onChange(serialiseSectionsToBody(next))
+    onChange(serialiseSectionsToBody(next, reportType))
   }
   const hintMap = Object.fromEntries((hints || []).map(([k, h]) => [k, h]))
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">Type each section of your abstract in its own box below. Section headings are added automatically when we save.</p>
-      {BODY_SECTION_LABELS.map(k => (
+      {labels.map(k => (
         <div key={k}>
           <div className="flex items-baseline justify-between mb-1">
             <label className="text-sm font-semibold text-slate-800">{k}</label>
@@ -2171,7 +2205,7 @@ function SubmitAbstract({ setRoute, user, draftId }) {
           <CardContent className="pt-4">
             <div className="grid md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <AbstractBodySections body={body} onChange={setBody} sections={sectionHints} invalid={!bodyValid} />
+                <AbstractBodySections body={body} onChange={setBody} sections={sectionHints} invalid={!bodyValid} reportType={reportType} />
               </div>
               <div className="border-2 border-dashed rounded-lg p-3 bg-indigo-50/50 border-indigo-300">
                 <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><FileUp className="h-4 w-4 text-indigo-600" /> Or upload Word document</div>
@@ -2569,11 +2603,20 @@ function EditorialPanel({ abs, onRefresh, user }) {
   const [decisionLetter, setDecisionLetter] = useState('')
   const [presType, setPresType] = useState('')
 
+  const [pendingAcceptConfirm, setPendingAcceptConfirm] = useState(false)
   const doDecision = async () => {
     if (!decision) return
+    // v2: Accept requires an explicit confirmation step so the editor pauses
+    // to verify every section is complete and free of grammatical errors
+    // before the abstract moves into the Accepted queue (where downloads,
+    // author bios, and slide uploads become active).
+    if (decision === 'ACCEPT' && !pendingAcceptConfirm) {
+      setPendingAcceptConfirm(true)
+      return
+    }
     await api(`/abstracts/${abs.id}/decision`, { method: 'POST', body: JSON.stringify({ decision, decisionLetter, presentationType: presType || null }) })
-    toast.success('Decision recorded')
-    setDecision(''); setDecisionLetter(''); onRefresh()
+    toast.success(decision === 'ACCEPT' ? 'Abstract accepted' : 'Decision recorded')
+    setDecision(''); setDecisionLetter(''); setPendingAcceptConfirm(false); onRefresh()
   }
 
   const assignCommitteeEditor = async (editorId) => {
@@ -2776,7 +2819,26 @@ function EditorialPanel({ abs, onRefresh, user }) {
             )}
           </div>
           <Textarea placeholder="Decision letter to author" value={decisionLetter} onChange={e => setDecisionLetter(e.target.value)} rows={4} />
-          <Button className="mt-2" onClick={doDecision} disabled={!decision}>Send decision</Button>
+          {decision === 'ACCEPT' && pendingAcceptConfirm && (
+            <div className="mt-2 p-3 rounded-md border border-emerald-300 bg-emerald-50">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="text-sm text-emerald-900">
+                  <div className="font-semibold mb-1">Confirm all sections are filled and that no grammatical errors exist.</div>
+                  <p className="text-xs text-emerald-800">Once accepted the abstract moves to the Accepted list, where the PowerPoint template download and author bio / photo uploads become active for the author. This abstract will also be available for scheduling in the conference programme and inclusion in the conference book.</p>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={doDecision}>Continue to accept →</Button>
+                <Button size="sm" variant="ghost" onClick={() => setPendingAcceptConfirm(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+          {!(decision === 'ACCEPT' && pendingAcceptConfirm) && (
+            <Button className="mt-2" onClick={doDecision} disabled={!decision}>
+              {decision === 'ACCEPT' ? 'Accept abstract' : 'Send decision'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -2797,7 +2859,7 @@ function RevisionUpload({ abs, onDone }) {
       <CardHeader><CardTitle className="flex items-center gap-2"><AlertCircle className="h-5 w-5 text-amber-600" /> Revision requested</CardTitle><CardDescription>Upload a new version of your abstract</CardDescription></CardHeader>
       <CardContent className="space-y-2">
         <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Revised title" />
-        <AbstractBodySections body={body} onChange={setBody} sections={undefined} rows={4} />
+        <AbstractBodySections body={body} onChange={setBody} sections={undefined} rows={4} reportType={abs?.reportType} />
         <Button onClick={submit}>Submit revision</Button>
       </CardContent>
     </Card>
@@ -3157,13 +3219,33 @@ function EditorialOffice({ setRoute }) {
       </div>
 
       {/* Stat summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
         <StatBadge label="Total papers" value={stats.total} color="from-slate-600 to-slate-700" icon={FileText} />
         <StatBadge label="Awaiting editor" value={stats.awaitingAssignment} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
         <StatBadge label="In review" value={stats.inReview} color="from-indigo-500 to-fuchsia-500" icon={Clock} />
         <StatBadge label="Accepted" value={stats.accepted} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
         <StatBadge label="Rejected" value={stats.rejected} color="from-rose-500 to-red-600" icon={XCircle} />
       </div>
+
+      {/* v2: interactive Accepted Abstracts container — full-width beneath the stage summary.
+          Opens a dedicated page listing every accepted paper with per-paper downloads. */}
+      <button
+        onClick={() => setRoute({ name: 'accepted-abstracts' })}
+        className="w-full mb-6 rounded-lg border border-emerald-300 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 hover:from-emerald-100 hover:to-emerald-100 shadow-sm hover:shadow transition text-left px-5 py-4 flex items-center justify-between group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow">
+            <CheckCircle2 className="h-6 w-6" />
+          </div>
+          <div>
+            <div className="text-lg font-semibold text-emerald-900">Accepted Abstracts</div>
+            <div className="text-xs text-emerald-700/80">{stats.accepted} paper{stats.accepted !== 1 ? 's' : ''} · downloads for Word abstract, PowerPoint template, author bios & passport photos</div>
+          </div>
+        </div>
+        <div className="text-emerald-700 group-hover:translate-x-1 transition">
+          Open list →
+        </div>
+      </button>
 
       {/* Filter bar */}
       <Card className="mb-4 border-0 shadow-sm">
@@ -3197,6 +3279,155 @@ function EditorialOffice({ setRoute }) {
             onAssignEditor={(editorId) => assignCommitteeEditor(a.id, editorId)}
           />
         ))}</div>}
+    </div>
+  )
+}
+
+// ============ v2: ACCEPTED ABSTRACTS PAGE ============
+// Full listing of every accepted paper in the current featured conference with
+// download links (Word abstract in journal format, PowerPoint template, author
+// bio, passport photo). This is where committee editors and admins access all
+// post-acceptance artefacts.
+function AcceptedAbstractsPage({ setRoute }) {
+  const [confId, setConfId] = useState('')
+  const [confs, setConfs] = useState([])
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    api('/conferences').then(d => {
+      const list = d.conferences || []
+      setConfs(list)
+      const featured = list.find(c => c.isFeatured) || list[0]
+      if (featured) setConfId(featured.id)
+    }).catch(() => setLoading(false))
+  }, [])
+  useEffect(() => {
+    if (!confId) return
+    setLoading(true)
+    api(`/conferences/${confId}/accepted-abstracts`).then(d => {
+      setItems(d.abstracts || [])
+      setLoading(false)
+    }).catch(() => { setItems([]); setLoading(false) })
+  }, [confId])
+
+  const downloadWord = async (id, code) => {
+    try {
+      const token = getToken()
+      const r = await fetch(`/api/abstracts/${id}/formatted.docx`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      })
+      if (!r.ok) throw new Error(await r.text())
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Abstract_${code || id}.docx`
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('Word abstract downloaded')
+    } catch (e) { toast.error('Download failed: ' + e.message) }
+  }
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex items-center gap-3 mb-2">
+        <Button variant="ghost" size="sm" onClick={() => setRoute({ name: 'editorial' })}>← Editorial Office</Button>
+      </div>
+      <div className="flex items-baseline gap-3 mb-1">
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <CheckCircle2 className="h-7 w-7 text-emerald-600" /> Accepted Abstracts
+        </h1>
+        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">{items.length} paper{items.length !== 1 ? 's' : ''}</Badge>
+      </div>
+      <p className="text-muted-foreground text-sm mb-4">Formatted Word downloads follow the standard academic journal layout used in the conference book.</p>
+
+      {confs.length > 1 && (
+        <div className="mb-4">
+          <Select value={confId} onValueChange={setConfId}>
+            <SelectTrigger className="w-96"><SelectValue /></SelectTrigger>
+            <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="p-10 text-center"><Loader2 className="h-6 w-6 animate-spin inline text-slate-400" /></div>
+      ) : items.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="p-10 text-center">
+            <CheckCircle2 className="h-12 w-12 mx-auto text-slate-300 mb-3" />
+            <div className="text-lg font-semibold text-slate-500">No accepted abstracts yet</div>
+            <div className="text-sm text-muted-foreground mt-1">Once the committee accepts abstracts they appear here with all their downloadable artefacts.</div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {items.map(a => {
+            const authors = (a.authors || []).slice().sort((x, y) => (x.orderIndex ?? 0) - (y.orderIndex ?? 0))
+            const authorNames = authors.map(x => x.fullName).filter(Boolean).join(', ')
+            const corresponding = authors.find(x => x.isCorresponding) || authors[0]
+            return (
+              <Card key={a.id} className="hover:shadow-md transition">
+                <CardContent className="p-4">
+                  <div className="grid md:grid-cols-3 gap-4 items-start">
+                    <div className="md:col-span-2">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <Badge variant="outline" className="text-[10px]">{a.submissionCode}</Badge>
+                        {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
+                        {a.presentationType && a.presentationType !== 'UNDECIDED' && <Badge className="bg-indigo-600 text-white text-[10px]">{a.presentationType}</Badge>}
+                      </div>
+                      <div className="font-semibold text-slate-900 leading-snug">{a.title}</div>
+                      <div className="text-xs text-slate-700 mt-1">{authorNames || '—'}</div>
+                      {corresponding?.email && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Corresponding: <a href={`mailto:${corresponding.email}`} className="text-indigo-600 hover:underline">{corresponding.email}</a>
+                          {corresponding.phone && <span> · {corresponding.phone}</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button size="sm" variant="outline" onClick={() => downloadWord(a.id, a.submissionCode)}>
+                        <FileText className="h-3.5 w-3.5 mr-1" /> Word abstract
+                      </Button>
+                      {a.presentationPath ? (
+                        <a href={a.presentationPath.startsWith('/api') ? a.presentationPath : `/api${a.presentationPath}`} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline"><FileUp className="h-3.5 w-3.5 mr-1" /> PowerPoint</Button>
+                        </a>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <FileUp className="h-3.5 w-3.5 mr-1" /> PPT — awaiting
+                        </Button>
+                      )}
+                      {a.biography ? (
+                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(a.biography || ''); toast.success('Author bio copied') }}>
+                          <User className="h-3.5 w-3.5 mr-1" /> Author bio
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <User className="h-3.5 w-3.5 mr-1" /> Bio — awaiting
+                        </Button>
+                      )}
+                      {a.authorPhotoPath ? (
+                        <a href={a.authorPhotoPath.startsWith('/api') ? a.authorPhotoPath : `/api${a.authorPhotoPath}`} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline"><Camera className="h-3.5 w-3.5 mr-1" /> Photo</Button>
+                        </a>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <Camera className="h-3.5 w-3.5 mr-1" /> Photo — awaiting
+                        </Button>
+                      )}
+                      <Button size="sm" onClick={() => setRoute({ name: 'abstract', id: a.id, from: 'accepted-abstracts' })}>
+                        Open
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -3879,12 +4110,21 @@ function Conferences() {
 function RegistrationDialog({ conf, initialType, onClose, onDone }) {
   const [type, setType] = useState(initialType)
   const [form, setForm] = useState({
-    mode: 'PHYSICAL', prefix: 'Dr.', fullName: '', rank: '', unit: '', affiliation: '',
+    mode: 'PHYSICAL', prefix: 'Dr.', fullName: '', serviceStatus: 'OTHER', rank: '', unit: '', affiliation: '',
     companyName: '', companyAddress: '', industry: '', sponsorTier: 'BRONZE',
     virtualBoothRequested: false, physicalBoothRequested: false, sponsorMessage: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Kenya Army rank list — mirrored from /app/lib/kdf-ranks.js so the
+  // datalist can autocomplete on the frontend without a network call.
+  const KDF_ARMY_RANK_OPTIONS = [
+    'Private','Lance Corporal','Corporal','Sergeant','Staff Sergeant',
+    'Warrant Officer II','Warrant Officer I','Senior Warrant Officer',
+    'Second Lieutenant','Lieutenant','Captain','Major','Lieutenant Colonel',
+    'Colonel','Brigadier','Major General','Lieutenant General','General',
+  ]
 
   const SPONSOR_TIERS = [
     { key: 'BRONZE', label: 'Bronze', price: '$1,000', benefits: ['Logo on website', 'Virtual booth', 'Company profile'] },
@@ -3899,6 +4139,9 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
     if (type === 'ATTENDEE') {
       if (!conf.attendeeRegistrationOpen) return setError('Attendee registration is not yet open. The organisers will open it approximately one month before the conference. Please try again later, or register as an Author or Sponsor.')
       if (!form.fullName || !form.unit || !form.affiliation) return setError('Full name, unit and affiliation are required (used on certificate & name tag).')
+      if (form.serviceStatus === 'IN_SERVICE' && !form.rank.trim()) {
+        return setError('Service rank is required for in-service personnel. Please pick your rank from the suggestions.')
+      }
     }
     if (type === 'SPONSOR') {
       if (!form.companyName || !form.industry || !form.companyAddress) return setError('Company name, industry and address are required.')
@@ -3961,8 +4204,56 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
                 </div>
               </div>
               <div><Label>Full name (as it should appear on certificate & name tag) *</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="e.g. Jane W. Doe" /></div>
+
+              {/* Service status — drives whether a KDF rank is captured */}
+              <div>
+                <Label>Service status *</Label>
+                <div className="flex gap-2 mt-1">
+                  {[
+                    { key: 'IN_SERVICE', label: 'In service (KDF)' },
+                    { key: 'OTHER',      label: 'Other (civilian)' },
+                  ].map(s => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => setForm({ ...form, serviceStatus: s.key, rank: s.key === 'OTHER' ? '' : form.rank })}
+                      className={`px-3 py-1.5 rounded-md border text-sm transition ${
+                        form.serviceStatus === s.key
+                          ? 'bg-indigo-600 text-white border-indigo-700'
+                          : 'bg-background text-foreground border-input hover:bg-muted'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Choose "In service" only if you are currently serving in the Kenya Defence Forces. This determines whether your rank appears on your name tag and certificate.
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Rank / Position <span className="text-muted-foreground font-normal">(optional)</span></Label><Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar — leave blank if not applicable" /></div>
+                {form.serviceStatus === 'IN_SERVICE' ? (
+                  <div>
+                    <Label>Service rank *</Label>
+                    <Input
+                      list="kdf-army-ranks"
+                      value={form.rank}
+                      onChange={e => setForm({ ...form, rank: e.target.value })}
+                      placeholder="Start typing… e.g. Major, Lt Col"
+                      autoComplete="off"
+                    />
+                    <datalist id="kdf-army-ranks">
+                      {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    <p className="text-xs text-muted-foreground mt-1">Full rank; shorthand (e.g. "Maj") will be used on printed tags & certificates.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <Label>Position / Title <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar — leave blank if not applicable" />
+                  </div>
+                )}
                 <div><Label>Unit / Department *</Label><Input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="e.g. Cardiology" /></div>
               </div>
               <div><Label>Affiliation (Hospital / Institution) *</Label><Input value={form.affiliation} onChange={e => setForm({ ...form, affiliation: e.target.value })} placeholder="e.g. Nairobi Hospital" /></div>
@@ -7756,15 +8047,29 @@ function EditorWorkspace({ setRoute, user }) {
 function LiveConferencePage({ user, setRoute }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
+  const [myRegs, setMyRegs] = useState(null)   // null = still loading
+  const [showRegDialog, setShowRegDialog] = useState(false)
   useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }).catch(() => {}) }, [])
+  const refreshRegs = () => api('/me/registrations').then(d => setMyRegs(d.registrations || [])).catch(() => setMyRegs([]))
+  useEffect(() => {
+    if (!user) { setMyRegs([]); return }
+    refreshRegs()
+  }, [user])
   const conf = confs.find(c => c.id === confId)
   const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r.role || r))
+  const isEditorial = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r.role || r))
   // Chair view (mirror of the presenter timer inside the slides panel) is granted
   // to every editorial role, so committee editors and managing editors can help
   // the chair signal when a speaker is over time.
   const isChair = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'].includes(r.role || r))
 
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+
+  // Registration gate — editorial staff bypass (they run the conference).
+  // Everyone else must have a Registration row for THIS conference.
+  const isRegisteredHere = Array.isArray(myRegs) && myRegs.some(r => r.conferenceId === conf.id)
+  const gateReady = myRegs !== null
+  const needsToRegister = gateReady && !isEditorial && !isRegisteredHere
 
   return (
     <div>
@@ -7776,7 +8081,38 @@ function LiveConferencePage({ user, setRoute }) {
           <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <LiveConference conf={conf} isAdmin={isAdmin} isChair={isChair} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+      {needsToRegister ? (
+        <div className="max-w-2xl mx-auto p-10">
+          <Card className="border-amber-300 bg-amber-50/60">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-amber-900">
+                <AlertCircle className="h-5 w-5" /> Registration required
+              </CardTitle>
+              <CardDescription className="text-amber-800">
+                The live conference room is reserved for registered delegates only. Please register for <b>{conf.name}</b> to receive access.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-slate-700">
+                Once you have completed registration you will be able to join the live sessions, view speaker slides, and interact with the programme in real time.
+              </p>
+              <Button className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setShowRegDialog(true)}>
+                Register now →
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <LiveConference conf={conf} isAdmin={isAdmin} isChair={isChair} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+      )}
+      {showRegDialog && (
+        <RegistrationDialog
+          conf={conf}
+          initialType="ATTENDEE"
+          onClose={() => setShowRegDialog(false)}
+          onDone={() => { setShowRegDialog(false); refreshRegs(); toast.success('You are now registered — welcome to the live room!') }}
+        />
+      )}
     </div>
   )
 }
@@ -7784,6 +8120,48 @@ function LiveConferencePage({ user, setRoute }) {
 // ============ PUBLIC VIRTUAL CONFERENCE (public/anonymous) ============
 function PublicVirtualConference({ conf, onSignIn }) {
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+  // When live: show a clear "get into conference room" call-to-action rather
+  // than dropping anonymous visitors straight onto the video stream. The gate
+  // then forces sign-in / registration before the room can be joined.
+  if (conf.isLive) {
+    return (
+      <div className="min-h-screen">
+        <div className="max-w-3xl mx-auto p-10">
+          <Card className="border-red-200">
+            <CardHeader>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-xs font-bold px-2 py-0.5">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> LIVE
+                </span>
+                <span className="text-sm text-muted-foreground">Now streaming</span>
+              </div>
+              <CardTitle className="text-2xl">{conf.name}</CardTitle>
+              <CardDescription>
+                {conf.subtitle || conf.theme || 'Live scientific sessions are underway.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-700">
+                The conference room is currently open. Access is reserved for registered delegates. If you are already registered, sign in with your account. If not, register first — it only takes a minute.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onSignIn}>
+                  Get into conference room →
+                </Button>
+                <Button variant="outline" onClick={onSignIn}>
+                  I need to register first
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Not registered yet? Click <b>“I need to register first”</b> — after sign-up you will be redirected back here to join the live room.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+  // Not live — show the fallback (booths etc.), no auth required.
   return (
     <div className="min-h-screen">
       <LiveConference conf={conf} isAdmin={false} fallback={<ExhibitionBoothsPublic conf={conf} />} onNeedsSignIn={onSignIn} />
