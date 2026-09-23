@@ -548,31 +548,45 @@ async function handleConferences(route, method, request) {
     })
     const editors = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
-      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
     })
     const logistics = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS','COMMITTEE_LOGISTICS'] } } } },
-      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
     })
     const seen = new Set()
+    // For editors / logistics staff: use their KDF rank when in-service (auto
+    // shorthand at render), otherwise fall back to the civilian committee label
+    // on the tag's affiliation line — never override the name-line prefix.
     const delegates = [
       ...regs.map(r => ({
         prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
         rank: r.rank || (r.type === 'SPONSOR' ? 'Sponsor' : ''), affiliation: r.affiliation || r.companyName || r.user.affiliation,
       })),
       ...editors.filter(e => {
-        // If a user is both editorial and logistics, prefer their editorial tag (they'll be added once here)
         const key = `${e.firstName}|${e.lastName}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
-      }).map(e => ({ prefix: e.title || '', fullName: `${e.firstName} ${e.lastName}`, rank: 'Scientific Committee Editor', affiliation: e.affiliation || '' })),
+      }).map(e => ({
+        prefix: e.title || '',
+        fullName: `${e.firstName} ${e.lastName}`,
+        rank: e.serviceStatus === 'IN_SERVICE' ? (e.serviceRank || '') : '',
+        unit: 'Scientific Committee — Editorial',
+        affiliation: e.affiliation || '',
+      })),
       ...logistics.filter(l => {
         const key = `${l.firstName}|${l.lastName}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
-      }).map(l => ({ prefix: l.title || '', fullName: `${l.firstName} ${l.lastName}`, rank: 'Scientific Committee Logistics', affiliation: l.affiliation || '' })),
+      }).map(l => ({
+        prefix: l.title || '',
+        fullName: `${l.firstName} ${l.lastName}`,
+        rank: l.serviceStatus === 'IN_SERVICE' ? (l.serviceRank || '') : '',
+        unit: 'Scientific Committee — Logistics',
+        affiliation: l.affiliation || '',
+      })),
     ]
     const { generateNameTagsPDF } = await import('@/lib/pdf')
     const buf = await generateNameTagsPDF(delegates, conf)
@@ -587,18 +601,23 @@ async function handleConferences(route, method, request) {
     const conf = await prisma.conference.findUnique({ where: { id: attCertMatch[1] } })
     const regs = await prisma.registration.findMany({
       where: { conferenceId: attCertMatch[1], type: 'ATTENDEE' },
-      include: { user: { select: { firstName: true, lastName: true, email: true, affiliation: true } } },
+      include: { user: { select: { firstName: true, lastName: true, email: true, affiliation: true, serviceStatus: true, serviceRank: true } } },
     })
     const { generateCertificatePDF } = await import('@/lib/pdf')
     const { sendEmail } = await import('@/lib/email')
     const { renderEmailHtml } = await import('@/lib/email-templates')
     let sent = 0
     for (const r of regs) {
+      // v2: certificate name reflects KDF rank when the delegate is in-service.
+      // Fall back to the User's saved serviceRank if the registration was
+      // created before rank was captured at sign-up.
+      const effectiveRank = r.rank
+        || (r.user?.serviceStatus === 'IN_SERVICE' ? (r.user?.serviceRank || '') : '')
       const buf = await generateCertificatePDF({
         recipient: {
           prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
           firstName: r.user.firstName, lastName: r.user.lastName,
-          rank: r.rank, affiliation: r.affiliation || r.user.affiliation, mode: r.mode,
+          rank: effectiveRank, affiliation: r.affiliation || r.user.affiliation, mode: r.mode,
         },
         conference: conf, kind: 'ATTENDANCE',
       })
@@ -625,18 +644,22 @@ async function handleConferences(route, method, request) {
         conferenceId: presCertMatch[1],
         currentState: { in: ['ACCEPTED', 'ORAL', 'POSTER', 'PRESENTATION_UPLOAD', 'PRESENTATION_REVIEW', 'PROGRAMME_SCHEDULING', 'FINAL_ACCEPTANCE', 'PUBLISHED'] },
       },
-      include: { submittedBy: { select: { firstName: true, lastName: true, email: true, title: true, affiliation: true } }, authors: true },
+      include: { submittedBy: { select: { firstName: true, lastName: true, email: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true } }, authors: true },
     })
     const { generateCertificatePDF } = await import('@/lib/pdf')
     const { sendEmail } = await import('@/lib/email')
     const { renderEmailHtml } = await import('@/lib/email-templates')
     let sent = 0
     for (const a of abstracts) {
+      // v2: use presenter's KDF rank if in-service; otherwise the certificate
+      // renderer drops the civilian prefix and the affiliation carries "Presenter".
+      const presenterRank = (a.submittedBy?.serviceStatus === 'IN_SERVICE'
+        ? (a.submittedBy?.serviceRank || 'Presenter') : 'Presenter')
       const buf = await generateCertificatePDF({
         recipient: {
           prefix: a.submittedBy.title, fullName: `${a.submittedBy.firstName} ${a.submittedBy.lastName}`,
           firstName: a.submittedBy.firstName, lastName: a.submittedBy.lastName,
-          rank: 'Presenter', affiliation: a.submittedBy.affiliation, abstractTitle: a.title,
+          rank: presenterRank, affiliation: a.submittedBy.affiliation, abstractTitle: a.title,
         },
         conference: conf, kind: 'PRESENTATION',
       })
@@ -655,6 +678,18 @@ async function handleConferences(route, method, request) {
   if (dlMatch && method === 'GET') {
     const user = await getCurrentUser(request)
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // v2: rank shorthand for the register — mirrors the name tag & certificate
+    // rendering so paper registers, CSV exports and printed badges all read
+    // consistently for in-service personnel.
+    const { abbreviateRank, isKdfRank } = await import('@/lib/kdf-ranks')
+    const composeDisplayName = ({ prefix, rank, fullName }) => {
+      const parts = []
+      const rk = (rank || '').trim()
+      if (isKdfRank(rk)) parts.push(abbreviateRank(rk))
+      else if (prefix) parts.push(prefix)
+      if (fullName) parts.push(fullName)
+      return parts.join(' ').trim()
+    }
     const url = new URL(request.url)
     const modeFilter = url.searchParams.get('mode') // PHYSICAL | VIRTUAL | ''
     const where = { conferenceId: dlMatch[1] }
@@ -662,7 +697,7 @@ async function handleConferences(route, method, request) {
     else if (modeFilter === 'VIRTUAL') where.mode = 'VIRTUAL'
     const regs = await prisma.registration.findMany({
       where,
-      include: { user: { select: { firstName: true, lastName: true, email: true, roles: { select: { role: true } } } } },
+      include: { user: { select: { firstName: true, lastName: true, email: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } } } },
       orderBy: { createdAt: 'desc' },
     })
     // Physical delegates should also include editors + admin per requirement
@@ -670,11 +705,15 @@ async function handleConferences(route, method, request) {
     if (modeFilter === 'PHYSICAL') {
       const editors = await prisma.user.findMany({
         where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
-        select: { firstName: true, lastName: true, email: true, affiliation: true, roles: { select: { role: true } } },
+        select: { firstName: true, lastName: true, email: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
       })
       editorRegs = editors.map(e => ({
-        user: { firstName: e.firstName, lastName: e.lastName, email: e.email, roles: e.roles },
-        prefix: '', rank: '', unit: '', affiliation: e.affiliation, type: 'EDITOR', mode: 'PHYSICAL', companyName: '',
+        user: { firstName: e.firstName, lastName: e.lastName, email: e.email, roles: e.roles, serviceStatus: e.serviceStatus, serviceRank: e.serviceRank },
+        // Editors inherit their KDF rank (if any) from the User row — same rule
+        // as delegates. Falls back to their editorial role name for civilians.
+        prefix: '', rank: e.serviceStatus === 'IN_SERVICE' ? (e.serviceRank || '') : '',
+        unit: '', affiliation: e.affiliation, type: 'EDITOR', mode: 'PHYSICAL', companyName: '',
+        fullName: `${e.firstName || ''} ${e.lastName || ''}`.trim(),
       }))
     }
     const rows = [...regs, ...editorRegs]
@@ -684,13 +723,24 @@ async function handleConferences(route, method, request) {
       if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"'
       return s
     }
-    const header = ['Prefix','First Name','Last Name','Email','Type','Mode','Rank','Unit','Affiliation','Company','Registered']
-    const csv = [header.join(',')].concat(rows.map(r => [
-      escapeCsv(r.prefix), escapeCsv(r.user?.firstName), escapeCsv(r.user?.lastName),
-      escapeCsv(r.user?.email), escapeCsv(r.type), escapeCsv(r.mode),
-      escapeCsv(r.rank), escapeCsv(r.unit), escapeCsv(r.affiliation || r.user?.affiliation),
-      escapeCsv(r.companyName), escapeCsv(r.createdAt ? new Date(r.createdAt).toISOString() : ''),
-    ].join(','))).join('\n')
+    // Register header — the leading "Display Name" column carries the composed
+    // "<RankShorthand> First Last" (in-service) or "<Prefix> First Last" (civilian)
+    // exactly as it will print on the name tag / certificate, so the register is
+    // an accurate roll-call reference.
+    const header = ['Display Name','Rank (shorthand)','Prefix','First Name','Last Name','Email','Type','Mode','Rank (full)','Unit','Affiliation','Company','Registered']
+    const csv = [header.join(',')].concat(rows.map(r => {
+      const fullName = r.fullName || `${r.user?.firstName || ''} ${r.user?.lastName || ''}`.trim()
+      const effectiveRank = r.rank || (r.user?.serviceStatus === 'IN_SERVICE' ? (r.user?.serviceRank || '') : '')
+      const shorthand = isKdfRank(effectiveRank) ? abbreviateRank(effectiveRank) : ''
+      return [
+        escapeCsv(composeDisplayName({ prefix: r.prefix, rank: effectiveRank, fullName })),
+        escapeCsv(shorthand),
+        escapeCsv(r.prefix), escapeCsv(r.user?.firstName), escapeCsv(r.user?.lastName),
+        escapeCsv(r.user?.email), escapeCsv(r.type), escapeCsv(r.mode),
+        escapeCsv(effectiveRank), escapeCsv(r.unit), escapeCsv(r.affiliation || r.user?.affiliation),
+        escapeCsv(r.companyName), escapeCsv(r.createdAt ? new Date(r.createdAt).toISOString() : ''),
+      ].join(',')
+    })).join('\n')
     return new NextResponse(csv, {
       status: 200,
       headers: {
