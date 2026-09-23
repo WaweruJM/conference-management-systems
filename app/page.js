@@ -2061,6 +2061,9 @@ function SubmitAbstract({ setRoute, user, draftId }) {
   // below (Introduction/Background, Methodology, Results, Analysis,
   // Discussion, Recommendations) which we serialise/parse using clear ALL-CAPS
   // headings.
+  // Hint texts shown as placeholders inside each subsection textarea. Keys
+  // must match the labels rendered by <AbstractBodySections>, which switch
+  // to the clinical structure when the report type is Case Report / Case Series.
   const SECTION_HINTS_ORIG = [
     ['Introduction / Background', 'Crucial background to enable readers to understand your research from the onset. Include the problem, rationale, and objective (SMART).'],
     ['Methodology', 'Study design, population, sampling, data collection procedures. Be concise but reproducible.'],
@@ -2070,12 +2073,12 @@ function SubmitAbstract({ setRoute, user, draftId }) {
     ['Recommendations', 'Broader implications for clinical practice, policy, and future research.'],
   ]
   const SECTION_HINTS_CASE = [
-    ['Introduction / Background', 'Concise rationale — what is known / unknown, what makes this case notable.'],
-    ['Methodology', 'Case identification, work-up, investigations and consent process.'],
-    ['Results', 'Chronological case presentation — history, examination, investigations, management, outcome.'],
-    ['Analysis', 'Interpretation of the clinical findings and reasoning behind the diagnosis / management.'],
-    ['Discussion', 'Comparison with published cases, novelty, learning points, limitations.'],
-    ['Recommendations', 'Practical suggestions for research, clinical practice, or policy.'],
+    ['Background', 'Concise rationale for reporting the case — what is already known/unknown about the condition, and what makes your case notable (rare presentation, novel management, unexpected complication, etc.).'],
+    ['Objectives', 'State the aim of your case report or series — what you intend to show or highlight through this report.'],
+    ['Case Presentation', 'Describe the case(s) in logical/chronological order. Case series: summarise each case individually (for <4 cases); for >4 cases summarise similarities then bring out uniqueness, compare and contrast.'],
+    ['Case Discussion', 'Interpret the case(s), compare with existing literature, highlight what is new, unexpected, or noteworthy.'],
+    ['Conclusion', 'Main clinical message or takeaway from your case(s) — the answer to the gap the report set out to fill.'],
+    ['Recommendations', 'Practical suggestions based on your findings — for future research, clinical practice, or policy.'],
   ]
   const sectionHints = reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES' ? SECTION_HINTS_CASE : SECTION_HINTS_ORIG
 
