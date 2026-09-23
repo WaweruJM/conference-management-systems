@@ -191,7 +191,7 @@ async function handleAuth(route, method, request) {
       return err('Daily sign-up limit for this address reached. Please try again tomorrow or contact the SCMS editorial office if you need bulk-registration support.', 429)
     }
     const body = await request.json()
-    const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty } = body
+    const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty, serviceStatus, serviceRank } = body
     if (!email || !password || !firstName || !lastName) return err('Missing required fields')
     // SECURITY: enforce strong password policy (same rules as the frontend
     // meter — reject weak passwords server-side so a bypassed client is safe).
@@ -237,6 +237,11 @@ async function handleAuth(route, method, request) {
         passwordHash: await hashPassword(password),
         firstName: clean(firstName, 80), lastName: clean(lastName, 80),
         title: clean(title, 40), affiliation: clean(affiliation, 200), country: clean(country, 80),
+        // v2: KDF service metadata — normalised & length-capped so registration
+        // form or 3rd-party API cannot inject arbitrary text.
+        serviceStatus: (serviceStatus === 'IN_SERVICE' ? 'IN_SERVICE' : 'OTHER'),
+        serviceRank: (serviceStatus === 'IN_SERVICE' && serviceRank)
+          ? clean(serviceRank, 60) : null,
         specialties: specialty ? [clean(specialty, 100)] : [],
         roles: { create: { role: actualRole } },
       },
@@ -498,12 +503,18 @@ async function handleConferences(route, method, request) {
       }
     }
     if (regType === 'AUTHOR' && conf.submissionClose && now > conf.submissionClose) return err('Author registration closed (submission window ended).')
+    // v2: auto-inherit rank from the User's saved KDF service profile if
+    // the client didn't override it in the body. This ensures name tags and
+    // certificates always reflect the correct rank captured at sign-up.
+    const inheritedRank = user.serviceStatus === 'IN_SERVICE' ? (user.serviceRank || null) : null
+    const effectiveRank = body.rank !== undefined ? (body.rank || null) : inheritedRank
+
     const reg = await prisma.registration.upsert({
       where: { conferenceId_userId: { conferenceId: regMatch[1], userId: user.id } },
       update: {
         type: regType, mode: body.mode || null,
         prefix: body.prefix || null, fullName: body.fullName || null,
-        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        rank: effectiveRank, unit: body.unit || null, affiliation: body.affiliation || null,
         companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
         sponsorTier: body.sponsorTier || null,
         virtualBoothRequested: !!body.virtualBoothRequested,
@@ -513,7 +524,7 @@ async function handleConferences(route, method, request) {
       create: {
         conferenceId: regMatch[1], userId: user.id, type: regType, mode: body.mode || null,
         prefix: body.prefix || null, fullName: body.fullName || null,
-        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        rank: effectiveRank, unit: body.unit || null, affiliation: body.affiliation || null,
         companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
         sponsorTier: body.sponsorTier || null,
         virtualBoothRequested: !!body.virtualBoothRequested,

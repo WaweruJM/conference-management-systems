@@ -36,6 +36,12 @@ model User {
   title           String?
   affiliation     String?
   country         String?
+  // v2: KDF service metadata captured at sign-up. Auto-copied into every
+  // Registration created for this user so name tags and certificates always
+  // reflect the correct rank. `serviceStatus` is a plain string (not enum) to
+  // stay flexible if new categories are added later (e.g. reservist).
+  serviceStatus   String   @default("OTHER")  // "IN_SERVICE" | "OTHER"
+  serviceRank     String?  // full Kenya Army rank (e.g. "Major"); shortened at render time
   institutionId   String?
   institution     Institution? @relation(fields: [institutionId], references: [id])
   bio             String?

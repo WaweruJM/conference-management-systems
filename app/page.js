@@ -844,6 +844,17 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
   const [specialty, setSpecialty] = useState(reviewerInvite?.specialty || '')
   const [affiliation, setAffiliation] = useState('')
   const [role, setRole] = useState(reviewerInvite ? 'EXTERNAL_REVIEWER' : 'AUTHOR')
+  // v2: service status is asked at sign-up so name tags & certificates auto-populate.
+  const [serviceStatus, setServiceStatus] = useState('OTHER')
+  const [serviceRank,   setServiceRank]   = useState('')
+  // Kenya Army rank list — mirrored from /app/lib/kdf-ranks.js so the <datalist>
+  // works entirely client-side without a network hop.
+  const KDF_ARMY_RANK_OPTIONS = [
+    'Private','Lance Corporal','Corporal','Sergeant','Staff Sergeant',
+    'Warrant Officer II','Warrant Officer I','Senior Warrant Officer',
+    'Second Lieutenant','Lieutenant','Captain','Major','Lieutenant Colonel',
+    'Colonel','Brigadier','Major General','Lieutenant General','General',
+  ]
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [featuredConf, setFeaturedConf] = useState(null)
@@ -881,6 +892,9 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
       if (pw.score < 2) return setError('Password is too weak — ' + pw.missing.join(', '))
       if (!firstName.trim()) return setError('Please enter your first name.')
       if (!lastName.trim()) return setError('Please enter your last name.')
+      if (serviceStatus === 'IN_SERVICE' && !serviceRank.trim()) {
+        return setError('Service rank is required for in-service personnel. Please pick your rank from the suggestions.')
+      }
       if (isReviewerInvite && !specialty.trim()) return setError('Please enter your area of specialty.')
       if (attendeeGateClosed) return setError('Attendee registration is not yet open. Please choose Author or Sponsor / Industry / Pharma instead, or check back closer to the conference date.')
     } else {
@@ -894,7 +908,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
         toast.success(`Welcome back, ${d.user.firstName}!`)
         onDone(d.user)
       } else {
-        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, inviteToken: reviewerInvite?.token }) })
+        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, serviceStatus, serviceRank: serviceStatus === 'IN_SERVICE' ? serviceRank : '', inviteToken: reviewerInvite?.token }) })
         setToken(d.token)
         toast.success(d.welcome || `Welcome, ${d.user.firstName}! Registration successful.`, { duration: 6000 })
         onDone(d.user)
@@ -935,6 +949,54 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                 <div className="grid grid-cols-2 gap-2">
                   <div><Label>First name</Label><Input value={firstName} onChange={e => { setFirstName(e.target.value); setError('') }} required /></div>
                   <div><Label>Last name</Label><Input value={lastName} onChange={e => { setLastName(e.target.value); setError('') }} required /></div>
+                </div>
+                {/* v2 (item #2): capture KDF service status + rank at sign-up so
+                    name tags, registers and certificates automatically show the
+                    correct shortened rank (e.g. "Maj John Doe") for in-service
+                    personnel and no rank for civilians. */}
+                <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+                  <Label className="text-slate-800">Service status *</Label>
+                  <div className="flex gap-2 mt-1.5">
+                    {[
+                      { key: 'IN_SERVICE', label: 'In service (KDF)' },
+                      { key: 'OTHER',      label: 'Other (civilian)' },
+                    ].map(s => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => { setServiceStatus(s.key); if (s.key === 'OTHER') setServiceRank('') }}
+                        className={`px-3 py-1.5 rounded-md border text-sm transition ${
+                          serviceStatus === s.key
+                            ? 'bg-indigo-600 text-white border-indigo-700'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Tick <b>In service</b> only if you are currently serving in the Kenya Defence Forces. Your rank will appear on your name tag and certificate; civilians see no rank.
+                  </p>
+                  {serviceStatus === 'IN_SERVICE' && (
+                    <div className="mt-2">
+                      <Label className="text-slate-800">Service rank <span className="text-red-500">*</span></Label>
+                      <Input
+                        list="kdf-army-ranks-signup"
+                        value={serviceRank}
+                        onChange={e => { setServiceRank(e.target.value); setError('') }}
+                        placeholder="Start typing… e.g. Major, Lt Col"
+                        autoComplete="off"
+                        required
+                      />
+                      <datalist id="kdf-army-ranks-signup">
+                        {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
+                      </datalist>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Full rank; shorthand (e.g. "Maj") will be used on printed tags & certificates.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 {isReviewerInvite ? (
                   <>
