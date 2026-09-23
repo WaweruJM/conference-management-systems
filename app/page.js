@@ -7780,7 +7780,7 @@ function ProgrammeAdmin({ readOnly = false }) {
   useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
   useEffect(() => { refresh() }, [confId])
 
-  const createSession = () => setEditing({ isNew: true, title: '', room: '', chair: '', startTime: '', endTime: '' })
+  const createSession = () => setEditing({ isNew: true, title: '', room: '', chair: '', chairAssistant: '', dayNumber: 1, weekday: '', sessionDate: '', startTime: '', endTime: '' })
 
   const deleteSession = async (id) => {
     if (!confirm('Delete this session and all its items?')) return
@@ -7790,26 +7790,38 @@ function ProgrammeAdmin({ readOnly = false }) {
     try { await api(`/programme-items/${id}`, { method: 'DELETE' }); refresh() } catch (e) { toast.error(e.message) }
   }
 
-  // Scheduled abstract ids
+  // v2: item.abstract may be null when the item is a manual entry (sponsor
+  // talk, keynote, break). Guard everywhere.
   const scheduledIds = new Set()
-  sessions.forEach(s => (s.items || []).forEach(i => scheduledIds.add(i.abstract.id)))
+  sessions.forEach(s => (s.items || []).forEach(i => { if (i.abstract?.id) scheduledIds.add(i.abstract.id) }))
   const unscheduled = acceptedAbstracts.filter(a => !scheduledIds.has(a.id))
 
-  // Group by day
+  // v2: group by conference dayNumber when set; fall back to calendar date so
+  // older sessions still render sensibly.
   const dayGroups = {}
   sessions.forEach(s => {
-    const key = new Date(s.startTime).toISOString().slice(0, 10)
-    if (!dayGroups[key]) dayGroups[key] = { date: new Date(s.startTime), items: [] }
+    const key = s.dayNumber
+      ? `day-${s.dayNumber}`
+      : new Date(s.startTime).toISOString().slice(0, 10)
+    if (!dayGroups[key]) {
+      dayGroups[key] = {
+        label: s.dayNumber
+          ? `Day ${s.dayNumber}${s.weekday ? ` · ${s.weekday}` : ''}${s.sessionDate ? ` · ${new Date(s.sessionDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}`
+          : new Date(s.startTime).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+        sortKey: s.dayNumber ? String(s.dayNumber).padStart(3, '0') : new Date(s.startTime).toISOString().slice(0, 10),
+        items: [],
+      }
+    }
     dayGroups[key].items.push(s)
   })
-  const days = Object.entries(dayGroups).sort(([a], [b]) => a.localeCompare(b))
+  const days = Object.entries(dayGroups).sort(([, a], [, b]) => a.sortKey.localeCompare(b.sortKey))
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Calendar className="h-7 w-7 text-indigo-600" /> Programme Admin</h1>
-          <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts to build the daily programme.</p>
+          <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts or manual entries (sponsor talks, keynotes) to build the daily programme.</p>
           {readOnly && (
             <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[11px] px-2 py-1">
               <AlertCircle className="h-3 w-3" /> Read-only view — Committee Editors can review the programme but cannot create or edit sessions.
@@ -7828,67 +7840,84 @@ function ProgrammeAdmin({ readOnly = false }) {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-8">
           {loading && <div className="text-center py-6"><Loader2 className="animate-spin inline" /></div>}
           {!loading && sessions.length === 0 && (
             readOnly
               ? <EmptyState label="No sessions scheduled yet" />
               : <EmptyState label="No sessions scheduled yet" onAction={createSession} actionLabel="Create first session" />
           )}
-          {days.map(([key, g]) => (
-            <div key={key}>
-              <div className="mb-2 pb-1 border-b border-indigo-200 flex items-baseline gap-3">
-                <h2 className="text-lg font-bold text-indigo-700">{g.date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
-                <span className="text-xs text-muted-foreground">{g.items.length} sessions</span>
-              </div>
-              <div className="space-y-3">
+          {days.map(([key, g]) => {
+            // Continuous programme serial counter across sessions in the day
+            let serial = 0
+            return (
+              <div key={key} className="rounded-lg border-2 border-indigo-100 bg-white shadow-sm overflow-hidden">
+                {/* Day header — bold indigo band */}
+                <div className="bg-gradient-to-r from-indigo-700 to-indigo-800 text-white px-5 py-2.5 flex items-baseline justify-between">
+                  <h2 className="text-base font-bold tracking-wide uppercase">{g.label}</h2>
+                  <span className="text-[11px] opacity-90">{g.items.length} session{g.items.length !== 1 ? 's' : ''}</span>
+                </div>
+                {/* 4-column programme table */}
+                <div className="grid grid-cols-[52px_140px_1fr_220px] text-[11px] font-semibold uppercase text-slate-500 bg-slate-50 border-b px-4 py-1.5">
+                  <div>#</div><div>Time</div><div>Topic / Title</div><div>Presenter / Speaker</div>
+                </div>
                 {g.items.map(s => (
-                  <Card key={s.id}>
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start gap-3 mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="font-bold">{s.title}</div>
-                            <Badge variant="outline" className="text-[10px]">{s.items?.length || 0} items</Badge>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {s.room && ` · ${s.room}`}{s.chair && ` · Chair: ${s.chair}`}
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          {!readOnly && (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
-                              <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3" /></Button>
-                              <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
-                            </>
-                          )}
+                  <div key={s.id}>
+                    {/* Session break header */}
+                    <div className="bg-amber-50 border-y border-amber-200 px-4 py-2 flex items-center gap-2 group">
+                      <div className="flex-1">
+                        <div className="text-sm font-bold text-amber-900">▸ {s.title}</div>
+                        <div className="text-[11px] text-amber-800/80">
+                          {new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {s.room && ` · ${s.room}`}
+                          {s.chair && ` · Chair: ${s.chair}`}
+                          {s.chairAssistant && ` · Asst: ${s.chairAssistant}`}
                         </div>
                       </div>
-                      {(s.items || []).length > 0 && (
-                        <div className="space-y-1 mt-2 border-t pt-2">
-                          {s.items.map((i, idx) => (
-                            <div key={i.id} className="flex items-center gap-2 text-sm p-1.5 rounded hover:bg-slate-50 group">
-                              <span className="text-xs text-slate-400 w-6">{idx + 1}.</span>
-                              <span className="text-xs text-muted-foreground w-14">{i.durationMin || 15}m</span>
-                              <div className="flex-1">
-                                <div className="text-sm">{i.abstract.title} <span className="text-xs text-muted-foreground">({i.abstract.submissionCode})</span></div>
-                                <div className="text-[10px] text-muted-foreground">{(i.abstract.authors || []).map(a => a.fullName).join(', ')}</div>
-                              </div>
-                              {!readOnly && (
-                                <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
-                              )}
-                            </div>
-                          ))}
+                      {!readOnly && (
+                        <div className="flex gap-1 opacity-70 group-hover:opacity-100">
+                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                          <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3 mr-1" />Add</Button>
+                          <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
                         </div>
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                    {(s.items || []).length === 0 && (
+                      <div className="px-4 py-3 text-xs italic text-muted-foreground text-center">No items — click Add to schedule an abstract or manual entry</div>
+                    )}
+                    {(s.items || []).map(i => {
+                      serial += 1
+                      const isManual = !i.abstract
+                      const title = isManual ? (i.manualTitle || '(untitled)') : i.abstract.title
+                      const speaker = isManual
+                        ? (i.manualSpeaker || '—')
+                        : (i.abstract.authors || []).map(a => a.fullName).filter(Boolean).slice(0, 3).join(', ')
+                      const timeRange = (isManual && i.manualStart && i.manualEnd)
+                        ? `${new Date(i.manualStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}–${new Date(i.manualEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : `${i.durationMin || 15} min`
+                      return (
+                        <div key={i.id} className="grid grid-cols-[52px_140px_1fr_220px] gap-x-2 px-4 py-2 border-b last:border-b-0 hover:bg-slate-50 group text-sm items-start">
+                          <div className="text-slate-400 font-mono">{String(serial).padStart(2, '0')}</div>
+                          <div className="text-slate-700 tabular-nums">{timeRange}</div>
+                          <div>
+                            <div className="text-slate-900 leading-snug">{title}</div>
+                            {!isManual && <div className="text-[10px] text-muted-foreground">{i.abstract.submissionCode}</div>}
+                            {isManual && <Badge variant="outline" className="text-[9px] mt-0.5">Manual entry</Badge>}
+                          </div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-slate-700 text-xs">{speaker}</div>
+                            {!readOnly && (
+                              <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 shrink-0"><Trash2 className="h-3 w-3" /></button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 ))}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         <div className="lg:col-span-1">
@@ -7914,13 +7943,23 @@ function ProgrammeAdmin({ readOnly = false }) {
   )
 }
 
+// v2: full session form incl. Day 1/2/3 index, weekday, calendar date, chair
+// and chair-assistant. Existing sessions with only the legacy datetime fields
+// continue to work — the new fields are all optional at the schema level.
 function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
-  const toLocal = (d) => d ? new Date(d).toISOString().slice(0, 16) : ''
+  const toLocalDT = (d) => d ? new Date(d).toISOString().slice(0, 16) : ''
+  const toDateOnly = (d) => d ? new Date(d).toISOString().slice(0, 10) : ''
   const [form, setForm] = useState({
-    title: session.title || '', room: session.room || '', chair: session.chair || '',
-    startTime: toLocal(session.startTime), endTime: toLocal(session.endTime),
+    title: session.title || '', room: session.room || '',
+    chair: session.chair || '', chairAssistant: session.chairAssistant || '',
+    dayNumber: session.dayNumber ?? 1,
+    weekday: session.weekday || '',
+    sessionDate: toDateOnly(session.sessionDate),
+    startTime: toLocalDT(session.startTime), endTime: toLocalDT(session.endTime),
   })
   const [saving, setSaving] = useState(false)
+
+  const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
 
   const save = async () => {
     if (!form.title) { toast.error('Title required'); return }
@@ -7928,10 +7967,15 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
     if (new Date(form.endTime) <= new Date(form.startTime)) { toast.error('End must be after start'); return }
     setSaving(true)
     try {
+      const payload = {
+        ...form,
+        dayNumber: form.dayNumber ? Number(form.dayNumber) : null,
+        sessionDate: form.sessionDate || null,
+      }
       if (session.isNew) {
-        await api('/sessions', { method: 'POST', body: JSON.stringify({ conferenceId, ...form }) })
+        await api('/sessions', { method: 'POST', body: JSON.stringify({ conferenceId, ...payload }) })
       } else {
-        await api(`/sessions/${session.id}`, { method: 'PUT', body: JSON.stringify(form) })
+        await api(`/sessions/${session.id}`, { method: 'PUT', body: JSON.stringify(payload) })
       }
       toast.success('Saved'); onDone()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -7940,16 +7984,45 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{session.isNew ? 'New session' : 'Edit session'}</DialogTitle></DialogHeader>
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div><Label>Title <span className="text-red-500">*</span></Label><Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Opening Ceremony, Session 1A: Cardiology" /></div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label>Conference day</Label>
+              <Select value={String(form.dayNumber || 1)} onValueChange={v => setForm({ ...form, dayNumber: Number(v) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[1,2,3,4,5].map(n => <SelectItem key={n} value={String(n)}>Day {n}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Weekday</Label>
+              <Select value={form.weekday || ''} onValueChange={v => setForm({ ...form, weekday: v })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {WEEKDAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Session date</Label>
+              <Input type="date" value={form.sessionDate} onChange={e => setForm({ ...form, sessionDate: e.target.value })} />
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Start <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} /></div>
             <div><Label>End <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} /></div>
           </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Room / Hall</Label><Input value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Hall A" /></div>
-            <div><Label>Chair</Label><Input value={form.chair} onChange={e => setForm({ ...form, chair: e.target.value })} placeholder="Prof. Doe" /></div>
+            <div><Label>Session Chair</Label><Input value={form.chair} onChange={e => setForm({ ...form, chair: e.target.value })} placeholder="Prof. Doe" /></div>
           </div>
+
+          <div><Label>Chair Assistant / Co-Chair</Label><Input value={form.chairAssistant} onChange={e => setForm({ ...form, chairAssistant: e.target.value })} placeholder="Dr. Assistant" /></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button></DialogFooter>
       </DialogContent>
@@ -7957,10 +8030,17 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
   )
 }
 
+// v2: two-mode "Add item" dialog. Editors can either pick from accepted
+// abstracts (default) OR create a manual entry for sponsor talks, keynotes
+// and breaks that have no matching abstract.
 function AddItemDialog({ session, abstracts, onClose, onDone }) {
+  const [mode, setMode] = useState('ABSTRACT')  // 'ABSTRACT' | 'MANUAL'
+  // Abstract mode state
   const [selected, setSelected] = useState([])
   const [duration, setDuration] = useState(15)
   const [search, setSearch] = useState('')
+  // Manual mode state
+  const [manual, setManual] = useState({ title: '', speaker: '', start: '', end: '' })
   const [saving, setSaving] = useState(false)
 
   const filtered = abstracts.filter(a =>
@@ -7969,40 +8049,94 @@ function AddItemDialog({ session, abstracts, onClose, onDone }) {
   const toggle = (id) => setSelected(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
 
   const save = async () => {
-    if (selected.length === 0) { toast.error('Select at least one abstract'); return }
     setSaving(true)
     try {
-      for (const abstractId of selected) {
-        await api(`/sessions/${session.id}/items`, { method: 'POST', body: JSON.stringify({ abstractId, durationMin: parseInt(duration) || 15 }) })
+      if (mode === 'ABSTRACT') {
+        if (selected.length === 0) { toast.error('Select at least one abstract'); return }
+        for (const abstractId of selected) {
+          await api(`/sessions/${session.id}/items`, { method: 'POST', body: JSON.stringify({ abstractId, durationMin: parseInt(duration) || 15 }) })
+        }
+        toast.success(`Added ${selected.length} to programme`)
+      } else {
+        if (!manual.title.trim()) { toast.error('Title required'); return }
+        await api(`/sessions/${session.id}/items`, {
+          method: 'POST',
+          body: JSON.stringify({
+            manualTitle: manual.title, manualSpeaker: manual.speaker,
+            manualStart: manual.start || null, manualEnd: manual.end || null,
+            durationMin: parseInt(duration) || 15,
+          }),
+        })
+        toast.success('Manual entry added')
       }
-      toast.success(`Added ${selected.length} to programme`); onDone()
+      onDone()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
-        <DialogHeader><DialogTitle>Add to "{session.title}"</DialogTitle><DialogDescription>Select accepted abstracts to schedule in this session</DialogDescription></DialogHeader>
-        <div className="flex-1 overflow-hidden flex flex-col space-y-2">
-          <div className="flex gap-2">
-            <Input placeholder="Search by title or code..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
-            <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
-          </div>
-          <div className="flex-1 overflow-y-auto border rounded space-y-1 p-2 min-h-[200px]">
-            {filtered.length === 0 && <div className="text-center text-xs text-muted-foreground py-4">No unscheduled abstracts match</div>}
-            {filtered.map(a => (
-              <label key={a.id} className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${selected.includes(a.id) ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-slate-50'}`}>
-                <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} className="mt-1" />
-                <div className="flex-1">
-                  <div className="text-xs font-semibold text-indigo-600">{a.submissionCode} <Badge variant="outline" className="text-[9px] ml-1">{a.currentState}</Badge></div>
-                  <div className="text-sm">{a.title}</div>
-                  <div className="text-[10px] text-muted-foreground">{(a.authors || []).map(au => au.fullName).slice(0, 3).join(', ')}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-          <div className="text-xs text-muted-foreground">{selected.length} selected</div>
+        <DialogHeader>
+          <DialogTitle>Add to "{session.title}"</DialogTitle>
+          <DialogDescription>Choose an accepted abstract or add a manual entry (sponsor talk, keynote, break).</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex gap-2 border-b pb-2">
+          {[
+            { key: 'ABSTRACT', label: 'From accepted abstracts' },
+            { key: 'MANUAL',   label: 'Manual entry (sponsor / keynote)' },
+          ].map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setMode(t.key)}
+              className={`px-3 py-1.5 rounded-md text-sm border transition ${
+                mode === t.key ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-background text-foreground border-input hover:bg-muted'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving || selected.length === 0} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}Add {selected.length} to programme</Button></DialogFooter>
+
+        {mode === 'ABSTRACT' ? (
+          <div className="flex-1 overflow-hidden flex flex-col space-y-2">
+            <div className="flex gap-2">
+              <Input placeholder="Search by title or code..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
+              <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
+            </div>
+            <div className="flex-1 overflow-y-auto border rounded space-y-1 p-2 min-h-[200px]">
+              {filtered.length === 0 && <div className="text-center text-xs text-muted-foreground py-4">No unscheduled abstracts match</div>}
+              {filtered.map(a => (
+                <label key={a.id} className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${selected.includes(a.id) ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-slate-50'}`}>
+                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} className="mt-1" />
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-indigo-600">{a.submissionCode} <Badge variant="outline" className="text-[9px] ml-1">{a.currentState}</Badge></div>
+                    <div className="text-sm">{a.title}</div>
+                    <div className="text-[10px] text-muted-foreground">{(a.authors || []).map(au => au.fullName).slice(0, 3).join(', ')}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div><Label>Title / Topic <span className="text-red-500">*</span></Label><Input value={manual.title} onChange={e => setManual({ ...manual, title: e.target.value })} placeholder="e.g. GSK Product Update, Coffee Break" /></div>
+            <div><Label>Speaker / Presenter</Label><Input value={manual.speaker} onChange={e => setManual({ ...manual, speaker: e.target.value })} placeholder="e.g. Prof. Doe (GSK Kenya)" /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Start time</Label><Input type="datetime-local" value={manual.start} onChange={e => setManual({ ...manual, start: e.target.value })} /></div>
+              <div><Label>End time</Label><Input type="datetime-local" value={manual.end} onChange={e => setManual({ ...manual, end: e.target.value })} /></div>
+            </div>
+            <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration (fallback)</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {mode === 'ABSTRACT' ? `Add ${selected.length || ''} to programme` : 'Add manual entry'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
