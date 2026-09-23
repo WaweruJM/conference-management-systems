@@ -36,6 +36,12 @@ model User {
   title           String?
   affiliation     String?
   country         String?
+  // v2: KDF service metadata captured at sign-up. Auto-copied into every
+  // Registration created for this user so name tags and certificates always
+  // reflect the correct rank. `serviceStatus` is a plain string (not enum) to
+  // stay flexible if new categories are added later (e.g. reservist).
+  serviceStatus   String   @default("OTHER")  // "IN_SERVICE" | "OTHER"
+  serviceRank     String?  // full Kenya Army rank (e.g. "Major"); shortened at render time
   institutionId   String?
   institution     Institution? @relation(fields: [institutionId], references: [id])
   bio             String?
@@ -234,7 +240,7 @@ model Abstract {
   stateHistory    WorkflowStateHistory[]
   messages        Message[]
   documents       Document[]
-  programmeItem   ProgrammeItem?
+  programmeItems  ProgrammeItem[]
 
   @@index([conferenceId])
   @@index([currentState])
@@ -462,28 +468,37 @@ model Document {
 
 // ============ PROGRAMME & PRESENTATION ============
 model ProgrammeSession {
-  id           String   @id @default(uuid())
-  conferenceId String
-  conference   Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
-  themeId      String?
-  theme        Theme?    @relation(fields: [themeId], references: [id])
-  title        String
-  room         String?
-  startTime    DateTime
-  endTime      DateTime
-  chair        String?
-  items        ProgrammeItem[]
-  createdAt    DateTime @default(now())
+  id             String   @id @default(uuid())
+  conferenceId   String
+  conference     Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  themeId        String?
+  theme          Theme?    @relation(fields: [themeId], references: [id])
+  title          String
+  room           String?
+  startTime      DateTime
+  endTime        DateTime
+  chair          String?
+  chairAssistant String?   // v2: co-chair / assistant to session chair
+  dayNumber      Int?      // v2: 1, 2, 3 …
+  weekday        String?   // v2: "Monday", "Tuesday" …
+  sessionDate    DateTime? // v2: actual calendar date of the session
+  items          ProgrammeItem[]
+  createdAt      DateTime @default(now())
 }
 
 model ProgrammeItem {
   id           String   @id @default(uuid())
   sessionId    String
   session      ProgrammeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  abstractId   String   @unique
-  abstract     Abstract @relation(fields: [abstractId], references: [id])
+  abstractId   String?  // v2: optional — manual (sponsor) entries have no abstract
+  abstract     Abstract? @relation(fields: [abstractId], references: [id])
   orderIndex   Int      @default(0)
   durationMin  Int      @default(15)
+  // v2 manual entry fields (used when abstractId is null — sponsor talks, keynotes, breaks)
+  manualTitle    String?
+  manualSpeaker  String?
+  manualStart    DateTime?
+  manualEnd      DateTime?
 }
 
 // ============ REGISTRATION ============
@@ -705,6 +720,8 @@ model ConferenceBook {
   conference        Conference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
   coverTitle        String?
   coverSubtitle     String?
+  coverImagePath    String?  // v2: uploadable conference cover artwork
+  preamble          String?  @db.Text  // v2: preamble page body text
   chiefGuestName    String?
   chiefGuestTitle   String?
   chiefGuestMessage String?  @db.Text
@@ -714,8 +731,38 @@ model ConferenceBook {
   foreword          String?  @db.Text
   acknowledgements  String?  @db.Text
   sections          Json?    // ordered list of { key: string, enabled: boolean }
+  messages          ConferenceBookMessage[]
   updatedAt         DateTime @updatedAt
   createdAt         DateTime @default(now())
+}
+
+// v2: VIP messages for the auto-generated conference book (Chief Guest, DMS,
+// Conference Chair, Guest Speaker, and any additional guests admin adds).
+// Kept as a separate table so the admin can add / remove message pages
+// without touching schema, and future editors can order them.
+enum ConferenceBookMessageRole {
+  CHIEF_GUEST
+  DMS                 // Director of Medical Services
+  CONFERENCE_CHAIR
+  GUEST_SPEAKER
+  OTHER
+}
+
+model ConferenceBookMessage {
+  id            String   @id @default(uuid())
+  bookId        String
+  book          ConferenceBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  role          ConferenceBookMessageRole @default(OTHER)
+  personName    String
+  personTitle   String?
+  photoPath     String?
+  message       String   @db.Text
+  orderIndex    Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([bookId])
+  @@index([role])
 }
 
 // ============ FEEDBACK SURVEYS ============

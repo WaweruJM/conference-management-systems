@@ -9,6 +9,13 @@ import crypto from 'crypto'
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/app/uploads'
 
+// Force this catch-all API route to be dynamic (never statically pre-rendered).
+// Prevents `next build` "Collecting page data" from evaluating request-dependent
+// code paths at compile time (they'd fail without runtime env like JWT_SECRET
+// or DATABASE_URL). Runtime behaviour is unchanged.
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 // SECURITY: CORS is intentionally restrictive. The frontend is served from the
 // same origin as this API, so no cross-origin requests should be needed. If a
 // separate origin is required in the future, list it explicitly here rather
@@ -184,7 +191,7 @@ async function handleAuth(route, method, request) {
       return err('Daily sign-up limit for this address reached. Please try again tomorrow or contact the SCMS editorial office if you need bulk-registration support.', 429)
     }
     const body = await request.json()
-    const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty } = body
+    const { email, password, firstName, lastName, title, affiliation, country, role, inviteToken, specialty, serviceStatus, serviceRank } = body
     if (!email || !password || !firstName || !lastName) return err('Missing required fields')
     // SECURITY: enforce strong password policy (same rules as the frontend
     // meter — reject weak passwords server-side so a bypassed client is safe).
@@ -230,6 +237,11 @@ async function handleAuth(route, method, request) {
         passwordHash: await hashPassword(password),
         firstName: clean(firstName, 80), lastName: clean(lastName, 80),
         title: clean(title, 40), affiliation: clean(affiliation, 200), country: clean(country, 80),
+        // v2: KDF service metadata — normalised & length-capped so registration
+        // form or 3rd-party API cannot inject arbitrary text.
+        serviceStatus: (serviceStatus === 'IN_SERVICE' ? 'IN_SERVICE' : 'OTHER'),
+        serviceRank: (serviceStatus === 'IN_SERVICE' && serviceRank)
+          ? clean(serviceRank, 60) : null,
         specialties: specialty ? [clean(specialty, 100)] : [],
         roles: { create: { role: actualRole } },
       },
@@ -417,9 +429,10 @@ async function handleConferences(route, method, request) {
   if (themeMatch && method === 'POST') {
     const user = await getCurrentUser(request)
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
-    // Enforce max of 5 sub-themes per conference
+    // v2: enforce max of 10 sub-themes per conference (raised from 5 to
+    // accommodate the new set of KDF MSC sub-themes).
     const existingCount = await prisma.theme.count({ where: { conferenceId: themeMatch[1] } })
-    if (existingCount >= 5) return err('This conference already has the maximum of 5 sub-themes.', 400)
+    if (existingCount >= 10) return err('This conference already has the maximum of 10 sub-themes.', 400)
     const body = await request.json()
     const theme = await prisma.theme.create({
       data: { conferenceId: themeMatch[1], name: body.name, description: body.description, keywords: body.keywords || [] },
@@ -435,6 +448,19 @@ async function handleConferences(route, method, request) {
     await prisma.abstract.updateMany({ where: { themeId: themeDelMatch[1] }, data: { themeId: null } })
     await prisma.theme.delete({ where: { id: themeDelMatch[1] } })
     return ok({ ok: true })
+  }
+
+  // Current user's registrations across all conferences — used by the
+  // live-conference gate to check whether the visitor is registered
+  // before granting access to the video room.
+  if (route === '/me/registrations' && method === 'GET') {
+    const user = await getCurrentUser(request)
+    if (!user) return err('Unauthenticated', 401)
+    const regs = await prisma.registration.findMany({
+      where: { userId: user.id },
+      select: { id: true, conferenceId: true, type: true, mode: true, createdAt: true },
+    })
+    return ok({ registrations: regs })
   }
 
   const regMatch = route.match(/^\/conferences\/([^\/]+)\/register$/)
@@ -478,12 +504,18 @@ async function handleConferences(route, method, request) {
       }
     }
     if (regType === 'AUTHOR' && conf.submissionClose && now > conf.submissionClose) return err('Author registration closed (submission window ended).')
+    // v2: auto-inherit rank from the User's saved KDF service profile if
+    // the client didn't override it in the body. This ensures name tags and
+    // certificates always reflect the correct rank captured at sign-up.
+    const inheritedRank = user.serviceStatus === 'IN_SERVICE' ? (user.serviceRank || null) : null
+    const effectiveRank = body.rank !== undefined ? (body.rank || null) : inheritedRank
+
     const reg = await prisma.registration.upsert({
       where: { conferenceId_userId: { conferenceId: regMatch[1], userId: user.id } },
       update: {
         type: regType, mode: body.mode || null,
         prefix: body.prefix || null, fullName: body.fullName || null,
-        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        rank: effectiveRank, unit: body.unit || null, affiliation: body.affiliation || null,
         companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
         sponsorTier: body.sponsorTier || null,
         virtualBoothRequested: !!body.virtualBoothRequested,
@@ -493,7 +525,7 @@ async function handleConferences(route, method, request) {
       create: {
         conferenceId: regMatch[1], userId: user.id, type: regType, mode: body.mode || null,
         prefix: body.prefix || null, fullName: body.fullName || null,
-        rank: body.rank || null, unit: body.unit || null, affiliation: body.affiliation || null,
+        rank: effectiveRank, unit: body.unit || null, affiliation: body.affiliation || null,
         companyName: body.companyName || null, companyAddress: body.companyAddress || null, industry: body.industry || null,
         sponsorTier: body.sponsorTier || null,
         virtualBoothRequested: !!body.virtualBoothRequested,
@@ -517,31 +549,45 @@ async function handleConferences(route, method, request) {
     })
     const editors = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
-      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
     })
     const logistics = await prisma.user.findMany({
       where: { roles: { some: { role: { in: ['CHIEF_LOGISTICS','COMMITTEE_LOGISTICS'] } } } },
-      select: { firstName: true, lastName: true, title: true, affiliation: true, roles: { select: { role: true } } },
+      select: { firstName: true, lastName: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
     })
     const seen = new Set()
+    // For editors / logistics staff: use their KDF rank when in-service (auto
+    // shorthand at render), otherwise fall back to the civilian committee label
+    // on the tag's affiliation line — never override the name-line prefix.
     const delegates = [
       ...regs.map(r => ({
         prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
         rank: r.rank || (r.type === 'SPONSOR' ? 'Sponsor' : ''), affiliation: r.affiliation || r.companyName || r.user.affiliation,
       })),
       ...editors.filter(e => {
-        // If a user is both editorial and logistics, prefer their editorial tag (they'll be added once here)
         const key = `${e.firstName}|${e.lastName}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
-      }).map(e => ({ prefix: e.title || '', fullName: `${e.firstName} ${e.lastName}`, rank: 'Scientific Committee Editor', affiliation: e.affiliation || '' })),
+      }).map(e => ({
+        prefix: e.title || '',
+        fullName: `${e.firstName} ${e.lastName}`,
+        rank: e.serviceStatus === 'IN_SERVICE' ? (e.serviceRank || '') : '',
+        unit: 'Scientific Committee — Editorial',
+        affiliation: e.affiliation || '',
+      })),
       ...logistics.filter(l => {
         const key = `${l.firstName}|${l.lastName}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
-      }).map(l => ({ prefix: l.title || '', fullName: `${l.firstName} ${l.lastName}`, rank: 'Scientific Committee Logistics', affiliation: l.affiliation || '' })),
+      }).map(l => ({
+        prefix: l.title || '',
+        fullName: `${l.firstName} ${l.lastName}`,
+        rank: l.serviceStatus === 'IN_SERVICE' ? (l.serviceRank || '') : '',
+        unit: 'Scientific Committee — Logistics',
+        affiliation: l.affiliation || '',
+      })),
     ]
     const { generateNameTagsPDF } = await import('@/lib/pdf')
     const buf = await generateNameTagsPDF(delegates, conf)
@@ -556,18 +602,23 @@ async function handleConferences(route, method, request) {
     const conf = await prisma.conference.findUnique({ where: { id: attCertMatch[1] } })
     const regs = await prisma.registration.findMany({
       where: { conferenceId: attCertMatch[1], type: 'ATTENDEE' },
-      include: { user: { select: { firstName: true, lastName: true, email: true, affiliation: true } } },
+      include: { user: { select: { firstName: true, lastName: true, email: true, affiliation: true, serviceStatus: true, serviceRank: true } } },
     })
     const { generateCertificatePDF } = await import('@/lib/pdf')
     const { sendEmail } = await import('@/lib/email')
     const { renderEmailHtml } = await import('@/lib/email-templates')
     let sent = 0
     for (const r of regs) {
+      // v2: certificate name reflects KDF rank when the delegate is in-service.
+      // Fall back to the User's saved serviceRank if the registration was
+      // created before rank was captured at sign-up.
+      const effectiveRank = r.rank
+        || (r.user?.serviceStatus === 'IN_SERVICE' ? (r.user?.serviceRank || '') : '')
       const buf = await generateCertificatePDF({
         recipient: {
           prefix: r.prefix, fullName: r.fullName || `${r.user.firstName} ${r.user.lastName}`.trim(),
           firstName: r.user.firstName, lastName: r.user.lastName,
-          rank: r.rank, affiliation: r.affiliation || r.user.affiliation, mode: r.mode,
+          rank: effectiveRank, affiliation: r.affiliation || r.user.affiliation, mode: r.mode,
         },
         conference: conf, kind: 'ATTENDANCE',
       })
@@ -594,18 +645,22 @@ async function handleConferences(route, method, request) {
         conferenceId: presCertMatch[1],
         currentState: { in: ['ACCEPTED', 'ORAL', 'POSTER', 'PRESENTATION_UPLOAD', 'PRESENTATION_REVIEW', 'PROGRAMME_SCHEDULING', 'FINAL_ACCEPTANCE', 'PUBLISHED'] },
       },
-      include: { submittedBy: { select: { firstName: true, lastName: true, email: true, title: true, affiliation: true } }, authors: true },
+      include: { submittedBy: { select: { firstName: true, lastName: true, email: true, title: true, affiliation: true, serviceStatus: true, serviceRank: true } }, authors: true },
     })
     const { generateCertificatePDF } = await import('@/lib/pdf')
     const { sendEmail } = await import('@/lib/email')
     const { renderEmailHtml } = await import('@/lib/email-templates')
     let sent = 0
     for (const a of abstracts) {
+      // v2: use presenter's KDF rank if in-service; otherwise the certificate
+      // renderer drops the civilian prefix and the affiliation carries "Presenter".
+      const presenterRank = (a.submittedBy?.serviceStatus === 'IN_SERVICE'
+        ? (a.submittedBy?.serviceRank || 'Presenter') : 'Presenter')
       const buf = await generateCertificatePDF({
         recipient: {
           prefix: a.submittedBy.title, fullName: `${a.submittedBy.firstName} ${a.submittedBy.lastName}`,
           firstName: a.submittedBy.firstName, lastName: a.submittedBy.lastName,
-          rank: 'Presenter', affiliation: a.submittedBy.affiliation, abstractTitle: a.title,
+          rank: presenterRank, affiliation: a.submittedBy.affiliation, abstractTitle: a.title,
         },
         conference: conf, kind: 'PRESENTATION',
       })
@@ -624,6 +679,18 @@ async function handleConferences(route, method, request) {
   if (dlMatch && method === 'GET') {
     const user = await getCurrentUser(request)
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
+    // v2: rank shorthand for the register — mirrors the name tag & certificate
+    // rendering so paper registers, CSV exports and printed badges all read
+    // consistently for in-service personnel.
+    const { abbreviateRank, isKdfRank } = await import('@/lib/kdf-ranks')
+    const composeDisplayName = ({ prefix, rank, fullName }) => {
+      const parts = []
+      const rk = (rank || '').trim()
+      if (isKdfRank(rk)) parts.push(abbreviateRank(rk))
+      else if (prefix) parts.push(prefix)
+      if (fullName) parts.push(fullName)
+      return parts.join(' ').trim()
+    }
     const url = new URL(request.url)
     const modeFilter = url.searchParams.get('mode') // PHYSICAL | VIRTUAL | ''
     const where = { conferenceId: dlMatch[1] }
@@ -631,7 +698,7 @@ async function handleConferences(route, method, request) {
     else if (modeFilter === 'VIRTUAL') where.mode = 'VIRTUAL'
     const regs = await prisma.registration.findMany({
       where,
-      include: { user: { select: { firstName: true, lastName: true, email: true, roles: { select: { role: true } } } } },
+      include: { user: { select: { firstName: true, lastName: true, email: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } } } },
       orderBy: { createdAt: 'desc' },
     })
     // Physical delegates should also include editors + admin per requirement
@@ -639,11 +706,15 @@ async function handleConferences(route, method, request) {
     if (modeFilter === 'PHYSICAL') {
       const editors = await prisma.user.findMany({
         where: { roles: { some: { role: { in: ['SYSTEM_ADMIN','MANAGING_EDITOR','CHIEF_EDITOR','COMMITTEE_EDITOR','COMMITTEE_MEMBER'] } } } },
-        select: { firstName: true, lastName: true, email: true, affiliation: true, roles: { select: { role: true } } },
+        select: { firstName: true, lastName: true, email: true, affiliation: true, serviceStatus: true, serviceRank: true, roles: { select: { role: true } } },
       })
       editorRegs = editors.map(e => ({
-        user: { firstName: e.firstName, lastName: e.lastName, email: e.email, roles: e.roles },
-        prefix: '', rank: '', unit: '', affiliation: e.affiliation, type: 'EDITOR', mode: 'PHYSICAL', companyName: '',
+        user: { firstName: e.firstName, lastName: e.lastName, email: e.email, roles: e.roles, serviceStatus: e.serviceStatus, serviceRank: e.serviceRank },
+        // Editors inherit their KDF rank (if any) from the User row — same rule
+        // as delegates. Falls back to their editorial role name for civilians.
+        prefix: '', rank: e.serviceStatus === 'IN_SERVICE' ? (e.serviceRank || '') : '',
+        unit: '', affiliation: e.affiliation, type: 'EDITOR', mode: 'PHYSICAL', companyName: '',
+        fullName: `${e.firstName || ''} ${e.lastName || ''}`.trim(),
       }))
     }
     const rows = [...regs, ...editorRegs]
@@ -653,13 +724,24 @@ async function handleConferences(route, method, request) {
       if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"'
       return s
     }
-    const header = ['Prefix','First Name','Last Name','Email','Type','Mode','Rank','Unit','Affiliation','Company','Registered']
-    const csv = [header.join(',')].concat(rows.map(r => [
-      escapeCsv(r.prefix), escapeCsv(r.user?.firstName), escapeCsv(r.user?.lastName),
-      escapeCsv(r.user?.email), escapeCsv(r.type), escapeCsv(r.mode),
-      escapeCsv(r.rank), escapeCsv(r.unit), escapeCsv(r.affiliation || r.user?.affiliation),
-      escapeCsv(r.companyName), escapeCsv(r.createdAt ? new Date(r.createdAt).toISOString() : ''),
-    ].join(','))).join('\n')
+    // Register header — the leading "Display Name" column carries the composed
+    // "<RankShorthand> First Last" (in-service) or "<Prefix> First Last" (civilian)
+    // exactly as it will print on the name tag / certificate, so the register is
+    // an accurate roll-call reference.
+    const header = ['Display Name','Rank (shorthand)','Prefix','First Name','Last Name','Email','Type','Mode','Rank (full)','Unit','Affiliation','Company','Registered']
+    const csv = [header.join(',')].concat(rows.map(r => {
+      const fullName = r.fullName || `${r.user?.firstName || ''} ${r.user?.lastName || ''}`.trim()
+      const effectiveRank = r.rank || (r.user?.serviceStatus === 'IN_SERVICE' ? (r.user?.serviceRank || '') : '')
+      const shorthand = isKdfRank(effectiveRank) ? abbreviateRank(effectiveRank) : ''
+      return [
+        escapeCsv(composeDisplayName({ prefix: r.prefix, rank: effectiveRank, fullName })),
+        escapeCsv(shorthand),
+        escapeCsv(r.prefix), escapeCsv(r.user?.firstName), escapeCsv(r.user?.lastName),
+        escapeCsv(r.user?.email), escapeCsv(r.type), escapeCsv(r.mode),
+        escapeCsv(effectiveRank), escapeCsv(r.unit), escapeCsv(r.affiliation || r.user?.affiliation),
+        escapeCsv(r.companyName), escapeCsv(r.createdAt ? new Date(r.createdAt).toISOString() : ''),
+      ].join(',')
+    })).join('\n')
     return new NextResponse(csv, {
       status: 200,
       headers: {
@@ -848,7 +930,7 @@ async function sendAbstractBackupToChiefEditors(abstractId, kindLabel) {
     const abs = await prisma.abstract.findUnique({
       where: { id: abstractId },
       include: {
-        conference: { select: { name: true, code: true } },
+        conference: { select: { name: true, code: true, contactEmail: true } },
         theme: { select: { name: true } },
         authors: { orderBy: { orderIndex: 'asc' } },
         versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
@@ -896,8 +978,18 @@ async function sendAbstractBackupToChiefEditors(abstractId, kindLabel) {
       <p style="color:#94a3b8;font-size:11px;margin-top:10px">This is an automated backup of every submission and revision, sent to every Chief Editor / Managing Editor / Admin. Keep for archive purposes.</p>
     </div>`
     const { sendEmail } = await import('@/lib/email')
-    // BCC every editor — do not reveal each editor's address to the others.
-    await Promise.all(editors.map(e => sendEmail({ to: e.email, subject, text: bodyPlain, html })))
+    // Recipients:
+    //   • Every Chief / Managing Editor / Admin (as before)
+    //   • v2 (item #1): the KDF MSC conference secretary receives a copy of every
+    //     submission and revision so paper records can be reconciled with the
+    //     platform's history off-line. Uses the conference's stored contactEmail
+    //     when present, falling back to the fixed secretary address. Duplicates
+    //     with an editor mailbox are de-duplicated.
+    const SECRETARY_FALLBACK = 'secretary-kdfmsc@mod.go.ke'
+    const secretaryEmail = (abs.conference?.contactEmail || SECRETARY_FALLBACK).trim()
+    const editorAddrs = editors.map(e => (e.email || '').trim().toLowerCase()).filter(Boolean)
+    const recipients = [...new Set([...editorAddrs, secretaryEmail.toLowerCase()])]
+    await Promise.all(recipients.map(to => sendEmail({ to, subject, text: bodyPlain, html })))
   } catch (e) {
     console.error('sendAbstractBackupToChiefEditors error', e)
   }
@@ -1081,7 +1173,7 @@ async function handleAbstracts(route, method, request) {
         decisions: { orderBy: { createdAt: 'desc' }, include: { decidedBy: { select: { firstName: true, lastName: true } } } },
         stateHistory: { orderBy: { createdAt: 'asc' }, include: { actor: { select: { firstName: true, lastName: true } } } },
         documents: { where: { isDeleted: false }, include: { uploadedBy: { select: { firstName: true, lastName: true } } } },
-        programmeItem: { include: { session: true } },
+        programmeItems: { include: { session: true } },
       },
     })
     if (!abstract) return err('Not found', 404)
@@ -1990,6 +2082,56 @@ async function handleAnalytics(route, method, request) {
 
 async function handleProgramme(route, method, request) {
   const user = await getCurrentUser(request)
+  // ============ v2: ACCEPTED ABSTRACTS ============
+  // List all abstracts that have reached the ACCEPTED / IN_PROGRAMME state
+  // for a given conference. Used by the Accepted Abstracts container in
+  // the Editorial Office and downstream (programme picker, conference book).
+  const acceptedMatch = route.match(/^\/conferences\/([^\/]+)\/accepted-abstracts$/)
+  if (acceptedMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const accepted = await prisma.abstract.findMany({
+      where: {
+        conferenceId: acceptedMatch[1],
+        currentState: { in: ['ACCEPTED', 'POSTER', 'ORAL'] },
+      },
+      include: {
+        authors: { orderBy: { orderIndex: 'asc' } },
+        submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+      orderBy: { submissionCode: 'asc' },
+    })
+    return ok({ abstracts: accepted })
+  }
+
+  // Word download — formatted abstract in the standard journal layout
+  // (bold caps title, authors with superscript affiliations, corresponding
+  // email, keywords, subsections). Suitable for direct inclusion in the
+  // conference book.
+  const abstractDocxMatch = route.match(/^\/abstracts\/([^\/]+)\/formatted\.docx$/)
+  if (abstractDocxMatch && method === 'GET') {
+    if (!user) return err('Unauthenticated', 401)
+    const abs = await prisma.abstract.findUnique({
+      where: { id: abstractDocxMatch[1] },
+      include: {
+        authors: { orderBy: { orderIndex: 'asc' } },
+        conference: { select: { name: true, code: true } },
+        versions: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+    })
+    if (!abs) return err('Abstract not found', 404)
+    const latestBody = abs.versions?.[0]?.body || abs.body || ''
+    const { generateAbstractDocx } = await import('@/lib/abstract-docx')
+    const buf = await generateAbstractDocx({ ...abs, latestBody }, abs.conference)
+    const safeCode = (abs.submissionCode || abs.id).replace(/[^\w-]/g, '_')
+    return new Response(buf, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="Abstract_${safeCode}.docx"`,
+      },
+    })
+  }
+
   const progMatch = route.match(/^\/programme\/([^\/.]+)$/)
   if (progMatch && method === 'GET') {
     const sessions = await prisma.programmeSession.findMany({
@@ -2010,6 +2152,11 @@ async function handleProgramme(route, method, request) {
         conferenceId: body.conferenceId, themeId: body.themeId || null,
         title: body.title, room: body.room,
         startTime: new Date(body.startTime), endTime: new Date(body.endTime), chair: body.chair,
+        // v2: session identity fields
+        chairAssistant: body.chairAssistant || null,
+        dayNumber: body.dayNumber ? Number(body.dayNumber) : null,
+        weekday: body.weekday || null,
+        sessionDate: body.sessionDate ? new Date(body.sessionDate) : null,
       },
     })
     return ok({ session: s })
@@ -2019,9 +2166,11 @@ async function handleProgramme(route, method, request) {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
     const patch = {}
-    ;['title', 'room', 'chair', 'themeId'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
+    ;['title', 'room', 'chair', 'themeId', 'chairAssistant', 'weekday'].forEach(k => { if (body[k] !== undefined) patch[k] = body[k] })
     if (body.startTime) patch.startTime = new Date(body.startTime)
     if (body.endTime) patch.endTime = new Date(body.endTime)
+    if (body.sessionDate !== undefined) patch.sessionDate = body.sessionDate ? new Date(body.sessionDate) : null
+    if (body.dayNumber !== undefined) patch.dayNumber = body.dayNumber ? Number(body.dayNumber) : null
     const s = await prisma.programmeSession.update({ where: { id: sesMatch[1] }, data: patch })
     return ok({ session: s })
   }
@@ -2034,17 +2183,24 @@ async function handleProgramme(route, method, request) {
   if (itemMatch && method === 'POST') {
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
     const body = await request.json()
-    // ProgrammeItem has @unique on abstractId, so an abstract can only be in one session
-    // Delete existing item for this abstract if any
-    await prisma.programmeItem.deleteMany({ where: { abstractId: body.abstractId } })
-    // Determine orderIndex
+    // v2: item can be linked to an accepted abstract OR a manual entry
+    // (sponsor talk, keynote, break). Enforce mutual exclusivity of manualTitle
+    // vs abstractId at the API layer.
+    if (body.abstractId) {
+      // Free the abstract from any prior session (one abstract → one slot)
+      await prisma.programmeItem.deleteMany({ where: { abstractId: body.abstractId } })
+    }
     const count = await prisma.programmeItem.count({ where: { sessionId: itemMatch[1] } })
     const item = await prisma.programmeItem.create({
       data: {
         sessionId: itemMatch[1],
-        abstractId: body.abstractId,
+        abstractId: body.abstractId || null,
         orderIndex: body.orderIndex !== undefined ? body.orderIndex : count,
         durationMin: body.durationMin || 15,
+        manualTitle: body.abstractId ? null : (body.manualTitle || body.title || null),
+        manualSpeaker: body.abstractId ? null : (body.manualSpeaker || body.speaker || null),
+        manualStart: body.manualStart ? new Date(body.manualStart) : null,
+        manualEnd: body.manualEnd ? new Date(body.manualEnd) : null,
       },
       include: { abstract: { include: { authors: true } } },
     })

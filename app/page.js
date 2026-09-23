@@ -21,7 +21,7 @@ import {
   Loader2, LogOut, Bell, FileText, Users, Calendar, LayoutDashboard, Upload, MessageSquare,
   ClipboardCheck, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle, Sparkles,
   Building2, Globe, GraduationCap, ShieldCheck, Download, Plus, Send, Search, FileUp, Award,
-  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw, X,
+  BookOpen, ListChecks, BarChart3, Star, Trash2, Mail, Radio, Video, Briefcase, Presentation, RefreshCw, X, Camera, User,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 const LiveConference = dynamic(() => import('@/components/LiveConference'), { ssr: false, loading: () => <div className="p-8 text-center"><Loader2 className="animate-spin inline" /></div> })
@@ -844,6 +844,17 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
   const [specialty, setSpecialty] = useState(reviewerInvite?.specialty || '')
   const [affiliation, setAffiliation] = useState('')
   const [role, setRole] = useState(reviewerInvite ? 'EXTERNAL_REVIEWER' : 'AUTHOR')
+  // v2: service status is asked at sign-up so name tags & certificates auto-populate.
+  const [serviceStatus, setServiceStatus] = useState('OTHER')
+  const [serviceRank,   setServiceRank]   = useState('')
+  // Kenya Army rank list — mirrored from /app/lib/kdf-ranks.js so the <datalist>
+  // works entirely client-side without a network hop.
+  const KDF_ARMY_RANK_OPTIONS = [
+    'Private','Lance Corporal','Corporal','Sergeant','Staff Sergeant',
+    'Warrant Officer II','Warrant Officer I','Senior Warrant Officer',
+    'Second Lieutenant','Lieutenant','Captain','Major','Lieutenant Colonel',
+    'Colonel','Brigadier','Major General','Lieutenant General','General',
+  ]
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [featuredConf, setFeaturedConf] = useState(null)
@@ -881,6 +892,9 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
       if (pw.score < 2) return setError('Password is too weak — ' + pw.missing.join(', '))
       if (!firstName.trim()) return setError('Please enter your first name.')
       if (!lastName.trim()) return setError('Please enter your last name.')
+      if (serviceStatus === 'IN_SERVICE' && !serviceRank.trim()) {
+        return setError('Service rank is required for in-service personnel. Please pick your rank from the suggestions.')
+      }
       if (isReviewerInvite && !specialty.trim()) return setError('Please enter your area of specialty.')
       if (attendeeGateClosed) return setError('Attendee registration is not yet open. Please choose Author or Sponsor / Industry / Pharma instead, or check back closer to the conference date.')
     } else {
@@ -894,7 +908,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
         toast.success(`Welcome back, ${d.user.firstName}!`)
         onDone(d.user)
       } else {
-        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, inviteToken: reviewerInvite?.token }) })
+        const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, firstName, lastName, title, role, specialty, affiliation, serviceStatus, serviceRank: serviceStatus === 'IN_SERVICE' ? serviceRank : '', inviteToken: reviewerInvite?.token }) })
         setToken(d.token)
         toast.success(d.welcome || `Welcome, ${d.user.firstName}! Registration successful.`, { duration: 6000 })
         onDone(d.user)
@@ -935,6 +949,48 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                 <div className="grid grid-cols-2 gap-2">
                   <div><Label>First name</Label><Input value={firstName} onChange={e => { setFirstName(e.target.value); setError('') }} required /></div>
                   <div><Label>Last name</Label><Input value={lastName} onChange={e => { setLastName(e.target.value); setError('') }} required /></div>
+                </div>
+                {/* v2 (item #2): capture KDF service status + rank at sign-up so
+                    name tags, registers and certificates automatically show the
+                    correct shortened rank (e.g. "Maj John Doe") for in-service
+                    personnel and no rank for civilians. */}
+                <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+                  <Label className="text-slate-800">Service status *</Label>
+                  <div className="flex gap-2 mt-1.5">
+                    {[
+                      { key: 'IN_SERVICE', label: 'In service (KDF)' },
+                      { key: 'OTHER',      label: 'Other' },
+                    ].map(s => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => { setServiceStatus(s.key); if (s.key === 'OTHER') setServiceRank('') }}
+                        className={`px-3 py-1.5 rounded-md border text-sm transition ${
+                          serviceStatus === s.key
+                            ? 'bg-indigo-600 text-white border-indigo-700'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  {serviceStatus === 'IN_SERVICE' && (
+                    <div className="mt-2">
+                      <Label className="text-slate-800">Service rank <span className="text-red-500">*</span></Label>
+                      <Input
+                        list="kdf-army-ranks-signup"
+                        value={serviceRank}
+                        onChange={e => { setServiceRank(e.target.value); setError('') }}
+                        placeholder="Start typing… e.g. Major, Lt Col"
+                        autoComplete="off"
+                        required
+                      />
+                      <datalist id="kdf-army-ranks-signup">
+                        {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
+                      </datalist>
+                    </div>
+                  )}
                 </div>
                 {isReviewerInvite ? (
                   <>
@@ -1247,6 +1303,7 @@ function ViewRouter({ route, setRoute, user, setUser, isAdmin, isEditor, isRevie
   if (route.name === 'my-abstracts') return <MyAbstracts setRoute={setRoute} />
   if (route.name === 'submit') return <SubmitAbstract setRoute={setRoute} user={user} draftId={route.draftId} />
   if (route.name === 'editorial') return <EditorialOffice setRoute={setRoute} />
+  if (route.name === 'accepted-abstracts') return <AcceptedAbstractsPage setRoute={setRoute} />
   if (route.name === 'workspace') return <EditorWorkspace setRoute={setRoute} user={user} />
   if (route.name === 'live') return <LiveConferencePage user={user} />
   if (route.name === 'reviews') return <ReviewerWorkspace setRoute={setRoute} />
@@ -1700,18 +1757,34 @@ function EmptyState({ label, onAction, actionLabel }) {
 // ============ SUBMIT ABSTRACT (enhanced per guidelines) ============
 
 // ============ ABSTRACT BODY SECTIONS ============
-// Renders 6 labelled textareas that behind the scenes concatenate to a single
+// Renders labelled textareas that behind the scenes concatenate to a single
 // `body` string with ALL-CAPS headings, matching the format the PDF generator
 // and reviewer view already understand. On mount we parse the existing body
 // into sections (best-effort) so returning to a saved draft preserves each
 // author's earlier text in the correct box.
-const BODY_SECTION_LABELS = ['Introduction / Background', 'Methodology', 'Results', 'Analysis', 'Discussion', 'Recommendations']
-function parseBodyIntoSections(body) {
-  const out = Object.fromEntries(BODY_SECTION_LABELS.map(k => [k, '']))
+//
+// The label set changes with `reportType`:
+//   • CASE_REPORT / CASE_SERIES → clinical case structure
+//   • everything else           → standard IMRAD variant
+const BODY_SECTION_LABELS_DEFAULT = ['Introduction / Background', 'Methodology', 'Results', 'Analysis', 'Discussion', 'Recommendations']
+const BODY_SECTION_LABELS_CASE    = ['Background', 'Objectives', 'Case Presentation', 'Case Discussion', 'Conclusion', 'Recommendations']
+
+function getSectionLabels(reportType) {
+  return (reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES')
+    ? BODY_SECTION_LABELS_CASE
+    : BODY_SECTION_LABELS_DEFAULT
+}
+
+function parseBodyIntoSections(body, reportType) {
+  const labels = getSectionLabels(reportType)
+  const out = Object.fromEntries(labels.map(k => [k, '']))
   if (!body || !body.trim()) return out
-  // Split on any of our labels as headings (case insensitive, allow "and", "/", "&")
+  // Split on any of our labels as headings (case insensitive)
   const raw = String(body)
-  const patterns = BODY_SECTION_LABELS.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\/|\s+|and|&/gi, '[\\s/&]*(?:and)?[\\s]*'))
+  // Build a permissive regex matching known headings across BOTH label sets so
+  // a draft saved before the reportType toggle can still be re-parsed cleanly.
+  const allLabels = [...new Set([...BODY_SECTION_LABELS_DEFAULT, ...BODY_SECTION_LABELS_CASE])]
+  const patterns = allLabels.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\/|\s+|and|&/gi, '[\\s/&]*(?:and)?[\\s]*'))
   const rx = new RegExp(`^\\s*(?:#+\\s*)?(${patterns.join('|')})\\s*:?\\s*$`, 'gim')
   const marks = []
   let m
@@ -1719,17 +1792,28 @@ function parseBodyIntoSections(body) {
     marks.push({ label: m[1], start: m.index, endHeading: m.index + m[0].length })
   }
   if (marks.length === 0) {
-    // Legacy body — dump everything into "Introduction / Background" so nothing is lost.
-    out['Introduction / Background'] = raw.trim()
+    // Legacy body — dump everything into the first section so nothing is lost.
+    out[labels[0]] = raw.trim()
     return out
   }
   const normalize = (heading) => {
     const h = heading.toLowerCase().replace(/[^a-z]/g, '')
+    // Case-flavour mappings
+    if (reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES') {
+      if (h.startsWith('background') || h.startsWith('introduction')) return 'Background'
+      if (h.startsWith('objective') || h.startsWith('aim')) return 'Objectives'
+      if (h.startsWith('casepresent') || h.startsWith('presentation') || h.startsWith('caseidentification')) return 'Case Presentation'
+      if (h.startsWith('casediscussion') || h.startsWith('discussion')) return 'Case Discussion'
+      if (h.startsWith('conclusion') || h.startsWith('result')) return 'Conclusion'
+      if (h.startsWith('recommend')) return 'Recommendations'
+      return 'Background'
+    }
+    // Default IMRAD mappings
     if (h.startsWith('introduction') || h.startsWith('background')) return 'Introduction / Background'
-    if (h.startsWith('method')) return 'Methodology'
-    if (h.startsWith('result')) return 'Results'
+    if (h.startsWith('method') || h.startsWith('objective') || h.startsWith('casepresent') || h.startsWith('presentation')) return 'Methodology'
+    if (h.startsWith('result') || h.startsWith('conclusion')) return 'Results'
     if (h.startsWith('analysis')) return 'Analysis'
-    if (h.startsWith('discussion') || h.startsWith('conclusion')) return 'Discussion'
+    if (h.startsWith('discussion') || h.startsWith('casediscussion')) return 'Discussion'
     if (h.startsWith('recommend')) return 'Recommendations'
     return 'Introduction / Background'
   }
@@ -1738,39 +1822,45 @@ function parseBodyIntoSections(body) {
     const next = marks[i + 1]
     const content = raw.slice(cur.endHeading, next ? next.start : raw.length).trim()
     const key = normalize(cur.label)
-    out[key] = (out[key] ? out[key] + '\n\n' + content : content).trim()
+    if (out[key] !== undefined) {
+      out[key] = (out[key] ? out[key] + '\n\n' + content : content).trim()
+    }
   }
   return out
 }
-function serialiseSectionsToBody(sections) {
-  return BODY_SECTION_LABELS
+function serialiseSectionsToBody(sections, reportType) {
+  const labels = getSectionLabels(reportType)
+  return labels
     .map(k => sections[k]?.trim() ? `${k.toUpperCase()}\n${sections[k].trim()}` : '')
     .filter(Boolean)
     .join('\n\n')
 }
-function AbstractBodySections({ body, onChange, sections: hints, invalid = false, rows = 5 }) {
-  const [values, setValues] = useState(() => parseBodyIntoSections(body))
-  // If the parent body changes externally (e.g. Word-document import), reparse.
+function AbstractBodySections({ body, onChange, sections: hints, invalid = false, rows = 5, reportType = 'ORIGINAL_RESEARCH' }) {
+  const labels = getSectionLabels(reportType)
+  const [values, setValues] = useState(() => parseBodyIntoSections(body, reportType))
+  // If the parent body OR reportType changes externally, reparse.
   const [lastExternalBody, setLastExternalBody] = useState(body)
+  const [lastReportType, setLastReportType] = useState(reportType)
   useEffect(() => {
-    if (body !== lastExternalBody) {
-      const own = serialiseSectionsToBody(values)
-      if (body !== own) {
-        setValues(parseBodyIntoSections(body))
+    if (body !== lastExternalBody || reportType !== lastReportType) {
+      const own = serialiseSectionsToBody(values, lastReportType)
+      if (body !== own || reportType !== lastReportType) {
+        setValues(parseBodyIntoSections(body, reportType))
       }
       setLastExternalBody(body)
+      setLastReportType(reportType)
     }
-  }, [body])
+  }, [body, reportType])
   const setSection = (k, v) => {
     const next = { ...values, [k]: v }
     setValues(next)
-    onChange(serialiseSectionsToBody(next))
+    onChange(serialiseSectionsToBody(next, reportType))
   }
   const hintMap = Object.fromEntries((hints || []).map(([k, h]) => [k, h]))
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">Type each section of your abstract in its own box below. Section headings are added automatically when we save.</p>
-      {BODY_SECTION_LABELS.map(k => (
+      {labels.map(k => (
         <div key={k}>
           <div className="flex items-baseline justify-between mb-1">
             <label className="text-sm font-semibold text-slate-800">{k}</label>
@@ -1965,6 +2055,9 @@ function SubmitAbstract({ setRoute, user, draftId }) {
   // below (Introduction/Background, Methodology, Results, Analysis,
   // Discussion, Recommendations) which we serialise/parse using clear ALL-CAPS
   // headings.
+  // Hint texts shown as placeholders inside each subsection textarea. Keys
+  // must match the labels rendered by <AbstractBodySections>, which switch
+  // to the clinical structure when the report type is Case Report / Case Series.
   const SECTION_HINTS_ORIG = [
     ['Introduction / Background', 'Crucial background to enable readers to understand your research from the onset. Include the problem, rationale, and objective (SMART).'],
     ['Methodology', 'Study design, population, sampling, data collection procedures. Be concise but reproducible.'],
@@ -1974,12 +2067,12 @@ function SubmitAbstract({ setRoute, user, draftId }) {
     ['Recommendations', 'Broader implications for clinical practice, policy, and future research.'],
   ]
   const SECTION_HINTS_CASE = [
-    ['Introduction / Background', 'Concise rationale — what is known / unknown, what makes this case notable.'],
-    ['Methodology', 'Case identification, work-up, investigations and consent process.'],
-    ['Results', 'Chronological case presentation — history, examination, investigations, management, outcome.'],
-    ['Analysis', 'Interpretation of the clinical findings and reasoning behind the diagnosis / management.'],
-    ['Discussion', 'Comparison with published cases, novelty, learning points, limitations.'],
-    ['Recommendations', 'Practical suggestions for research, clinical practice, or policy.'],
+    ['Background', 'Concise rationale for reporting the case — what is already known/unknown about the condition, and what makes your case notable (rare presentation, novel management, unexpected complication, etc.).'],
+    ['Objectives', 'State the aim of your case report or series — what you intend to show or highlight through this report.'],
+    ['Case Presentation', 'Describe the case(s) in logical/chronological order. Case series: summarise each case individually (for <4 cases); for >4 cases summarise similarities then bring out uniqueness, compare and contrast.'],
+    ['Case Discussion', 'Interpret the case(s), compare with existing literature, highlight what is new, unexpected, or noteworthy.'],
+    ['Conclusion', 'Main clinical message or takeaway from your case(s) — the answer to the gap the report set out to fill.'],
+    ['Recommendations', 'Practical suggestions based on your findings — for future research, clinical practice, or policy.'],
   ]
   const sectionHints = reportType === 'CASE_REPORT' || reportType === 'CASE_SERIES' ? SECTION_HINTS_CASE : SECTION_HINTS_ORIG
 
@@ -2171,7 +2264,7 @@ function SubmitAbstract({ setRoute, user, draftId }) {
           <CardContent className="pt-4">
             <div className="grid md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <AbstractBodySections body={body} onChange={setBody} sections={sectionHints} invalid={!bodyValid} />
+                <AbstractBodySections body={body} onChange={setBody} sections={sectionHints} invalid={!bodyValid} reportType={reportType} />
               </div>
               <div className="border-2 border-dashed rounded-lg p-3 bg-indigo-50/50 border-indigo-300">
                 <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><FileUp className="h-4 w-4 text-indigo-600" /> Or upload Word document</div>
@@ -2569,11 +2662,20 @@ function EditorialPanel({ abs, onRefresh, user }) {
   const [decisionLetter, setDecisionLetter] = useState('')
   const [presType, setPresType] = useState('')
 
+  const [pendingAcceptConfirm, setPendingAcceptConfirm] = useState(false)
   const doDecision = async () => {
     if (!decision) return
+    // v2: Accept requires an explicit confirmation step so the editor pauses
+    // to verify every section is complete and free of grammatical errors
+    // before the abstract moves into the Accepted queue (where downloads,
+    // author bios, and slide uploads become active).
+    if (decision === 'ACCEPT' && !pendingAcceptConfirm) {
+      setPendingAcceptConfirm(true)
+      return
+    }
     await api(`/abstracts/${abs.id}/decision`, { method: 'POST', body: JSON.stringify({ decision, decisionLetter, presentationType: presType || null }) })
-    toast.success('Decision recorded')
-    setDecision(''); setDecisionLetter(''); onRefresh()
+    toast.success(decision === 'ACCEPT' ? 'Abstract accepted' : 'Decision recorded')
+    setDecision(''); setDecisionLetter(''); setPendingAcceptConfirm(false); onRefresh()
   }
 
   const assignCommitteeEditor = async (editorId) => {
@@ -2776,7 +2878,26 @@ function EditorialPanel({ abs, onRefresh, user }) {
             )}
           </div>
           <Textarea placeholder="Decision letter to author" value={decisionLetter} onChange={e => setDecisionLetter(e.target.value)} rows={4} />
-          <Button className="mt-2" onClick={doDecision} disabled={!decision}>Send decision</Button>
+          {decision === 'ACCEPT' && pendingAcceptConfirm && (
+            <div className="mt-2 p-3 rounded-md border border-emerald-300 bg-emerald-50">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="text-sm text-emerald-900">
+                  <div className="font-semibold mb-1">Confirm all sections are filled and that no grammatical errors exist.</div>
+                  <p className="text-xs text-emerald-800">Once accepted the abstract moves to the Accepted list, where the PowerPoint template download and author bio / photo uploads become active for the author. This abstract will also be available for scheduling in the conference programme and inclusion in the conference book.</p>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={doDecision}>Continue to accept →</Button>
+                <Button size="sm" variant="ghost" onClick={() => setPendingAcceptConfirm(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+          {!(decision === 'ACCEPT' && pendingAcceptConfirm) && (
+            <Button className="mt-2" onClick={doDecision} disabled={!decision}>
+              {decision === 'ACCEPT' ? 'Accept abstract' : 'Send decision'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -2797,7 +2918,7 @@ function RevisionUpload({ abs, onDone }) {
       <CardHeader><CardTitle className="flex items-center gap-2"><AlertCircle className="h-5 w-5 text-amber-600" /> Revision requested</CardTitle><CardDescription>Upload a new version of your abstract</CardDescription></CardHeader>
       <CardContent className="space-y-2">
         <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Revised title" />
-        <AbstractBodySections body={body} onChange={setBody} sections={undefined} rows={4} />
+        <AbstractBodySections body={body} onChange={setBody} sections={undefined} rows={4} reportType={abs?.reportType} />
         <Button onClick={submit}>Submit revision</Button>
       </CardContent>
     </Card>
@@ -3157,13 +3278,33 @@ function EditorialOffice({ setRoute }) {
       </div>
 
       {/* Stat summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
         <StatBadge label="Total papers" value={stats.total} color="from-slate-600 to-slate-700" icon={FileText} />
         <StatBadge label="Awaiting editor" value={stats.awaitingAssignment} color="from-amber-500 to-orange-600" icon={AlertCircle} attention />
         <StatBadge label="In review" value={stats.inReview} color="from-indigo-500 to-fuchsia-500" icon={Clock} />
         <StatBadge label="Accepted" value={stats.accepted} color="from-emerald-500 to-teal-600" icon={CheckCircle2} />
         <StatBadge label="Rejected" value={stats.rejected} color="from-rose-500 to-red-600" icon={XCircle} />
       </div>
+
+      {/* v2: interactive Accepted Abstracts container — full-width beneath the stage summary.
+          Opens a dedicated page listing every accepted paper with per-paper downloads. */}
+      <button
+        onClick={() => setRoute({ name: 'accepted-abstracts' })}
+        className="w-full mb-6 rounded-lg border border-emerald-300 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 hover:from-emerald-100 hover:to-emerald-100 shadow-sm hover:shadow transition text-left px-5 py-4 flex items-center justify-between group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow">
+            <CheckCircle2 className="h-6 w-6" />
+          </div>
+          <div>
+            <div className="text-lg font-semibold text-emerald-900">Accepted Abstracts</div>
+            <div className="text-xs text-emerald-700/80">{stats.accepted} paper{stats.accepted !== 1 ? 's' : ''} · downloads for Word abstract, PowerPoint template, author bios & passport photos</div>
+          </div>
+        </div>
+        <div className="text-emerald-700 group-hover:translate-x-1 transition">
+          Open list →
+        </div>
+      </button>
 
       {/* Filter bar */}
       <Card className="mb-4 border-0 shadow-sm">
@@ -3197,6 +3338,155 @@ function EditorialOffice({ setRoute }) {
             onAssignEditor={(editorId) => assignCommitteeEditor(a.id, editorId)}
           />
         ))}</div>}
+    </div>
+  )
+}
+
+// ============ v2: ACCEPTED ABSTRACTS PAGE ============
+// Full listing of every accepted paper in the current featured conference with
+// download links (Word abstract in journal format, PowerPoint template, author
+// bio, passport photo). This is where committee editors and admins access all
+// post-acceptance artefacts.
+function AcceptedAbstractsPage({ setRoute }) {
+  const [confId, setConfId] = useState('')
+  const [confs, setConfs] = useState([])
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    api('/conferences').then(d => {
+      const list = d.conferences || []
+      setConfs(list)
+      const featured = list.find(c => c.isFeatured) || list[0]
+      if (featured) setConfId(featured.id)
+    }).catch(() => setLoading(false))
+  }, [])
+  useEffect(() => {
+    if (!confId) return
+    setLoading(true)
+    api(`/conferences/${confId}/accepted-abstracts`).then(d => {
+      setItems(d.abstracts || [])
+      setLoading(false)
+    }).catch(() => { setItems([]); setLoading(false) })
+  }, [confId])
+
+  const downloadWord = async (id, code) => {
+    try {
+      const token = getToken()
+      const r = await fetch(`/api/abstracts/${id}/formatted.docx`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      })
+      if (!r.ok) throw new Error(await r.text())
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Abstract_${code || id}.docx`
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('Word abstract downloaded')
+    } catch (e) { toast.error('Download failed: ' + e.message) }
+  }
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex items-center gap-3 mb-2">
+        <Button variant="ghost" size="sm" onClick={() => setRoute({ name: 'editorial' })}>← Editorial Office</Button>
+      </div>
+      <div className="flex items-baseline gap-3 mb-1">
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <CheckCircle2 className="h-7 w-7 text-emerald-600" /> Accepted Abstracts
+        </h1>
+        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">{items.length} paper{items.length !== 1 ? 's' : ''}</Badge>
+      </div>
+      <p className="text-muted-foreground text-sm mb-4">Formatted Word downloads follow the standard academic journal layout used in the conference book.</p>
+
+      {confs.length > 1 && (
+        <div className="mb-4">
+          <Select value={confId} onValueChange={setConfId}>
+            <SelectTrigger className="w-96"><SelectValue /></SelectTrigger>
+            <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="p-10 text-center"><Loader2 className="h-6 w-6 animate-spin inline text-slate-400" /></div>
+      ) : items.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="p-10 text-center">
+            <CheckCircle2 className="h-12 w-12 mx-auto text-slate-300 mb-3" />
+            <div className="text-lg font-semibold text-slate-500">No accepted abstracts yet</div>
+            <div className="text-sm text-muted-foreground mt-1">Once the committee accepts abstracts they appear here with all their downloadable artefacts.</div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {items.map(a => {
+            const authors = (a.authors || []).slice().sort((x, y) => (x.orderIndex ?? 0) - (y.orderIndex ?? 0))
+            const authorNames = authors.map(x => x.fullName).filter(Boolean).join(', ')
+            const corresponding = authors.find(x => x.isCorresponding) || authors[0]
+            return (
+              <Card key={a.id} className="hover:shadow-md transition">
+                <CardContent className="p-4">
+                  <div className="grid md:grid-cols-3 gap-4 items-start">
+                    <div className="md:col-span-2">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <Badge variant="outline" className="text-[10px]">{a.submissionCode}</Badge>
+                        {a.reportType && <Badge variant="outline" className="text-[10px]">{a.reportType.replace(/_/g, ' ')}</Badge>}
+                        {a.presentationType && a.presentationType !== 'UNDECIDED' && <Badge className="bg-indigo-600 text-white text-[10px]">{a.presentationType}</Badge>}
+                      </div>
+                      <div className="font-semibold text-slate-900 leading-snug">{a.title}</div>
+                      <div className="text-xs text-slate-700 mt-1">{authorNames || '—'}</div>
+                      {corresponding?.email && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Corresponding: <a href={`mailto:${corresponding.email}`} className="text-indigo-600 hover:underline">{corresponding.email}</a>
+                          {corresponding.phone && <span> · {corresponding.phone}</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button size="sm" variant="outline" onClick={() => downloadWord(a.id, a.submissionCode)}>
+                        <FileText className="h-3.5 w-3.5 mr-1" /> Word abstract
+                      </Button>
+                      {a.presentationPath ? (
+                        <a href={a.presentationPath.startsWith('/api') ? a.presentationPath : `/api${a.presentationPath}`} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline"><FileUp className="h-3.5 w-3.5 mr-1" /> PowerPoint</Button>
+                        </a>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <FileUp className="h-3.5 w-3.5 mr-1" /> PPT — awaiting
+                        </Button>
+                      )}
+                      {a.biography ? (
+                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(a.biography || ''); toast.success('Author bio copied') }}>
+                          <User className="h-3.5 w-3.5 mr-1" /> Author bio
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <User className="h-3.5 w-3.5 mr-1" /> Bio — awaiting
+                        </Button>
+                      )}
+                      {a.authorPhotoPath ? (
+                        <a href={a.authorPhotoPath.startsWith('/api') ? a.authorPhotoPath : `/api${a.authorPhotoPath}`} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline"><Camera className="h-3.5 w-3.5 mr-1" /> Photo</Button>
+                        </a>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled className="opacity-70">
+                          <Camera className="h-3.5 w-3.5 mr-1" /> Photo — awaiting
+                        </Button>
+                      )}
+                      <Button size="sm" onClick={() => setRoute({ name: 'abstract', id: a.id, from: 'accepted-abstracts' })}>
+                        Open
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -3879,12 +4169,21 @@ function Conferences() {
 function RegistrationDialog({ conf, initialType, onClose, onDone }) {
   const [type, setType] = useState(initialType)
   const [form, setForm] = useState({
-    mode: 'PHYSICAL', prefix: 'Dr.', fullName: '', rank: '', unit: '', affiliation: '',
+    mode: 'PHYSICAL', prefix: 'Dr.', fullName: '', serviceStatus: 'OTHER', rank: '', unit: '', affiliation: '',
     companyName: '', companyAddress: '', industry: '', sponsorTier: 'BRONZE',
     virtualBoothRequested: false, physicalBoothRequested: false, sponsorMessage: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Kenya Army rank list — mirrored from /app/lib/kdf-ranks.js so the
+  // datalist can autocomplete on the frontend without a network call.
+  const KDF_ARMY_RANK_OPTIONS = [
+    'Private','Lance Corporal','Corporal','Sergeant','Staff Sergeant',
+    'Warrant Officer II','Warrant Officer I','Senior Warrant Officer',
+    'Second Lieutenant','Lieutenant','Captain','Major','Lieutenant Colonel',
+    'Colonel','Brigadier','Major General','Lieutenant General','General',
+  ]
 
   const SPONSOR_TIERS = [
     { key: 'BRONZE', label: 'Bronze', price: '$1,000', benefits: ['Logo on website', 'Virtual booth', 'Company profile'] },
@@ -3899,6 +4198,9 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
     if (type === 'ATTENDEE') {
       if (!conf.attendeeRegistrationOpen) return setError('Attendee registration is not yet open. The organisers will open it approximately one month before the conference. Please try again later, or register as an Author or Sponsor.')
       if (!form.fullName || !form.unit || !form.affiliation) return setError('Full name, unit and affiliation are required (used on certificate & name tag).')
+      if (form.serviceStatus === 'IN_SERVICE' && !form.rank.trim()) {
+        return setError('Service rank is required for in-service personnel. Please pick your rank from the suggestions.')
+      }
     }
     if (type === 'SPONSOR') {
       if (!form.companyName || !form.industry || !form.companyAddress) return setError('Company name, industry and address are required.')
@@ -3961,8 +4263,52 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
                 </div>
               </div>
               <div><Label>Full name (as it should appear on certificate & name tag) *</Label><Input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="e.g. Jane W. Doe" /></div>
+
+              {/* Service status — drives whether a KDF rank is captured */}
+              <div>
+                <Label>Service status *</Label>
+                <div className="flex gap-2 mt-1">
+                  {[
+                    { key: 'IN_SERVICE', label: 'In service (KDF)' },
+                    { key: 'OTHER',      label: 'Other' },
+                  ].map(s => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => setForm({ ...form, serviceStatus: s.key, rank: s.key === 'OTHER' ? '' : form.rank })}
+                      className={`px-3 py-1.5 rounded-md border text-sm transition ${
+                        form.serviceStatus === s.key
+                          ? 'bg-indigo-600 text-white border-indigo-700'
+                          : 'bg-background text-foreground border-input hover:bg-muted'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Rank / Position <span className="text-muted-foreground font-normal">(optional)</span></Label><Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar — leave blank if not applicable" /></div>
+                {form.serviceStatus === 'IN_SERVICE' ? (
+                  <div>
+                    <Label>Service rank *</Label>
+                    <Input
+                      list="kdf-army-ranks"
+                      value={form.rank}
+                      onChange={e => setForm({ ...form, rank: e.target.value })}
+                      placeholder="Start typing… e.g. Major, Lt Col"
+                      autoComplete="off"
+                    />
+                    <datalist id="kdf-army-ranks">
+                      {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                  </div>
+                ) : (
+                  <div>
+                    <Label>Position / Title <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input value={form.rank} onChange={e => setForm({ ...form, rank: e.target.value })} placeholder="e.g. Consultant, Senior Registrar — leave blank if not applicable" />
+                  </div>
+                )}
                 <div><Label>Unit / Department *</Label><Input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="e.g. Cardiology" /></div>
               </div>
               <div><Label>Affiliation (Hospital / Institution) *</Label><Input value={form.affiliation} onChange={e => setForm({ ...form, affiliation: e.target.value })} placeholder="e.g. Nairobi Hospital" /></div>
@@ -5205,7 +5551,7 @@ function ConferenceDialog({ editing, onClose, onDone }) {
           <div><Label>Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="International Conference on ..." /></div>
           <div><Label>Subtitle / tagline</Label><Input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })} placeholder="Shown under title on the public site" /></div>
           <div><Label>Conference theme (shown in footer)</Label><Input value={form.theme} onChange={e => setForm({ ...form, theme: e.target.value })} placeholder="e.g. Advancing Health Through Innovation" /></div>
-          <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 5)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
+          <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 10)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
           <div className="grid grid-cols-3 gap-2">
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
             <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
@@ -5272,7 +5618,11 @@ function ThemeDialog({ conferenceId, onClose, onDone }) {
   const [keywords, setKeywords] = useState('')
   const [existing, setExisting] = useState([])
   const [conf, setConf] = useState(null)
-  const MAX_SUBTHEMES = 5
+  // v2 (item #2): sub-theme cap raised from 5 → 10 to accommodate the new
+  // set of KDF MSC sub-themes. The number is enforced client-side; the
+  // backend has no hard limit so historical conferences with fewer than 10
+  // continue to work unchanged.
+  const MAX_SUBTHEMES = 10
 
   const refresh = () => {
     api(`/conferences/${conferenceId}`).then(d => {
@@ -5314,7 +5664,7 @@ function ThemeDialog({ conferenceId, onClose, onDone }) {
           <DialogTitle>Sub-themes for “{conf?.name || 'this conference'}”</DialogTitle>
           <DialogDescription>
             Main theme: <span className="font-medium text-slate-800">{conf?.mainTheme || <em className="text-muted-foreground">(not set — edit the conference to add one)</em>}</span>
-            <br />Sub-themes are shown in the dropdown when authors submit abstracts. Maximum 5.
+            <br />Sub-themes are shown in the dropdown when authors submit abstracts. Maximum 10.
           </DialogDescription>
         </DialogHeader>
 
@@ -7430,7 +7780,7 @@ function ProgrammeAdmin({ readOnly = false }) {
   useEffect(() => { api('/conferences').then(d => { setConfs(d.conferences || []); if (d.conferences?.[0]) setConfId(d.conferences[0].id) }) }, [])
   useEffect(() => { refresh() }, [confId])
 
-  const createSession = () => setEditing({ isNew: true, title: '', room: '', chair: '', startTime: '', endTime: '' })
+  const createSession = () => setEditing({ isNew: true, title: '', room: '', chair: '', chairAssistant: '', dayNumber: 1, weekday: '', sessionDate: '', startTime: '', endTime: '' })
 
   const deleteSession = async (id) => {
     if (!confirm('Delete this session and all its items?')) return
@@ -7440,26 +7790,38 @@ function ProgrammeAdmin({ readOnly = false }) {
     try { await api(`/programme-items/${id}`, { method: 'DELETE' }); refresh() } catch (e) { toast.error(e.message) }
   }
 
-  // Scheduled abstract ids
+  // v2: item.abstract may be null when the item is a manual entry (sponsor
+  // talk, keynote, break). Guard everywhere.
   const scheduledIds = new Set()
-  sessions.forEach(s => (s.items || []).forEach(i => scheduledIds.add(i.abstract.id)))
+  sessions.forEach(s => (s.items || []).forEach(i => { if (i.abstract?.id) scheduledIds.add(i.abstract.id) }))
   const unscheduled = acceptedAbstracts.filter(a => !scheduledIds.has(a.id))
 
-  // Group by day
+  // v2: group by conference dayNumber when set; fall back to calendar date so
+  // older sessions still render sensibly.
   const dayGroups = {}
   sessions.forEach(s => {
-    const key = new Date(s.startTime).toISOString().slice(0, 10)
-    if (!dayGroups[key]) dayGroups[key] = { date: new Date(s.startTime), items: [] }
+    const key = s.dayNumber
+      ? `day-${s.dayNumber}`
+      : new Date(s.startTime).toISOString().slice(0, 10)
+    if (!dayGroups[key]) {
+      dayGroups[key] = {
+        label: s.dayNumber
+          ? `Day ${s.dayNumber}${s.weekday ? ` · ${s.weekday}` : ''}${s.sessionDate ? ` · ${new Date(s.sessionDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}`
+          : new Date(s.startTime).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+        sortKey: s.dayNumber ? String(s.dayNumber).padStart(3, '0') : new Date(s.startTime).toISOString().slice(0, 10),
+        items: [],
+      }
+    }
     dayGroups[key].items.push(s)
   })
-  const days = Object.entries(dayGroups).sort(([a], [b]) => a.localeCompare(b))
+  const days = Object.entries(dayGroups).sort(([, a], [, b]) => a.sortKey.localeCompare(b.sortKey))
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2"><Calendar className="h-7 w-7 text-indigo-600" /> Programme Admin</h1>
-          <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts to build the daily programme.</p>
+          <p className="text-muted-foreground">Design the conference schedule. Create sessions and add abstracts or manual entries (sponsor talks, keynotes) to build the daily programme.</p>
           {readOnly && (
             <div className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[11px] px-2 py-1">
               <AlertCircle className="h-3 w-3" /> Read-only view — Committee Editors can review the programme but cannot create or edit sessions.
@@ -7478,67 +7840,84 @@ function ProgrammeAdmin({ readOnly = false }) {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-8">
           {loading && <div className="text-center py-6"><Loader2 className="animate-spin inline" /></div>}
           {!loading && sessions.length === 0 && (
             readOnly
               ? <EmptyState label="No sessions scheduled yet" />
               : <EmptyState label="No sessions scheduled yet" onAction={createSession} actionLabel="Create first session" />
           )}
-          {days.map(([key, g]) => (
-            <div key={key}>
-              <div className="mb-2 pb-1 border-b border-indigo-200 flex items-baseline gap-3">
-                <h2 className="text-lg font-bold text-indigo-700">{g.date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
-                <span className="text-xs text-muted-foreground">{g.items.length} sessions</span>
-              </div>
-              <div className="space-y-3">
+          {days.map(([key, g]) => {
+            // Continuous programme serial counter across sessions in the day
+            let serial = 0
+            return (
+              <div key={key} className="rounded-lg border-2 border-indigo-100 bg-white shadow-sm overflow-hidden">
+                {/* Day header — bold indigo band */}
+                <div className="bg-gradient-to-r from-indigo-700 to-indigo-800 text-white px-5 py-2.5 flex items-baseline justify-between">
+                  <h2 className="text-base font-bold tracking-wide uppercase">{g.label}</h2>
+                  <span className="text-[11px] opacity-90">{g.items.length} session{g.items.length !== 1 ? 's' : ''}</span>
+                </div>
+                {/* 4-column programme table */}
+                <div className="grid grid-cols-[52px_140px_1fr_220px] text-[11px] font-semibold uppercase text-slate-500 bg-slate-50 border-b px-4 py-1.5">
+                  <div>#</div><div>Time</div><div>Topic / Title</div><div>Presenter / Speaker</div>
+                </div>
                 {g.items.map(s => (
-                  <Card key={s.id}>
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start gap-3 mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="font-bold">{s.title}</div>
-                            <Badge variant="outline" className="text-[10px]">{s.items?.length || 0} items</Badge>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {s.room && ` · ${s.room}`}{s.chair && ` · Chair: ${s.chair}`}
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          {!readOnly && (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
-                              <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3" /></Button>
-                              <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
-                            </>
-                          )}
+                  <div key={s.id}>
+                    {/* Session break header */}
+                    <div className="bg-amber-50 border-y border-amber-200 px-4 py-2 flex items-center gap-2 group">
+                      <div className="flex-1">
+                        <div className="text-sm font-bold text-amber-900">▸ {s.title}</div>
+                        <div className="text-[11px] text-amber-800/80">
+                          {new Date(s.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {s.room && ` · ${s.room}`}
+                          {s.chair && ` · Chair: ${s.chair}`}
+                          {s.chairAssistant && ` · Asst: ${s.chairAssistant}`}
                         </div>
                       </div>
-                      {(s.items || []).length > 0 && (
-                        <div className="space-y-1 mt-2 border-t pt-2">
-                          {s.items.map((i, idx) => (
-                            <div key={i.id} className="flex items-center gap-2 text-sm p-1.5 rounded hover:bg-slate-50 group">
-                              <span className="text-xs text-slate-400 w-6">{idx + 1}.</span>
-                              <span className="text-xs text-muted-foreground w-14">{i.durationMin || 15}m</span>
-                              <div className="flex-1">
-                                <div className="text-sm">{i.abstract.title} <span className="text-xs text-muted-foreground">({i.abstract.submissionCode})</span></div>
-                                <div className="text-[10px] text-muted-foreground">{(i.abstract.authors || []).map(a => a.fullName).join(', ')}</div>
-                              </div>
-                              {!readOnly && (
-                                <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
-                              )}
-                            </div>
-                          ))}
+                      {!readOnly && (
+                        <div className="flex gap-1 opacity-70 group-hover:opacity-100">
+                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}>Edit</Button>
+                          <Button size="sm" variant="outline" onClick={() => setAddingToSession(s)}><Plus className="h-3 w-3 mr-1" />Add</Button>
+                          <Button size="sm" variant="destructive" onClick={() => deleteSession(s.id)}><Trash2 className="h-3 w-3" /></Button>
                         </div>
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                    {(s.items || []).length === 0 && (
+                      <div className="px-4 py-3 text-xs italic text-muted-foreground text-center">No items — click Add to schedule an abstract or manual entry</div>
+                    )}
+                    {(s.items || []).map(i => {
+                      serial += 1
+                      const isManual = !i.abstract
+                      const title = isManual ? (i.manualTitle || '(untitled)') : i.abstract.title
+                      const speaker = isManual
+                        ? (i.manualSpeaker || '—')
+                        : (i.abstract.authors || []).map(a => a.fullName).filter(Boolean).slice(0, 3).join(', ')
+                      const timeRange = (isManual && i.manualStart && i.manualEnd)
+                        ? `${new Date(i.manualStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}–${new Date(i.manualEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : `${i.durationMin || 15} min`
+                      return (
+                        <div key={i.id} className="grid grid-cols-[52px_140px_1fr_220px] gap-x-2 px-4 py-2 border-b last:border-b-0 hover:bg-slate-50 group text-sm items-start">
+                          <div className="text-slate-400 font-mono">{String(serial).padStart(2, '0')}</div>
+                          <div className="text-slate-700 tabular-nums">{timeRange}</div>
+                          <div>
+                            <div className="text-slate-900 leading-snug">{title}</div>
+                            {!isManual && <div className="text-[10px] text-muted-foreground">{i.abstract.submissionCode}</div>}
+                            {isManual && <Badge variant="outline" className="text-[9px] mt-0.5">Manual entry</Badge>}
+                          </div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-slate-700 text-xs">{speaker}</div>
+                            {!readOnly && (
+                              <button onClick={() => removeItem(i.id)} className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 shrink-0"><Trash2 className="h-3 w-3" /></button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 ))}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         <div className="lg:col-span-1">
@@ -7564,13 +7943,23 @@ function ProgrammeAdmin({ readOnly = false }) {
   )
 }
 
+// v2: full session form incl. Day 1/2/3 index, weekday, calendar date, chair
+// and chair-assistant. Existing sessions with only the legacy datetime fields
+// continue to work — the new fields are all optional at the schema level.
 function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
-  const toLocal = (d) => d ? new Date(d).toISOString().slice(0, 16) : ''
+  const toLocalDT = (d) => d ? new Date(d).toISOString().slice(0, 16) : ''
+  const toDateOnly = (d) => d ? new Date(d).toISOString().slice(0, 10) : ''
   const [form, setForm] = useState({
-    title: session.title || '', room: session.room || '', chair: session.chair || '',
-    startTime: toLocal(session.startTime), endTime: toLocal(session.endTime),
+    title: session.title || '', room: session.room || '',
+    chair: session.chair || '', chairAssistant: session.chairAssistant || '',
+    dayNumber: session.dayNumber ?? 1,
+    weekday: session.weekday || '',
+    sessionDate: toDateOnly(session.sessionDate),
+    startTime: toLocalDT(session.startTime), endTime: toLocalDT(session.endTime),
   })
   const [saving, setSaving] = useState(false)
+
+  const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
 
   const save = async () => {
     if (!form.title) { toast.error('Title required'); return }
@@ -7578,10 +7967,15 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
     if (new Date(form.endTime) <= new Date(form.startTime)) { toast.error('End must be after start'); return }
     setSaving(true)
     try {
+      const payload = {
+        ...form,
+        dayNumber: form.dayNumber ? Number(form.dayNumber) : null,
+        sessionDate: form.sessionDate || null,
+      }
       if (session.isNew) {
-        await api('/sessions', { method: 'POST', body: JSON.stringify({ conferenceId, ...form }) })
+        await api('/sessions', { method: 'POST', body: JSON.stringify({ conferenceId, ...payload }) })
       } else {
-        await api(`/sessions/${session.id}`, { method: 'PUT', body: JSON.stringify(form) })
+        await api(`/sessions/${session.id}`, { method: 'PUT', body: JSON.stringify(payload) })
       }
       toast.success('Saved'); onDone()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -7590,16 +7984,45 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{session.isNew ? 'New session' : 'Edit session'}</DialogTitle></DialogHeader>
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div><Label>Title <span className="text-red-500">*</span></Label><Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Opening Ceremony, Session 1A: Cardiology" /></div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label>Conference day</Label>
+              <Select value={String(form.dayNumber || 1)} onValueChange={v => setForm({ ...form, dayNumber: Number(v) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[1,2,3,4,5].map(n => <SelectItem key={n} value={String(n)}>Day {n}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Weekday</Label>
+              <Select value={form.weekday || ''} onValueChange={v => setForm({ ...form, weekday: v })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {WEEKDAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Session date</Label>
+              <Input type="date" value={form.sessionDate} onChange={e => setForm({ ...form, sessionDate: e.target.value })} />
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Start <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} /></div>
             <div><Label>End <span className="text-red-500">*</span></Label><Input type="datetime-local" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} /></div>
           </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div><Label>Room / Hall</Label><Input value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Hall A" /></div>
-            <div><Label>Chair</Label><Input value={form.chair} onChange={e => setForm({ ...form, chair: e.target.value })} placeholder="Prof. Doe" /></div>
+            <div><Label>Session Chair</Label><Input value={form.chair} onChange={e => setForm({ ...form, chair: e.target.value })} placeholder="Prof. Doe" /></div>
           </div>
+
+          <div><Label>Chair Assistant / Co-Chair</Label><Input value={form.chairAssistant} onChange={e => setForm({ ...form, chairAssistant: e.target.value })} placeholder="Dr. Assistant" /></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}</Button></DialogFooter>
       </DialogContent>
@@ -7607,10 +8030,17 @@ function SessionEditDialog({ conferenceId, session, onClose, onDone }) {
   )
 }
 
+// v2: two-mode "Add item" dialog. Editors can either pick from accepted
+// abstracts (default) OR create a manual entry for sponsor talks, keynotes
+// and breaks that have no matching abstract.
 function AddItemDialog({ session, abstracts, onClose, onDone }) {
+  const [mode, setMode] = useState('ABSTRACT')  // 'ABSTRACT' | 'MANUAL'
+  // Abstract mode state
   const [selected, setSelected] = useState([])
   const [duration, setDuration] = useState(15)
   const [search, setSearch] = useState('')
+  // Manual mode state
+  const [manual, setManual] = useState({ title: '', speaker: '', start: '', end: '' })
   const [saving, setSaving] = useState(false)
 
   const filtered = abstracts.filter(a =>
@@ -7619,40 +8049,94 @@ function AddItemDialog({ session, abstracts, onClose, onDone }) {
   const toggle = (id) => setSelected(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
 
   const save = async () => {
-    if (selected.length === 0) { toast.error('Select at least one abstract'); return }
     setSaving(true)
     try {
-      for (const abstractId of selected) {
-        await api(`/sessions/${session.id}/items`, { method: 'POST', body: JSON.stringify({ abstractId, durationMin: parseInt(duration) || 15 }) })
+      if (mode === 'ABSTRACT') {
+        if (selected.length === 0) { toast.error('Select at least one abstract'); return }
+        for (const abstractId of selected) {
+          await api(`/sessions/${session.id}/items`, { method: 'POST', body: JSON.stringify({ abstractId, durationMin: parseInt(duration) || 15 }) })
+        }
+        toast.success(`Added ${selected.length} to programme`)
+      } else {
+        if (!manual.title.trim()) { toast.error('Title required'); return }
+        await api(`/sessions/${session.id}/items`, {
+          method: 'POST',
+          body: JSON.stringify({
+            manualTitle: manual.title, manualSpeaker: manual.speaker,
+            manualStart: manual.start || null, manualEnd: manual.end || null,
+            durationMin: parseInt(duration) || 15,
+          }),
+        })
+        toast.success('Manual entry added')
       }
-      toast.success(`Added ${selected.length} to programme`); onDone()
+      onDone()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
-        <DialogHeader><DialogTitle>Add to "{session.title}"</DialogTitle><DialogDescription>Select accepted abstracts to schedule in this session</DialogDescription></DialogHeader>
-        <div className="flex-1 overflow-hidden flex flex-col space-y-2">
-          <div className="flex gap-2">
-            <Input placeholder="Search by title or code..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
-            <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
-          </div>
-          <div className="flex-1 overflow-y-auto border rounded space-y-1 p-2 min-h-[200px]">
-            {filtered.length === 0 && <div className="text-center text-xs text-muted-foreground py-4">No unscheduled abstracts match</div>}
-            {filtered.map(a => (
-              <label key={a.id} className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${selected.includes(a.id) ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-slate-50'}`}>
-                <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} className="mt-1" />
-                <div className="flex-1">
-                  <div className="text-xs font-semibold text-indigo-600">{a.submissionCode} <Badge variant="outline" className="text-[9px] ml-1">{a.currentState}</Badge></div>
-                  <div className="text-sm">{a.title}</div>
-                  <div className="text-[10px] text-muted-foreground">{(a.authors || []).map(au => au.fullName).slice(0, 3).join(', ')}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-          <div className="text-xs text-muted-foreground">{selected.length} selected</div>
+        <DialogHeader>
+          <DialogTitle>Add to "{session.title}"</DialogTitle>
+          <DialogDescription>Choose an accepted abstract or add a manual entry (sponsor talk, keynote, break).</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex gap-2 border-b pb-2">
+          {[
+            { key: 'ABSTRACT', label: 'From accepted abstracts' },
+            { key: 'MANUAL',   label: 'Manual entry (sponsor / keynote)' },
+          ].map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setMode(t.key)}
+              className={`px-3 py-1.5 rounded-md text-sm border transition ${
+                mode === t.key ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-background text-foreground border-input hover:bg-muted'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={saving || selected.length === 0} className="bg-indigo-600 hover:bg-indigo-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}Add {selected.length} to programme</Button></DialogFooter>
+
+        {mode === 'ABSTRACT' ? (
+          <div className="flex-1 overflow-hidden flex flex-col space-y-2">
+            <div className="flex gap-2">
+              <Input placeholder="Search by title or code..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
+              <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
+            </div>
+            <div className="flex-1 overflow-y-auto border rounded space-y-1 p-2 min-h-[200px]">
+              {filtered.length === 0 && <div className="text-center text-xs text-muted-foreground py-4">No unscheduled abstracts match</div>}
+              {filtered.map(a => (
+                <label key={a.id} className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${selected.includes(a.id) ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-slate-50'}`}>
+                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} className="mt-1" />
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-indigo-600">{a.submissionCode} <Badge variant="outline" className="text-[9px] ml-1">{a.currentState}</Badge></div>
+                    <div className="text-sm">{a.title}</div>
+                    <div className="text-[10px] text-muted-foreground">{(a.authors || []).map(au => au.fullName).slice(0, 3).join(', ')}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div><Label>Title / Topic <span className="text-red-500">*</span></Label><Input value={manual.title} onChange={e => setManual({ ...manual, title: e.target.value })} placeholder="e.g. GSK Product Update, Coffee Break" /></div>
+            <div><Label>Speaker / Presenter</Label><Input value={manual.speaker} onChange={e => setManual({ ...manual, speaker: e.target.value })} placeholder="e.g. Prof. Doe (GSK Kenya)" /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Start time</Label><Input type="datetime-local" value={manual.start} onChange={e => setManual({ ...manual, start: e.target.value })} /></div>
+              <div><Label>End time</Label><Input type="datetime-local" value={manual.end} onChange={e => setManual({ ...manual, end: e.target.value })} /></div>
+            </div>
+            <div className="flex items-center gap-1"><Label className="text-xs whitespace-nowrap">Duration (fallback)</Label><Input type="number" min="5" value={duration} onChange={e => setDuration(e.target.value)} className="w-20" /><span className="text-xs">min</span></div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {mode === 'ABSTRACT' ? `Add ${selected.length || ''} to programme` : 'Add manual entry'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -7756,15 +8240,29 @@ function EditorWorkspace({ setRoute, user }) {
 function LiveConferencePage({ user, setRoute }) {
   const [confs, setConfs] = useState([])
   const [confId, setConfId] = useState('')
+  const [myRegs, setMyRegs] = useState(null)   // null = still loading
+  const [showRegDialog, setShowRegDialog] = useState(false)
   useEffect(() => { api('/conferences').then(d => { const list = d.conferences || []; setConfs(list); const featured = list.find(c => c.isFeatured) || list[0]; if (featured) setConfId(featured.id) }).catch(() => {}) }, [])
+  const refreshRegs = () => api('/me/registrations').then(d => setMyRegs(d.registrations || [])).catch(() => setMyRegs([]))
+  useEffect(() => {
+    if (!user) { setMyRegs([]); return }
+    refreshRegs()
+  }, [user])
   const conf = confs.find(c => c.id === confId)
   const isAdmin = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR'].includes(r.role || r))
+  const isEditorial = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER', 'CHIEF_LOGISTICS', 'COMMITTEE_LOGISTICS'].includes(r.role || r))
   // Chair view (mirror of the presenter timer inside the slides panel) is granted
   // to every editorial role, so committee editors and managing editors can help
   // the chair signal when a speaker is over time.
   const isChair = user?.roles?.some(r => ['SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR', 'COMMITTEE_EDITOR', 'COMMITTEE_MEMBER'].includes(r.role || r))
 
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+
+  // Registration gate — editorial staff bypass (they run the conference).
+  // Everyone else must have a Registration row for THIS conference.
+  const isRegisteredHere = Array.isArray(myRegs) && myRegs.some(r => r.conferenceId === conf.id)
+  const gateReady = myRegs !== null
+  const needsToRegister = gateReady && !isEditorial && !isRegisteredHere
 
   return (
     <div>
@@ -7776,7 +8274,38 @@ function LiveConferencePage({ user, setRoute }) {
           <SelectContent>{confs.map(c => <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <LiveConference conf={conf} isAdmin={isAdmin} isChair={isChair} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+      {needsToRegister ? (
+        <div className="max-w-2xl mx-auto p-10">
+          <Card className="border-amber-300 bg-amber-50/60">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-amber-900">
+                <AlertCircle className="h-5 w-5" /> Registration required
+              </CardTitle>
+              <CardDescription className="text-amber-800">
+                The live conference room is reserved for registered delegates only. Please register for <b>{conf.name}</b> to receive access.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-slate-700">
+                Once you have completed registration you will be able to join the live sessions, view speaker slides, and interact with the programme in real time.
+              </p>
+              <Button className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setShowRegDialog(true)}>
+                Register now →
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <LiveConference conf={conf} isAdmin={isAdmin} isChair={isChair} fallback={<ExhibitionBoothsPublic conf={conf} />} />
+      )}
+      {showRegDialog && (
+        <RegistrationDialog
+          conf={conf}
+          initialType="ATTENDEE"
+          onClose={() => setShowRegDialog(false)}
+          onDone={() => { setShowRegDialog(false); refreshRegs(); toast.success('You are now registered — welcome to the live room!') }}
+        />
+      )}
     </div>
   )
 }
@@ -7784,6 +8313,48 @@ function LiveConferencePage({ user, setRoute }) {
 // ============ PUBLIC VIRTUAL CONFERENCE (public/anonymous) ============
 function PublicVirtualConference({ conf, onSignIn }) {
   if (!conf) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
+  // When live: show a clear "get into conference room" call-to-action rather
+  // than dropping anonymous visitors straight onto the video stream. The gate
+  // then forces sign-in / registration before the room can be joined.
+  if (conf.isLive) {
+    return (
+      <div className="min-h-screen">
+        <div className="max-w-3xl mx-auto p-10">
+          <Card className="border-red-200">
+            <CardHeader>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-xs font-bold px-2 py-0.5">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> LIVE
+                </span>
+                <span className="text-sm text-muted-foreground">Now streaming</span>
+              </div>
+              <CardTitle className="text-2xl">{conf.name}</CardTitle>
+              <CardDescription>
+                {conf.subtitle || conf.theme || 'Live scientific sessions are underway.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-700">
+                The conference room is currently open. Access is reserved for registered delegates. If you are already registered, sign in with your account. If not, register first — it only takes a minute.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={onSignIn}>
+                  Get into conference room →
+                </Button>
+                <Button variant="outline" onClick={onSignIn}>
+                  I need to register first
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Not registered yet? Click <b>“I need to register first”</b> — after sign-up you will be redirected back here to join the live room.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+  // Not live — show the fallback (booths etc.), no auth required.
   return (
     <div className="min-h-screen">
       <LiveConference conf={conf} isAdmin={false} fallback={<ExhibitionBoothsPublic conf={conf} />} onNeedsSignIn={onSignIn} />
