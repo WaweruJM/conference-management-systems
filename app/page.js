@@ -959,7 +959,7 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                   <div className="flex gap-2 mt-1.5">
                     {[
                       { key: 'IN_SERVICE', label: 'In service (KDF)' },
-                      { key: 'OTHER',      label: 'Other (civilian)' },
+                      { key: 'OTHER',      label: 'Other' },
                     ].map(s => (
                       <button
                         key={s.key}
@@ -975,9 +975,6 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                       </button>
                     ))}
                   </div>
-                  <p className="text-[11px] text-muted-foreground mt-1.5">
-                    Tick <b>In service</b> only if you are currently serving in the Kenya Defence Forces. Your rank will appear on your name tag and certificate; civilians see no rank.
-                  </p>
                   {serviceStatus === 'IN_SERVICE' && (
                     <div className="mt-2">
                       <Label className="text-slate-800">Service rank <span className="text-red-500">*</span></Label>
@@ -992,9 +989,6 @@ function AuthPage({ mode, onDone, onSwitch, onBack, onForgot, reviewerInvite }) 
                       <datalist id="kdf-army-ranks-signup">
                         {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
                       </datalist>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        Full rank; shorthand (e.g. "Maj") will be used on printed tags & certificates.
-                      </p>
                     </div>
                   )}
                 </div>
@@ -4276,7 +4270,7 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
                 <div className="flex gap-2 mt-1">
                   {[
                     { key: 'IN_SERVICE', label: 'In service (KDF)' },
-                    { key: 'OTHER',      label: 'Other (civilian)' },
+                    { key: 'OTHER',      label: 'Other' },
                   ].map(s => (
                     <button
                       key={s.key}
@@ -4292,9 +4286,6 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Choose "In service" only if you are currently serving in the Kenya Defence Forces. This determines whether your rank appears on your name tag and certificate.
-                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -4311,7 +4302,6 @@ function RegistrationDialog({ conf, initialType, onClose, onDone }) {
                     <datalist id="kdf-army-ranks">
                       {KDF_ARMY_RANK_OPTIONS.map(r => <option key={r} value={r} />)}
                     </datalist>
-                    <p className="text-xs text-muted-foreground mt-1">Full rank; shorthand (e.g. "Maj") will be used on printed tags & certificates.</p>
                   </div>
                 ) : (
                   <div>
