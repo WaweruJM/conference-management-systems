@@ -32,7 +32,7 @@ AUTHOR(S) INFORMATION
 ABSTRACT BODY
 ===================================================
 
-4. Submit your abstract through the SCMS platform.
+4. Submit your abstract by 30 October 2026, which should:
 
    a. Be aligned with the conference theme and sub-themes.
    b. Be a summary of key aspects of the manuscript.
@@ -90,6 +90,40 @@ ABSTRACT BODY
    NOTE: The word limit of 300 is only for the BODY of the abstract.
    It does not include the topic, authors, qualifications, affiliations,
    institutions, key words (if any) and disclosures.
+
+
+===================================================
+MANUSCRIPT / FINAL PAPER SUBMISSION GUIDELINES
+===================================================
+
+The full manuscript / final paper should:
+
+1. Be aligned with the conference theme and sub-themes (Conference Sub-Theme
+   should be specified).
+2. Not exceed 4,000 words.
+3. Be scientific and of high value of novelty.
+4. Be in Times New Roman, font size 12 and single spaced.
+5. Have all headings and sub-headings properly numbered.
+6. Be consistent with internationally accepted guidelines.
+7. Be submitted in soft copy by 30 November 2026.
+
+8. All submitted manuscripts must include the following items:
+
+   a. Title.
+   b. List of authors, their affiliations and email addresses.
+   c. Abstract (as detailed above).
+   d. Introduction.
+   e. Main body:
+      (1) Objectives.
+      (2) Methodology.
+      (3) Results.
+      (4) Discussion.
+   f. Conclusions.
+   g. Limitations.
+   h. Acknowledgments (optional).
+   i. References — APA Referencing.
+   j. Disclosures — include information about funding and any potential
+      conflict of interest.
 
 ===================================================
 FILE FORMAT REQUIREMENTS (for uploaded documents)

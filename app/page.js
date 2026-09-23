@@ -5558,7 +5558,7 @@ function ConferenceDialog({ editing, onClose, onDone }) {
           <div><Label>Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="International Conference on ..." /></div>
           <div><Label>Subtitle / tagline</Label><Input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })} placeholder="Shown under title on the public site" /></div>
           <div><Label>Conference theme (shown in footer)</Label><Input value={form.theme} onChange={e => setForm({ ...form, theme: e.target.value })} placeholder="e.g. Advancing Health Through Innovation" /></div>
-          <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 5)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
+          <div><Label>Main theme <span className="text-[10px] text-muted-foreground">(the overarching scientific main theme — sub-themes are added below, max 10)</span></Label><Input value={form.mainTheme} onChange={e => setForm({ ...form, mainTheme: e.target.value })} placeholder="e.g. Precision Medicine and Public Health" /></div>
           <div className="grid grid-cols-3 gap-2">
             <div><Label>Venue</Label><Input value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} /></div>
             <div><Label>City</Label><Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></div>
@@ -5625,7 +5625,11 @@ function ThemeDialog({ conferenceId, onClose, onDone }) {
   const [keywords, setKeywords] = useState('')
   const [existing, setExisting] = useState([])
   const [conf, setConf] = useState(null)
-  const MAX_SUBTHEMES = 5
+  // v2 (item #2): sub-theme cap raised from 5 → 10 to accommodate the new
+  // set of KDF MSC sub-themes. The number is enforced client-side; the
+  // backend has no hard limit so historical conferences with fewer than 10
+  // continue to work unchanged.
+  const MAX_SUBTHEMES = 10
 
   const refresh = () => {
     api(`/conferences/${conferenceId}`).then(d => {
@@ -5667,7 +5671,7 @@ function ThemeDialog({ conferenceId, onClose, onDone }) {
           <DialogTitle>Sub-themes for “{conf?.name || 'this conference'}”</DialogTitle>
           <DialogDescription>
             Main theme: <span className="font-medium text-slate-800">{conf?.mainTheme || <em className="text-muted-foreground">(not set — edit the conference to add one)</em>}</span>
-            <br />Sub-themes are shown in the dropdown when authors submit abstracts. Maximum 5.
+            <br />Sub-themes are shown in the dropdown when authors submit abstracts. Maximum 10.
           </DialogDescription>
         </DialogHeader>
 

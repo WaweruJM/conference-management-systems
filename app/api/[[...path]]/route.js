@@ -429,9 +429,10 @@ async function handleConferences(route, method, request) {
   if (themeMatch && method === 'POST') {
     const user = await getCurrentUser(request)
     if (!hasRole(user, 'SYSTEM_ADMIN', 'MANAGING_EDITOR', 'CHIEF_EDITOR')) return err('Forbidden', 403)
-    // Enforce max of 5 sub-themes per conference
+    // v2: enforce max of 10 sub-themes per conference (raised from 5 to
+    // accommodate the new set of KDF MSC sub-themes).
     const existingCount = await prisma.theme.count({ where: { conferenceId: themeMatch[1] } })
-    if (existingCount >= 5) return err('This conference already has the maximum of 5 sub-themes.', 400)
+    if (existingCount >= 10) return err('This conference already has the maximum of 10 sub-themes.', 400)
     const body = await request.json()
     const theme = await prisma.theme.create({
       data: { conferenceId: themeMatch[1], name: body.name, description: body.description, keywords: body.keywords || [] },
@@ -929,7 +930,7 @@ async function sendAbstractBackupToChiefEditors(abstractId, kindLabel) {
     const abs = await prisma.abstract.findUnique({
       where: { id: abstractId },
       include: {
-        conference: { select: { name: true, code: true } },
+        conference: { select: { name: true, code: true, contactEmail: true } },
         theme: { select: { name: true } },
         authors: { orderBy: { orderIndex: 'asc' } },
         versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
@@ -977,8 +978,18 @@ async function sendAbstractBackupToChiefEditors(abstractId, kindLabel) {
       <p style="color:#94a3b8;font-size:11px;margin-top:10px">This is an automated backup of every submission and revision, sent to every Chief Editor / Managing Editor / Admin. Keep for archive purposes.</p>
     </div>`
     const { sendEmail } = await import('@/lib/email')
-    // BCC every editor — do not reveal each editor's address to the others.
-    await Promise.all(editors.map(e => sendEmail({ to: e.email, subject, text: bodyPlain, html })))
+    // Recipients:
+    //   • Every Chief / Managing Editor / Admin (as before)
+    //   • v2 (item #1): the KDF MSC conference secretary receives a copy of every
+    //     submission and revision so paper records can be reconciled with the
+    //     platform's history off-line. Uses the conference's stored contactEmail
+    //     when present, falling back to the fixed secretary address. Duplicates
+    //     with an editor mailbox are de-duplicated.
+    const SECRETARY_FALLBACK = 'secretary-kdfmsc@mod.go.ke'
+    const secretaryEmail = (abs.conference?.contactEmail || SECRETARY_FALLBACK).trim()
+    const editorAddrs = editors.map(e => (e.email || '').trim().toLowerCase()).filter(Boolean)
+    const recipients = [...new Set([...editorAddrs, secretaryEmail.toLowerCase()])]
+    await Promise.all(recipients.map(to => sendEmail({ to, subject, text: bodyPlain, html })))
   } catch (e) {
     console.error('sendAbstractBackupToChiefEditors error', e)
   }
@@ -1162,7 +1173,7 @@ async function handleAbstracts(route, method, request) {
         decisions: { orderBy: { createdAt: 'desc' }, include: { decidedBy: { select: { firstName: true, lastName: true } } } },
         stateHistory: { orderBy: { createdAt: 'asc' }, include: { actor: { select: { firstName: true, lastName: true } } } },
         documents: { where: { isDeleted: false }, include: { uploadedBy: { select: { firstName: true, lastName: true } } } },
-        programmeItem: { include: { session: true } },
+        programmeItems: { include: { session: true } },
       },
     })
     if (!abstract) return err('Not found', 404)
