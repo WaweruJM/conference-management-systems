@@ -9,7 +9,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 1: dependencies — install ALL deps (dev + prod) with the same lockfile
 # ═══════════════════════════════════════════════════════════════════════════
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Alpine needs libc6-compat for some Node native modules (bcrypt, sharp, pdfkit)
@@ -35,7 +35,7 @@ RUN if [ -f yarn.lock ]; then \
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 2: builder — build Next.js standalone bundle + generate Prisma client
 # ═══════════════════════════════════════════════════════════════════════════
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat openssl
@@ -72,7 +72,7 @@ RUN test -d .next/standalone \
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 3: runner — minimal runtime image
 # ═══════════════════════════════════════════════════════════════════════════
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat openssl tini curl
